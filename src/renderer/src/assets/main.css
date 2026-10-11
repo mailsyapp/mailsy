@@ -1,8 +1,38 @@
-body { font-family: system-ui, sans-serif; margin: 0; padding: 24px; color: #1a1a1a; background: #fff; }
-.actions { display: flex; gap: 8px; margin-bottom: 16px; }
-button { padding: 8px 14px; cursor: pointer; }
-.emails { list-style: none; padding: 0; }
-.emails li { padding: 12px 0; border-bottom: 1px solid #eee; }
-.from { color: #555; font-size: 13px; }
-.snippet { color: #777; font-size: 13px; }
-.error { color: #b00020; }
+body { 
+  font-family: system-ui, sans-serif; margin: 0; padding: 24px; color: #1a1a1a; background: #fff; 
+}
+
+.actions { 
+  display: flex; gap: 8px; margin-bottom: 16px; 
+}
+
+button { 
+  padding: 8px 14px; cursor: pointer; 
+}
+
+.emails { 
+  list-style: none; padding: 0; 
+}
+
+.emails li { 
+  padding: 12px 0; border-bottom: 1px solid #eee; 
+}
+
+.from { 
+  color: #555; font-size: 13px; 
+}
+
+.snippet { 
+  color: #777; font-size: 13px; 
+}
+
+.error {
+  color: #b00020;
+}
+
+.email-text {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
