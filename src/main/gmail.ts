@@ -8,13 +8,45 @@ function decodeBody(data?: string | null): string {
   return Buffer.from(b64, 'base64').toString('utf-8')
 }
 
+function normalizeContentId(contentId: string): string {
+  let normalized = contentId.trim().replace(/^<|>$/g, '')
+  try {
+    normalized = decodeURIComponent(normalized)
+  } catch (error) {
+    if (!(error instanceof URIError)) throw error
+  }
+  return normalized.toLowerCase()
+}
+
 function collectBodies(
   part: gmail_v1.Schema$MessagePart,
-  out: { text: string; html: string }
+  out: {
+    text: string
+    html: string
+    inlineImages: Array<{
+      contentId: string
+      mimeType: string
+      data?: string | null
+      attachmentId?: string | null
+    }>
+  }
 ): void {
   const mime = part.mimeType ?? ''
   if (mime === 'text/plain' && !out.text) out.text = decodeBody(part.body?.data)
   if (mime === 'text/html' && !out.html) out.html = decodeBody(part.body?.data)
+  if (mime.startsWith('image/')) {
+    const contentId = part.headers?.find(
+      (header) => header.name?.toLowerCase() === 'content-id'
+    )?.value
+    if (contentId) {
+      out.inlineImages.push({
+        contentId,
+        mimeType: mime,
+        data: part.body?.data,
+        attachmentId: part.body?.attachmentId
+      })
+    }
+  }
   for (const p of part.parts ?? []) collectBodies(p, out)
 }
 
@@ -25,9 +57,45 @@ export async function fetchMessage(id: string): Promise<EmailDetail> {
   const header = (name: string): string =>
     headers.find((h) => h.name?.toLowerCase() === name.toLowerCase())?.value ?? ''
 
-  const out = { text: '', html: '' }
+  const out = {
+    text: '',
+    html: '',
+    inlineImages: [] as Array<{
+      contentId: string
+      mimeType: string
+      data?: string | null
+      attachmentId?: string | null
+    }>
+  }
   if (msg.data.payload) collectBodies(msg.data.payload, out)
   if (!out.text && !out.html) out.text = decodeBody(msg.data.payload?.body?.data)
+
+  const inlineImageData = new Map<string, string>()
+  await Promise.all(
+    out.inlineImages.map(async ({ contentId, mimeType, data, attachmentId }) => {
+      const encodedData =
+        data ||
+        (attachmentId
+          ? (
+              await gmail.users.messages.attachments.get({
+                userId: 'me',
+                messageId: id,
+                id: attachmentId
+              })
+            ).data.data
+          : undefined)
+      if (!encodedData) return
+      const base64Data = Buffer.from(
+        encodedData.replace(/-/g, '+').replace(/_/g, '/'),
+        'base64'
+      ).toString('base64')
+      inlineImageData.set(normalizeContentId(contentId), `data:${mimeType};base64,${base64Data}`)
+    })
+  )
+
+  const bodyHtml = out.html.replace(/cid:([^"'\s<>()]+)/gi, (reference, contentId: string) => {
+    return inlineImageData.get(normalizeContentId(contentId)) ?? reference
+  })
 
   return {
     id,
@@ -36,7 +104,7 @@ export async function fetchMessage(id: string): Promise<EmailDetail> {
     date: header('Date'),
     snippet: msg.data.snippet ?? '',
     bodyText: out.text,
-    bodyHtml: out.html
+    bodyHtml
   }
 }
 
