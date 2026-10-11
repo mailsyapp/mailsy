@@ -2,6 +2,8 @@ import { app, shell, BrowserWindow, ipcMain } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
+import { signIn } from './auth'
+import { fetchInbox } from './gmail'
 
 function createWindow(): void {
   // Create the browser window.
@@ -51,6 +53,8 @@ app.whenReady().then(() => {
 
   // IPC test
   ipcMain.on('ping', () => console.log('pong'))
+  ipcMain.handle('auth:sign-in', () => signIn())
+  ipcMain.handle('gmail:inbox', () => fetchInbox(10))
 
   createWindow()
 
