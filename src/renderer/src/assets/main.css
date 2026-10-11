@@ -1,29 +1,40 @@
 body { 
-  font-family: system-ui, sans-serif; margin: 0; padding: 24px; color: #1a1a1a; background: #fff; 
+  font-family: system-ui, sans-serif; 
+  margin: 0; color: #1a1a1a; 
+  padding: 24px;
+  background: #fff; 
 }
 
 .actions { 
-  display: flex; gap: 8px; margin-bottom: 16px; 
+  display: flex; 
+  gap: 8px; 
+  margin-bottom: 16px; 
 }
 
 button { 
-  padding: 8px 14px; cursor: pointer; 
+  padding: 8px 14px; 
+  cursor: pointer; 
 }
 
 .emails { 
-  list-style: none; padding: 0; 
+  list-style: none; 
+  padding: 0; 
+  margin: 0;
 }
 
 .emails li { 
-  padding: 12px 0; border-bottom: 1px solid #eee; 
+  padding: 12px 0; 
+  border-bottom: 1px solid #eee; 
 }
 
 .from { 
-  color: #555; font-size: 13px; 
+  color: #555; 
+  font-size: 13px; 
 }
 
 .snippet { 
-  color: #777; font-size: 13px; 
+  color: #777; 
+  font-size: 13px; 
 }
 
 .error {
@@ -35,4 +46,11 @@ button {
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
+}
+
+.email-sidebar {
+  border: 2px solid black;
+  width: 30dvw;
+  padding-left: 10px;
+  padding-right: 10px;
 }
