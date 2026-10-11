@@ -37,6 +37,12 @@ export function EmailDetail({
   const emailDocument = `<!doctype html>
 <html>
   <head>
+    <style>
+      html, body {
+        margin: 0;
+        overflow: hidden;
+      }
+    </style>
     <meta
       http-equiv="Content-Security-Policy"
       content="default-src 'none'; img-src https: http: data:; style-src 'unsafe-inline'; font-src data:; connect-src 'none'; frame-src 'none'; object-src 'none'; form-action 'none'; base-uri 'none'"
@@ -67,9 +73,14 @@ export function EmailDetail({
           srcDoc={emailDocument}
           onLoad={(event) => {
             const frame = event.currentTarget
-            const height = frame.contentDocument?.documentElement.scrollHeight
+            const doc = frame.contentDocument
+            if (!doc) return
 
-            if (height) frame.style.height = `${height}px`
+            const height = Math.max(
+              doc.documentElement.scrollHeight,
+              doc.body.scrollHeight,
+            )
+            frame.style.height = `${height}px`
           }}
           style={{ width: '100%', border: 0 }}
         />
