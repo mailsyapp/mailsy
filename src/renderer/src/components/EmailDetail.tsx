@@ -62,10 +62,16 @@ export function EmailDetail({
       ) : detail?.bodyHtml ? (
         <iframe
           title="Email content"
-          sandbox=""
+          sandbox="allow-same-origin"
           referrerPolicy="no-referrer"
           srcDoc={emailDocument}
-          style={{ width: '100%', height: '70vh', border: 0 }}
+          onLoad={(event) => {
+            const frame = event.currentTarget
+            const height = frame.contentDocument?.documentElement.scrollHeight
+
+            if (height) frame.style.height = `${height}px`
+          }}
+          style={{ width: '100%', border: 0 }}
         />
       ) : detail?.bodyText ? (
         <pre style={{ whiteSpace: 'pre-wrap' }}>{detail.bodyText}</pre>
