@@ -1,10 +1,33 @@
 import { useState } from 'react'
-import type { EmailSummary } from '../../shared/types'
+import type { EmailSummary, EmailDetail } from '../../shared/types'
 
 function App(): React.JSX.Element {
+  const [selectedId, setSelectedId] = useState<string | null>(null)
   const [emails, setEmails] = useState<EmailSummary[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [detail, setDetail] = useState<EmailDetail | null>(null)
+  const [detailLoading, setDetailLoading] = useState(false)
+  const selectedEmail = emails.find((e) => e.id === selectedId) ?? null
+
+  async function handleSelect(id: string): Promise<void> {
+    setSelectedId(id)
+    setDetail(null)
+    setDetailLoading(true)
+    setError(null)
+    try {
+      setDetail(await window.api.getMessage(id))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setDetailLoading(false)
+    }
+  }
+
+  function handleBack(): void {
+    setSelectedId(null)
+    setDetail(null)
+  }
 
   async function handleSignIn(): Promise<void> {
     setError(null)
@@ -39,15 +62,41 @@ function App(): React.JSX.Element {
 
       {error && <p className="error">{error}</p>}
 
-      <ul className="emails">
-        {emails.map((email) => (
-          <li key={email.id}>
-            <strong>{email.subject}</strong>
-            <div className="from">{email.from}</div>
-            <div className="snippet">{email.snippet}</div>
-          </li>
-        ))}
-      </ul>
+      {selectedEmail ? (
+        <div className="email-detail">
+          <button type="button" onClick={handleBack}>
+            ← Back to inbox
+          </button>
+          <h2>{detail?.subject ?? selectedEmail.subject}</h2>
+          <div className="from">{detail?.from ?? selectedEmail.from}</div>
+          <div className="date">{detail?.date ?? ''}</div>
+          {detailLoading ? (
+            <p>Loading email...</p>
+          ) : detail?.bodyHtml ? (
+            <div dangerouslySetInnerHTML={{ __html: detail.bodyHtml }} />
+          ) : detail?.bodyText ? (
+            <pre style={{ whiteSpace: 'pre-wrap' }}>{detail.bodyText}</pre>
+          ) : (
+            <div className="snippet">{selectedEmail.snippet}</div>
+          )}
+        </div>
+      ) : (
+        <ul className="emails">
+          {emails.map((email) => (
+            <li key={email.id}>
+              <button
+                type="button"
+                onClick={() => handleSelect(email.id)}
+                style={{ all: 'unset', display: 'block', cursor: 'pointer', width: '100%' }}
+              >
+                <strong>{email.subject}</strong>
+                <div className="from">{email.from}</div>
+                <div className="snippet">{email.snippet}</div>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   )
 }

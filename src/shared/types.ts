@@ -5,3 +5,8 @@ export interface EmailSummary {
   date: string
   snippet: string
 }
+
+export interface EmailDetail extends EmailSummary {
+  bodyHtml?: string
+  bodyText?: string
+}

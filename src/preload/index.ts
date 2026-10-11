@@ -1,11 +1,12 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
-import type { EmailSummary } from '../shared/types'
+import type { EmailSummary, EmailDetail } from '../shared/types'
 
 // Custom APIs for renderer
 const api = {
   signIn: (): Promise<void> => ipcRenderer.invoke('auth:sign-in'),
-  getInbox: (): Promise<EmailSummary[]> => ipcRenderer.invoke('gmail:inbox')
+  getInbox: (): Promise<EmailSummary[]> => ipcRenderer.invoke('gmail:inbox'),
+  getMessage: (id: string): Promise<EmailDetail> => ipcRenderer.invoke('gmail:get', id)
 }
 
 // Use `contextBridge` APIs to expose Electron APIs to
