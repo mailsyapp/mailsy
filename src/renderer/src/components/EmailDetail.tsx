@@ -41,11 +41,12 @@ export function EmailDetail({
       html, body {
         margin: 0;
         overflow: hidden;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,"Helvetica Neue", Arial, sans-serif;
       }
     </style>
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'none'; img-src https: http: data:; style-src 'unsafe-inline'; font-src data:; connect-src 'none'; frame-src 'none'; object-src 'none'; form-action 'none'; base-uri 'none'"
+      content="default-src 'none'; img-src https: http: data:; style-src 'unsafe-inline'; font-src https: data:; connect-src 'none'; frame-src 'none'; object-src 'none'; form-action 'none'; base-uri 'none'"
     >
   </head>
   <body>${sanitizedHtml}</body>
