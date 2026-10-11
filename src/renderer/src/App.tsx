@@ -75,15 +75,23 @@ function App(): React.JSX.Element {
       ) : (
         <ul className="emails">
           {emails.map((email) => (
-            <li key={email.id}>
+            <li
+              key={email.id}
+              style={{
+                width: '30dvw',
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+              }}
+            >
               <button
                 type="button"
                 onClick={() => handleSelect(email.id)}
                 style={{ all: 'unset', display: 'block', cursor: 'pointer', width: '100%' }}
               >
-                <strong>{email.subject}</strong>
-                <div className="from">{email.from}</div>
-                <div className="snippet">{email.snippet}</div>
+                <strong className="email-text">{email.subject}</strong>
+                <div className="from email-text">{email.from}</div>
+                <div className="snippet email-text">{email.snippet}</div>
               </button>
             </li>
           ))}
