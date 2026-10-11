@@ -1,12 +1,13 @@
 import { useState } from 'react'
-import type { EmailSummary, EmailDetail } from '../../shared/types'
+import type { EmailSummary, EmailDetail as EmailDetailData } from '../../shared/types'
+import { EmailDetail } from './components/EmailDetail'
 
 function App(): React.JSX.Element {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [emails, setEmails] = useState<EmailSummary[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [detail, setDetail] = useState<EmailDetail | null>(null)
+  const [detail, setDetail] = useState<EmailDetailData | null>(null)
   const [detailLoading, setDetailLoading] = useState(false)
   const selectedEmail = emails.find((e) => e.id === selectedId) ?? null
 
@@ -64,21 +65,12 @@ function App(): React.JSX.Element {
 
       {selectedEmail ? (
         <div className="email-detail">
-          <button type="button" onClick={handleBack}>
-            ← Back to inbox
-          </button>
-          <h2>{detail?.subject ?? selectedEmail.subject}</h2>
-          <div className="from">{detail?.from ?? selectedEmail.from}</div>
-          <div className="date">{detail?.date ?? ''}</div>
-          {detailLoading ? (
-            <p>Loading email...</p>
-          ) : detail?.bodyHtml ? (
-            <div dangerouslySetInnerHTML={{ __html: detail.bodyHtml }} />
-          ) : detail?.bodyText ? (
-            <pre style={{ whiteSpace: 'pre-wrap' }}>{detail.bodyText}</pre>
-          ) : (
-            <div className="snippet">{selectedEmail.snippet}</div>
-          )}
+          <EmailDetail
+            email={selectedEmail}
+            detail={detail}
+            detailLoading={detailLoading}
+            onBack={handleBack}
+          />
         </div>
       ) : (
         <ul className="emails">
