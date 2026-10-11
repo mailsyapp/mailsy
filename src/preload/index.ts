@@ -5,6 +5,7 @@ import type { EmailSummary, EmailDetail } from '../shared/types'
 // Custom APIs for renderer
 const api = {
   signIn: (): Promise<void> => ipcRenderer.invoke('auth:sign-in'),
+  isSignedIn: (): Promise<boolean> => ipcRenderer.invoke('auth:is-signed-in'),
   getInbox: (): Promise<EmailSummary[]> => ipcRenderer.invoke('gmail:inbox'),
   getMessage: (id: string): Promise<EmailDetail> => ipcRenderer.invoke('gmail:get', id)
 }
