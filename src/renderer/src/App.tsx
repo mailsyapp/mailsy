@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { EmailSummary, EmailDetail as EmailDetailData } from '../../shared/types'
 import { EmailDetail } from './components/EmailDetail'
 
@@ -10,6 +10,7 @@ function App(): React.JSX.Element {
   const [detail, setDetail] = useState<EmailDetailData | null>(null)
   const [detailLoading, setDetailLoading] = useState(false)
   const selectedEmail = emails.find((e) => e.id === selectedId) ?? null
+  const [signedIn, setSignedIn] = useState<boolean | null>(null)
 
   async function handleSelect(id: string): Promise<void> {
     setSelectedId(id)
@@ -34,6 +35,8 @@ function App(): React.JSX.Element {
     setError(null)
     try {
       await window.api.signIn()
+      setSignedIn(true)
+      await handleLoad()
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     }
@@ -51,14 +54,46 @@ function App(): React.JSX.Element {
     }
   }
 
+  useEffect(() => {
+    let cancelled = false
+
+    async function initialize(): Promise<void> {
+      let isAuthenticated: boolean
+      try {
+        isAuthenticated = await window.api.isSignedIn()
+      } catch (e) {
+        if (!cancelled) {
+          setError(e instanceof Error ? e.message : String(e))
+        }
+        return
+      }
+
+      if (cancelled) return
+      setSignedIn(isAuthenticated)
+      if (!isAuthenticated) return
+
+      setLoading(true)
+      try {
+        const inbox = await window.api.getInbox()
+        if (!cancelled) setEmails(inbox)
+      } catch (e) {
+        if (!cancelled) setError(e instanceof Error ? e.message : String(e))
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    }
+
+    void initialize()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
   return (
     <div className="app">
-      <h1>Mailsy</h1>
       <div className="actions">
-        <button onClick={handleSignIn}>Sign in with Google</button>
-        <button onClick={handleLoad} disabled={loading}>
-          {loading ? 'Loading...' : 'Load inbox'}
-        </button>
+        {signedIn === false && <button onClick={handleSignIn}>Sign in with Google</button>}
+        {loading && <span role="status">Loading inbox...</span>}
       </div>
 
       {error && <p className="error">{error}</p>}

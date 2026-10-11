@@ -96,3 +96,7 @@ export function getGmailClient(): ReturnType<typeof google.gmail> {
   // the library auto-fetches fresh access tokens from the refresh token
   return google.gmail({ version: 'v1', auth: client })
 }
+
+export function isSignedIn(): boolean {
+  return loadRefreshToken() !== null
+}

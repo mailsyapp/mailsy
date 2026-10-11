@@ -8,6 +8,7 @@ declare global {
     electron: ElectronAPI
     api: {
       signIn(): Promise<void>
+      isSignedIn(): Promise<boolean>
       getInbox(): Promise<EmailSummary[]>
       getMessage(id: string): Promise<EmailDetail>
     }
