@@ -100,6 +100,10 @@ export async function fetchMessage(id: string): Promise<EmailDetail> {
   return {
     id,
     from: header('From'),
+    to: header('To'),
+    cc: header('Cc'),
+    bcc: header('Bcc'),
+    replyTo: header('Reply-To'),
     subject: header('Subject') || '(no subject)',
     date: header('Date'),
     snippet: msg.data.snippet ?? '',

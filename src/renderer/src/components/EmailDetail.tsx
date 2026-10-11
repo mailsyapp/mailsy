@@ -51,14 +51,21 @@ export function EmailDetail({
   </head>
   <body>${sanitizedHtml}</body>
 </html>`
+  const senderName =
+  email.from.match(/^(.*?)\s*<[^>]+>$/)?.[1].replace(/^"|"$/g, '') ??
+  email.from
 
   return (
     <div>
       <h2>{email.subject}</h2>
-      <p>
-        {email.from} — {email.date}
-      </p>
-      <p>{email.snippet}</p>
+      <div>
+        <div>{senderName}</div>
+        {detail?.to && <div>To: {detail.to}</div>}
+        {detail?.cc && <div>Cc: {detail.cc}</div>}
+        {detail?.bcc && <div>Bcc: {detail.bcc}</div>}
+        {detail?.replyTo && <div>Reply-To: {detail.replyTo}</div>}
+        <div>{email.date}</div>
+      </div>
 
       {detailLoading ? (
         <p>Loading email...</p>
