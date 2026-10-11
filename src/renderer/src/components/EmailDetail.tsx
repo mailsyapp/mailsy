@@ -54,10 +54,6 @@ export function EmailDetail({
 
   return (
     <div>
-      <button type="button" onClick={onBack}>
-        ← Back to inbox
-      </button>
-
       <h2>{email.subject}</h2>
       <p>
         {email.from} — {email.date}
