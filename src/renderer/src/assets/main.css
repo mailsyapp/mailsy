@@ -5,6 +5,16 @@ body {
   background: #fff; 
 }
 
+.app {
+  display: flex;
+  flex-direction: column;
+  height: calc(100dvh - 48px);
+}
+
+.app h1 {
+  margin: 0 0 16px;
+}
+
 .actions { 
   display: flex; 
   gap: 8px; 
@@ -50,7 +60,31 @@ button {
 
 .email-sidebar {
   border: 2px solid black;
-  width: 30dvw;
-  padding-left: 10px;
-  padding-right: 10px;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 10px;
+}
+
+.email-content {
+  border: 2px solid black;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 16px;
+}
+
+.mail-layout {
+  display: grid;
+  flex: 1;
+  grid-template-columns: minmax(220px, 32%) minmax(0, 1fr);
+  gap: 12px;
+  min-height: 0;
+}
+
+@media (max-width: 700px) {
+  .mail-layout {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(120px, 35%) minmax(0, 1fr);
+  }
 }

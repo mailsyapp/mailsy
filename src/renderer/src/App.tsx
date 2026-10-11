@@ -63,28 +63,11 @@ function App(): React.JSX.Element {
 
       {error && <p className="error">{error}</p>}
 
-      {selectedEmail ? (
-        <div className="email-detail">
-          <EmailDetail
-            email={selectedEmail}
-            detail={detail}
-            detailLoading={detailLoading}
-            onBack={handleBack}
-          />
-        </div>
-      ) : (
-        <div className="email-sidebar">
+      <main className="mail-layout">
+        <aside className="email-sidebar" aria-label="Inbox">
           <ul className="emails">
             {emails.map((email) => (
-              <li
-                key={email.id}
-                style={{
-                  width: '30dvw',
-                  whiteSpace: 'nowrap',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                }}
-              >
+              <li key={email.id}>
                 <button
                   type="button"
                   onClick={() => handleSelect(email.id)}
@@ -97,8 +80,21 @@ function App(): React.JSX.Element {
               </li>
             ))}
           </ul>
-        </div>
-      )}
+        </aside>
+
+        <section className="email-content" aria-label="Email content">
+          {selectedEmail ? (
+            <EmailDetail
+              email={selectedEmail}
+              detail={detail}
+              detailLoading={detailLoading}
+              onBack={handleBack}
+            />
+          ) : (
+            <p>Nothing open yet :P</p>
+          )}
+        </section>
+      </main>
     </div>
   )
 }
