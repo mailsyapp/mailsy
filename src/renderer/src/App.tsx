@@ -73,29 +73,31 @@ function App(): React.JSX.Element {
           />
         </div>
       ) : (
-        <ul className="emails">
-          {emails.map((email) => (
-            <li
-              key={email.id}
-              style={{
-                width: '30dvw',
-                whiteSpace: 'nowrap',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-              }}
-            >
-              <button
-                type="button"
-                onClick={() => handleSelect(email.id)}
-                style={{ all: 'unset', display: 'block', cursor: 'pointer', width: '100%' }}
+        <div className="email-sidebar">
+          <ul className="emails">
+            {emails.map((email) => (
+              <li
+                key={email.id}
+                style={{
+                  width: '30dvw',
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                }}
               >
-                <strong className="email-text">{email.subject}</strong>
-                <div className="from email-text">{email.from}</div>
-                <div className="snippet email-text">{email.snippet}</div>
-              </button>
-            </li>
-          ))}
-        </ul>
+                <button
+                  type="button"
+                  onClick={() => handleSelect(email.id)}
+                  style={{ all: 'unset', display: 'block', cursor: 'pointer', width: '100%' }}
+                >
+                  <strong className="email-text">{email.subject}</strong>
+                  <div className="from email-text">{email.from}</div>
+                  <div className="snippet email-text">{email.snippet}</div>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
     </div>
   )
