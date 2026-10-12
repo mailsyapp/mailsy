@@ -26,11 +26,6 @@ function App(): React.JSX.Element {
     }
   }
 
-  function handleBack(): void {
-    setSelectedId(null)
-    setDetail(null)
-  }
-
   async function handleSignIn(): Promise<void> {
     setError(null)
     try {
@@ -123,7 +118,6 @@ function App(): React.JSX.Element {
               email={selectedEmail}
               detail={detail}
               detailLoading={detailLoading}
-              onBack={handleBack}
             />
           ) : (
             <p>Nothing open yet :P</p>

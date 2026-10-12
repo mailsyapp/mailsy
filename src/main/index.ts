@@ -3,7 +3,8 @@ import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { signIn, isSignedIn } from './auth'
-import { fetchInbox, fetchMessage } from './gmail'
+import { fetchInbox, fetchMessage, sendEmail } from './gmail'
+import type { SendEmailRequest } from '../shared/types'
 
 function createWindow(): void {
   // Create the browser window.
@@ -57,6 +58,9 @@ app.whenReady().then(() => {
   ipcMain.handle('auth:is-signed-in', () => isSignedIn())
   ipcMain.handle('gmail:inbox', () => fetchInbox(10))
   ipcMain.handle('gmail:get', (_event, id: string) => fetchMessage(id))
+  ipcMain.handle('gmail:send', (_event, request: SendEmailRequest) =>
+    sendEmail(request)
+  )
 
   createWindow()
 
