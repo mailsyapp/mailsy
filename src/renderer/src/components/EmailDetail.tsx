@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import DOMPurify from 'dompurify'
 import type { EmailSummary, EmailDetail as EmailDetailData } from '../../../shared/types'
 
@@ -34,6 +34,14 @@ export function EmailDetail({
     [detail?.bodyHtml],
   )
 
+  type Draft = {
+    to: string
+    subject: string
+    body: string
+  }
+
+  const [draft, setDraft] = useState<Draft | null>(null)
+
   const emailDocument = `<!doctype html>
 <html>
   <head>
@@ -54,6 +62,34 @@ export function EmailDetail({
   const senderName =
   email.from.match(/^(.*?)\s*<[^>]+>$/)?.[1].replace(/^"|"$/g, '') ??
   email.from
+
+  function replyToEmail() {
+    if (!detail) return
+
+    const originalText = detail.bodyText || email.snippet
+    const quotedText = originalText
+      .split('\n')
+      .map((line) => `> ${line}`)
+      .join('\n')
+
+    setDraft({
+      to: detail.replyTo.trim() || detail.from.trim() || email.from,
+      subject: /^re:/i.test(email.subject) ? email.subject : `Re: ${email.subject}`,
+      body: `\n\nOn ${email.date}, ${email.from} wrote:\n${quotedText}`,
+    })
+  }
+
+  function forwardEmail() {
+    if (!detail) return
+
+    const originalText = detail.bodyText || email.snippet
+
+    setDraft({
+      to: '',
+      subject: /^fwd:/i.test(email.subject) ? email.subject : `Fwd: ${email.subject}`,
+      body: `\n\n---------- Forwarded message ----------\nFrom: ${email.from}\nDate: ${email.date}\nSubject: ${email.subject}\n\n${originalText}`,
+    })
+  }
 
   return (
     <div>
@@ -92,6 +128,50 @@ export function EmailDetail({
         <pre style={{ whiteSpace: 'pre-wrap' }}>{detail.bodyText}</pre>
       ) : (
         <div className="snippet">{email.snippet}</div>
+      )}
+      <button onClick={ replyToEmail }>reply</button>
+      <button onClick={ forwardEmail }>forward</button>
+
+      {draft && (
+        <form
+          className="composer"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="composer-title"
+          onSubmit={(event) => event.preventDefault()}
+        >
+          <h2 id="composer-title">Compose email</h2>
+
+          <label className="composerField">
+            <span>To</span>
+            <input
+              value={draft.to}
+              onChange={(event) => setDraft({ ...draft, to: event.target.value })}
+            />
+          </label>
+
+          <label className="composerField">
+            <span>Subject</span>
+            <input
+              value={draft.subject}
+              onChange={(event) => setDraft({ ...draft, subject: event.target.value })}
+            />
+          </label>
+
+          <label className="composerField">
+            <span>Message</span>
+            <textarea
+              rows={12}
+              value={draft.body}
+              onChange={(event) => setDraft({ ...draft, body: event.target.value })}
+            />
+          </label>
+
+          <div className="composerActions">
+            <button type="button" onClick={() => setDraft(null)}>Cancel</button>
+            <button type="submit" disabled>Send</button>
+          </div>
+        </form>
       )}
     </div>
   )
