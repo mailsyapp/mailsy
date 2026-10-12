@@ -1,6 +1,21 @@
 import { getGmailClient } from './auth'
+import type { Readable } from 'node:stream'
 import type { gmail_v1 } from 'googleapis'
-import type { EmailSummary, EmailDetail } from '../shared/types'
+import { createTransport } from 'nodemailer'
+import type { EmailSummary, EmailDetail, SendEmailRequest } from '../shared/types'
+
+function toBuffer(message: Buffer | Readable): Promise<Buffer> {
+  if (Buffer.isBuffer(message)) return Promise.resolve(message)
+
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = []
+    message.on('data', (chunk: Buffer | string) => {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
+    })
+    message.on('end', () => resolve(Buffer.concat(chunks)))
+    message.on('error', reject)
+  })
+}
 
 function decodeBody(data?: string | null): string {
   if (!data) return ''
@@ -104,12 +119,57 @@ export async function fetchMessage(id: string): Promise<EmailDetail> {
     cc: header('Cc'),
     bcc: header('Bcc'),
     replyTo: header('Reply-To'),
+    threadId: msg.data.threadId ?? '',
+    messageId: header('Message-ID'),
+    references: header('References'),
     subject: header('Subject') || '(no subject)',
     date: header('Date'),
     snippet: msg.data.snippet ?? '',
     bodyText: out.text,
     bodyHtml
   }
+}
+
+export async function sendEmail(request: SendEmailRequest): Promise<void> {
+  if (
+    !request ||
+    typeof request.to !== 'string' ||
+    typeof request.subject !== 'string' ||
+    typeof request.body !== 'string' ||
+    (request.threadId !== undefined && typeof request.threadId !== 'string') ||
+    (request.inReplyTo !== undefined && typeof request.inReplyTo !== 'string') ||
+    (request.references !== undefined && typeof request.references !== 'string')
+  ) {
+    throw new Error('Invalid email request')
+  }
+  if (!request.to.trim()) throw new Error('Recipient is required')
+
+  const gmail = getGmailClient()
+  const profile = await gmail.users.getProfile({ userId: 'me' })
+  const from = profile.data.emailAddress
+  if (!from) throw new Error('Could not determine the signed-in Gmail address')
+
+  const transport = createTransport({
+    streamTransport: true,
+    newline: 'unix'
+  })
+  const message = await transport.sendMail({
+    from,
+    to: request.to,
+    subject: request.subject,
+    text: request.body,
+    ...(request.inReplyTo ? { inReplyTo: request.inReplyTo } : {}),
+    ...(request.references ? { references: request.references } : {})
+  })
+  const raw = await toBuffer(message.message)
+
+  await gmail.users.messages.send({
+    userId: 'me',
+    requestBody: {
+      raw: raw.toString('base64url'),
+      ...(request.threadId ? { threadId: request.threadId } : {})
+    }
+  })
 }
 
 export async function fetchInbox(count = 10): Promise<EmailSummary[]> {

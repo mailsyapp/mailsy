@@ -11,6 +11,18 @@ export interface EmailDetail extends EmailSummary {
   cc: string
   bcc: string
   replyTo: string
+  threadId: string
+  messageId: string
+  references: string
   bodyHtml?: string
   bodyText?: string
+}
+
+export interface SendEmailRequest {
+  to: string
+  subject: string
+  body: string
+  threadId?: string
+  inReplyTo?: string
+  references?: string
 }

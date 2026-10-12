@@ -1,20 +1,22 @@
 import { useMemo, useState } from 'react'
 import DOMPurify from 'dompurify'
-import type { EmailSummary, EmailDetail as EmailDetailData } from '../../../shared/types'
+import type {
+  EmailSummary,
+  EmailDetail as EmailDetailData,
+  SendEmailRequest
+} from '../../../shared/types'
 
 type EmailDetailProps = {
   email: EmailSummary
   detail: EmailDetailData | null
   detailLoading: boolean
-  onBack: () => void
 }
 
 export function EmailDetail({
   email,
   detail,
   detailLoading,
-  onBack,
-}: EmailDetailProps) {
+}: EmailDetailProps): React.JSX.Element {
   const sanitizedHtml = useMemo(
     () =>
       DOMPurify.sanitize(detail?.bodyHtml ?? '', {
@@ -34,13 +36,10 @@ export function EmailDetail({
     [detail?.bodyHtml],
   )
 
-  type Draft = {
-    to: string
-    subject: string
-    body: string
-  }
-
-  const [draft, setDraft] = useState<Draft | null>(null)
+  const [draft, setDraft] = useState<SendEmailRequest | null>(null)
+  const [sending, setSending] = useState(false)
+  const [sendError, setSendError] = useState<string | null>(null)
+  const [sent, setSent] = useState(false)
 
   const emailDocument = `<!doctype html>
 <html>
@@ -63,9 +62,11 @@ export function EmailDetail({
   email.from.match(/^(.*?)\s*<[^>]+>$/)?.[1].replace(/^"|"$/g, '') ??
   email.from
 
-  function replyToEmail() {
+  function replyToEmail(): void {
     if (!detail) return
 
+    setSendError(null)
+    setSent(false)
     const originalText = detail.bodyText || email.snippet
     const quotedText = originalText
       .split('\n')
@@ -76,12 +77,18 @@ export function EmailDetail({
       to: detail.replyTo.trim() || detail.from.trim() || email.from,
       subject: /^re:/i.test(email.subject) ? email.subject : `Re: ${email.subject}`,
       body: `\n\nOn ${email.date}, ${email.from} wrote:\n${quotedText}`,
+      threadId: detail.threadId || undefined,
+      inReplyTo: detail.messageId || undefined,
+      references:
+        [detail.references, detail.messageId].filter(Boolean).join(' ') || undefined
     })
   }
 
-  function forwardEmail() {
+  function forwardEmail(): void {
     if (!detail) return
 
+    setSendError(null)
+    setSent(false)
     const originalText = detail.bodyText || email.snippet
 
     setDraft({
@@ -89,6 +96,24 @@ export function EmailDetail({
       subject: /^fwd:/i.test(email.subject) ? email.subject : `Fwd: ${email.subject}`,
       body: `\n\n---------- Forwarded message ----------\nFrom: ${email.from}\nDate: ${email.date}\nSubject: ${email.subject}\n\n${originalText}`,
     })
+  }
+
+  async function handleSend(event: React.FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault()
+    if (!draft || sending) return
+
+    setSending(true)
+    setSendError(null)
+    setSent(false)
+    try {
+      await window.api.sendEmail(draft)
+      setDraft(null)
+      setSent(true)
+    } catch (error) {
+      setSendError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setSending(false)
+    }
   }
 
   return (
@@ -135,16 +160,14 @@ export function EmailDetail({
       {draft && (
         <form
           className="composer"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="composer-title"
-          onSubmit={(event) => event.preventDefault()}
+          onSubmit={handleSend}
         >
           <h2 id="composer-title">Compose email</h2>
 
           <label className="composerField">
             <span>To</span>
             <input
+              required
               value={draft.to}
               onChange={(event) => setDraft({ ...draft, to: event.target.value })}
             />
@@ -167,12 +190,17 @@ export function EmailDetail({
             />
           </label>
 
+          {sendError && <p role="alert">{sendError}</p>}
+
           <div className="composerActions">
             <button type="button" onClick={() => setDraft(null)}>Cancel</button>
-            <button type="submit" disabled>Send</button>
+            <button type="submit" disabled={sending || !draft.to.trim()}>
+              {sending ? 'Sending...' : 'Send'}
+            </button>
           </div>
         </form>
       )}
+      {sent && <p role="status">Message sent.</p>}
     </div>
   )
 }
