@@ -23,6 +23,16 @@ export interface EmailThread {
   messages: EmailDetail[]
 }
 
+export interface FetchInboxOptions {
+  maxResults?: number
+  pageToken?: string | null
+}
+
+export interface InboxPage {
+  emails: EmailSummary[]
+  nextPageToken: string | null
+}
+
 export interface SendEmailRequest {
   to: string
   subject: string
