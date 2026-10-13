@@ -12,6 +12,37 @@ type EmailDetailProps = {
   detailLoading: boolean
 }
 
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (character) => {
+    const entities: Record<string, string> = {
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;'
+    }
+    return entities[character] ?? character
+  })
+}
+
+function plainTextToHtml(value: string): string {
+  return escapeHtml(value).replace(/\r?\n/g, '<br>')
+}
+
+function formatDraftHtml(body: string, quoteText: string, quoteHtml: string): string {
+  if (!quoteText) return plainTextToHtml(body)
+
+  const quoteStart = body.indexOf(quoteText)
+  if (quoteStart === -1) return plainTextToHtml(body)
+
+  const quoteEnd = quoteStart + quoteText.length
+  return (
+    plainTextToHtml(body.slice(0, quoteStart)) +
+    quoteHtml +
+    plainTextToHtml(body.slice(quoteEnd))
+  )
+}
+
 export function EmailDetail({
   email,
   detail,
@@ -37,6 +68,9 @@ export function EmailDetail({
   )
 
   const [draft, setDraft] = useState<SendEmailRequest | null>(null)
+  const [quotedContent, setQuotedContent] = useState<{ text: string; html: string } | null>(
+    null
+  )
   const [sending, setSending] = useState(false)
   const [sendError, setSendError] = useState<string | null>(null)
   const [sent, setSent] = useState(false)
@@ -68,15 +102,19 @@ export function EmailDetail({
     setSendError(null)
     setSent(false)
     const originalText = detail.bodyText || email.snippet
-    const quotedText = originalText
+    const quotedText = `On ${email.date}, ${email.from} wrote:\n${originalText
       .split('\n')
       .map((line) => `> ${line}`)
-      .join('\n')
+      .join('\n')}`
+    const quotedHtml = `<p>On ${escapeHtml(email.date)}, ${escapeHtml(email.from)} wrote:</p><blockquote>${
+      sanitizedHtml || `<pre>${escapeHtml(originalText)}</pre>`
+    }</blockquote>`
 
+    setQuotedContent({ text: quotedText, html: quotedHtml })
     setDraft({
       to: detail.replyTo.trim() || detail.from.trim() || email.from,
       subject: /^re:/i.test(email.subject) ? email.subject : `Re: ${email.subject}`,
-      body: `\n\nOn ${email.date}, ${email.from} wrote:\n${quotedText}`,
+      body: `\n\n${quotedText}`,
       threadId: detail.threadId || undefined,
       inReplyTo: detail.messageId || undefined,
       references:
@@ -90,11 +128,26 @@ export function EmailDetail({
     setSendError(null)
     setSent(false)
     const originalText = detail.bodyText || email.snippet
+    const forwardHeader = [
+      '---------- Forwarded message ----------',
+      `From: ${email.from}`,
+      `To: ${detail.to}`,
+      `Date: ${email.date}`,
+      `Subject: ${email.subject}`
+    ].join('\n')
+    const quotedText = `${forwardHeader}\n\n${originalText}`
+    const quotedHtml = `<p>${forwardHeader
+      .split('\n')
+      .map(escapeHtml)
+      .join('<br>')}</p><blockquote>${
+      sanitizedHtml || `<pre>${escapeHtml(originalText)}</pre>`
+    }</blockquote>`
 
+    setQuotedContent({ text: quotedText, html: quotedHtml })
     setDraft({
       to: '',
       subject: /^fwd:/i.test(email.subject) ? email.subject : `Fwd: ${email.subject}`,
-      body: `\n\n---------- Forwarded message ----------\nFrom: ${email.from}\nDate: ${email.date}\nSubject: ${email.subject}\n\n${originalText}`,
+      body: `\n\n${quotedText}`,
     })
   }
 
@@ -106,8 +159,14 @@ export function EmailDetail({
     setSendError(null)
     setSent(false)
     try {
-      await window.api.sendEmail(draft)
+      await window.api.sendEmail({
+        ...draft,
+        ...(quotedContent
+          ? { bodyHtml: formatDraftHtml(draft.body, quotedContent.text, quotedContent.html) }
+          : {})
+      })
       setDraft(null)
+      setQuotedContent(null)
       setSent(true)
     } catch (error) {
       setSendError(error instanceof Error ? error.message : String(error))
@@ -193,7 +252,15 @@ export function EmailDetail({
           {sendError && <p role="alert">{sendError}</p>}
 
           <div className="composerActions">
-            <button type="button" onClick={() => setDraft(null)}>Cancel</button>
+            <button
+              type="button"
+              onClick={() => {
+                setDraft(null)
+                setQuotedContent(null)
+              }}
+            >
+              Cancel
+            </button>
             <button type="submit" disabled={sending || !draft.to.trim()}>
               {sending ? 'Sending...' : 'Send'}
             </button>
