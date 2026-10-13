@@ -136,6 +136,7 @@ export async function sendEmail(request: SendEmailRequest): Promise<void> {
     typeof request.to !== 'string' ||
     typeof request.subject !== 'string' ||
     typeof request.body !== 'string' ||
+    (request.bodyHtml !== undefined && typeof request.bodyHtml !== 'string') ||
     (request.threadId !== undefined && typeof request.threadId !== 'string') ||
     (request.inReplyTo !== undefined && typeof request.inReplyTo !== 'string') ||
     (request.references !== undefined && typeof request.references !== 'string')
@@ -158,6 +159,7 @@ export async function sendEmail(request: SendEmailRequest): Promise<void> {
     to: request.to,
     subject: request.subject,
     text: request.body,
+    ...(request.bodyHtml !== undefined ? { html: request.bodyHtml } : {}),
     ...(request.inReplyTo ? { inReplyTo: request.inReplyTo } : {}),
     ...(request.references ? { references: request.references } : {})
   })

@@ -22,6 +22,7 @@ export interface SendEmailRequest {
   to: string
   subject: string
   body: string
+  bodyHtml?: string
   threadId?: string
   inReplyTo?: string
   references?: string
