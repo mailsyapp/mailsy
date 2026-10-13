@@ -2,7 +2,14 @@ import { getGmailClient } from './auth'
 import type { Readable } from 'node:stream'
 import type { gmail_v1 } from 'googleapis'
 import { createTransport } from 'nodemailer'
-import type { EmailSummary, EmailDetail, EmailThread, SendEmailRequest } from '../shared/types'
+import type {
+  EmailSummary,
+  EmailDetail,
+  EmailThread,
+  FetchInboxOptions,
+  InboxPage,
+  SendEmailRequest
+} from '../shared/types'
 
 function toBuffer(message: Buffer | Readable): Promise<Buffer> {
   if (Buffer.isBuffer(message)) return Promise.resolve(message)
@@ -196,19 +203,21 @@ export async function sendEmail(request: SendEmailRequest): Promise<void> {
   })
 }
 
-export async function fetchInbox(count = 10): Promise<EmailSummary[]> {
+export async function fetchInbox(options: FetchInboxOptions = {}): Promise<InboxPage> {
   const gmail = getGmailClient()
+  const maxResults = Math.min(Math.max(options.maxResults ?? 30, 1), 100)
 
-  // 1) list returns only message IDs
+  // 1) list returns only message IDs, plus a nextPageToken when more exist
   const list = await gmail.users.messages.list({
     userId: 'me',
     labelIds: ['INBOX'],
-    maxResults: count
+    maxResults,
+    ...(options.pageToken ? { pageToken: options.pageToken } : {})
   })
   const ids = (list.data.messages ?? []).flatMap((m) => (m.id ? [m.id] : []))
 
   // 2) fetch details for each ID, all in parallel
-  return Promise.all(
+  const emails = await Promise.all(
     ids.map(async (id): Promise<EmailSummary> => {
       const msg = await gmail.users.messages.get({
         userId: 'me',
@@ -230,4 +239,6 @@ export async function fetchInbox(count = 10): Promise<EmailSummary[]> {
       }
     })
   )
+
+  return { emails, nextPageToken: list.data.nextPageToken ?? null }
 }

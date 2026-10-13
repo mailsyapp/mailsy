@@ -1,12 +1,19 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
-import type { EmailSummary, EmailDetail, EmailThread, SendEmailRequest } from '../shared/types'
+import type {
+  EmailDetail,
+  EmailThread,
+  FetchInboxOptions,
+  InboxPage,
+  SendEmailRequest
+} from '../shared/types'
 
 // Custom APIs for renderer
 const api = {
   signIn: (): Promise<void> => ipcRenderer.invoke('auth:sign-in'),
   isSignedIn: (): Promise<boolean> => ipcRenderer.invoke('auth:is-signed-in'),
-  getInbox: (): Promise<EmailSummary[]> => ipcRenderer.invoke('gmail:inbox'),
+  getInbox: (options?: FetchInboxOptions): Promise<InboxPage> =>
+    ipcRenderer.invoke('gmail:inbox', options),
   getMessage: (id: string): Promise<EmailDetail> => ipcRenderer.invoke('gmail:get', id),
   getThread: (threadId: string): Promise<EmailThread> =>
     ipcRenderer.invoke('gmail:thread', threadId),
