@@ -2,7 +2,7 @@ import { getGmailClient } from './auth'
 import type { Readable } from 'node:stream'
 import type { gmail_v1 } from 'googleapis'
 import { createTransport } from 'nodemailer'
-import type { EmailSummary, EmailDetail, SendEmailRequest } from '../shared/types'
+import type { EmailSummary, EmailDetail, EmailThread, SendEmailRequest } from '../shared/types'
 
 function toBuffer(message: Buffer | Readable): Promise<Buffer> {
   if (Buffer.isBuffer(message)) return Promise.resolve(message)
@@ -65,10 +65,12 @@ function collectBodies(
   for (const p of part.parts ?? []) collectBodies(p, out)
 }
 
-export async function fetchMessage(id: string): Promise<EmailDetail> {
-  const gmail = getGmailClient()
-  const msg = await gmail.users.messages.get({ userId: 'me', id, format: 'full' })
-  const headers = msg.data.payload?.headers ?? []
+async function toEmailDetail(
+  gmail: ReturnType<typeof getGmailClient>,
+  msg: gmail_v1.Schema$Message
+): Promise<EmailDetail> {
+  const id = msg.id ?? ''
+  const headers = msg.payload?.headers ?? []
   const header = (name: string): string =>
     headers.find((h) => h.name?.toLowerCase() === name.toLowerCase())?.value ?? ''
 
@@ -82,8 +84,8 @@ export async function fetchMessage(id: string): Promise<EmailDetail> {
       attachmentId?: string | null
     }>
   }
-  if (msg.data.payload) collectBodies(msg.data.payload, out)
-  if (!out.text && !out.html) out.text = decodeBody(msg.data.payload?.body?.data)
+  if (msg.payload) collectBodies(msg.payload, out)
+  if (!out.text && !out.html) out.text = decodeBody(msg.payload?.body?.data)
 
   const inlineImageData = new Map<string, string>()
   await Promise.all(
@@ -119,15 +121,35 @@ export async function fetchMessage(id: string): Promise<EmailDetail> {
     cc: header('Cc'),
     bcc: header('Bcc'),
     replyTo: header('Reply-To'),
-    threadId: msg.data.threadId ?? '',
+    threadId: msg.threadId ?? '',
     messageId: header('Message-ID'),
     references: header('References'),
     subject: header('Subject') || '(no subject)',
     date: header('Date'),
-    snippet: msg.data.snippet ?? '',
+    snippet: msg.snippet ?? '',
     bodyText: out.text,
     bodyHtml
   }
+}
+
+export async function fetchMessage(id: string): Promise<EmailDetail> {
+  const gmail = getGmailClient()
+  const msg = await gmail.users.messages.get({ userId: 'me', id, format: 'full' })
+  return toEmailDetail(gmail, msg.data)
+}
+
+export async function fetchThread(threadId: string): Promise<EmailThread> {
+  if (!threadId.trim()) throw new Error('Thread ID is required')
+  const gmail = getGmailClient()
+  const thread = await gmail.users.threads.get({
+    userId: 'me',
+    id: threadId,
+    format: 'full'
+  })
+  const messages = await Promise.all(
+    (thread.data.messages ?? []).map((msg) => toEmailDetail(gmail, msg))
+  )
+  return { id: thread.data.id ?? threadId, messages }
 }
 
 export async function sendEmail(request: SendEmailRequest): Promise<void> {
@@ -200,6 +222,7 @@ export async function fetchInbox(count = 10): Promise<EmailSummary[]> {
 
       return {
         id,
+        threadId: msg.data.threadId ?? '',
         from: header('From'),
         subject: header('Subject') || '(no subject)',
         date: header('Date'),

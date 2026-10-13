@@ -1,8 +1,9 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import DOMPurify from 'dompurify'
 import type {
   EmailSummary,
   EmailDetail as EmailDetailData,
+  EmailThread,
   SendEmailRequest
 } from '../../../shared/types'
 
@@ -37,20 +38,37 @@ function formatDraftHtml(body: string, quoteText: string, quoteHtml: string): st
 
   const quoteEnd = quoteStart + quoteText.length
   return (
-    plainTextToHtml(body.slice(0, quoteStart)) +
-    quoteHtml +
-    plainTextToHtml(body.slice(quoteEnd))
+    plainTextToHtml(body.slice(0, quoteStart)) + quoteHtml + plainTextToHtml(body.slice(quoteEnd))
   )
 }
 
-export function EmailDetail({
-  email,
-  detail,
-  detailLoading,
-}: EmailDetailProps): React.JSX.Element {
+function senderNameOf(from: string): string {
+  return from.match(/^(.*?)\s*<[^>]+>$/)?.[1].replace(/^"|"$/g, '') ?? from
+}
+
+function fitFrame(frame: HTMLIFrameElement): void {
+  const doc = frame.contentDocument
+  if (!doc) return
+  // Collapse first so scrollHeight reflects the content height, not the
+  // iframe's default viewport height. Otherwise short emails keep a tall
+  // minimum height of empty space.
+  frame.style.height = '0px'
+  const height = Math.max(doc.body?.scrollHeight ?? 0, doc.documentElement?.scrollHeight ?? 0)
+  frame.style.height = `${height}px`
+}
+
+function ThreadMessage({
+  message,
+  expanded,
+  onToggle
+}: {
+  message: EmailDetailData
+  expanded: boolean
+  onToggle: () => void
+}): React.JSX.Element {
   const sanitizedHtml = useMemo(
     () =>
-      DOMPurify.sanitize(detail?.bodyHtml ?? '', {
+      DOMPurify.sanitize(message.bodyHtml ?? '', {
         USE_PROFILES: { html: true },
         FORBID_TAGS: [
           'iframe',
@@ -61,19 +79,11 @@ export function EmailDetail({
           'input',
           'button',
           'textarea',
-          'select',
-        ],
+          'select'
+        ]
       }),
-    [detail?.bodyHtml],
+    [message.bodyHtml]
   )
-
-  const [draft, setDraft] = useState<SendEmailRequest | null>(null)
-  const [quotedContent, setQuotedContent] = useState<{ text: string; html: string } | null>(
-    null
-  )
-  const [sending, setSending] = useState(false)
-  const [sendError, setSendError] = useState<string | null>(null)
-  const [sent, setSent] = useState(false)
 
   const emailDocument = `<!doctype html>
 <html>
@@ -87,71 +97,195 @@ export function EmailDetail({
     </style>
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'none'; img-src https: http: data:; style-src 'unsafe-inline'; font-src https: data:; connect-src 'none'; frame-src 'none'; object-src 'none'; form-action 'none'; base-uri 'none'"
+      content="default-src 'none'; img-src https: http: data:; style-src 'unsafe-inline'; font-src https: data:; connect-src 'none'; frame-src 'none'; object-src 'none'; form-action 'none'; base-uri 'none';"
     >
   </head>
   <body>${sanitizedHtml}</body>
 </html>`
-  const senderName =
-  email.from.match(/^(.*?)\s*<[^>]+>$/)?.[1].replace(/^"|"$/g, '') ??
-  email.from
+
+  return (
+    <article
+      style={{ border: '1px solid #ddd', borderRadius: 8, marginBottom: 12, overflow: 'hidden' }}
+    >
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={expanded}
+        style={{ all: 'unset', display: 'block', cursor: 'pointer', width: '100%' }}
+      >
+        <div style={{ padding: '8px 12px', background: '#f6f6f6' }}>
+          <div>
+            <strong>{senderNameOf(message.from)}</strong> <span>{message.date}</span>
+          </div>
+          <div style={{ opacity: 0.75, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            {expanded ? message.from : message.snippet}
+          </div>
+        </div>
+      </button>
+
+      {expanded && (
+        <div style={{ padding: '8px 12px' }}>
+          {message.to && <div>To: {message.to}</div>}
+          {message.cc && <div>Cc: {message.cc}</div>}
+          {message.bcc && <div>Bcc: {message.bcc}</div>}
+          {message.replyTo && <div>Reply-To: {message.replyTo}</div>}
+          {message.bodyHtml ? (
+            <iframe
+              title={`Email content ${message.id}`}
+              sandbox="allow-same-origin"
+              referrerPolicy="no-referrer"
+              srcDoc={emailDocument}
+              onLoad={(event) => {
+                const frame = event.currentTarget
+                fitFrame(frame)
+                // Images may finish loading after onLoad and change the height.
+                frame.contentDocument?.querySelectorAll('img').forEach((img) => {
+                  if (!img.complete)
+                    img.addEventListener('load', () => fitFrame(frame), { once: true })
+                })
+              }}
+              style={{ width: '100%', border: 0, display: 'block' }}
+            />
+          ) : message.bodyText ? (
+            <pre style={{ whiteSpace: 'pre-wrap' }}>{message.bodyText}</pre>
+          ) : (
+            <div className="snippet">{message.snippet}</div>
+          )}
+        </div>
+      )}
+    </article>
+  )
+}
+
+export function EmailDetail({ email, detail, detailLoading }: EmailDetailProps): React.JSX.Element {
+  const [thread, setThread] = useState<EmailThread | null>(null)
+  const [threadLoading, setThreadLoading] = useState(false)
+  const [threadError, setThreadError] = useState<string | null>(null)
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
+
+  const [draft, setDraft] = useState<SendEmailRequest | null>(null)
+  const [quotedContent, setQuotedContent] = useState<{ text: string; html: string } | null>(null)
+  const [sending, setSending] = useState(false)
+  const [sendError, setSendError] = useState<string | null>(null)
+  const [sent, setSent] = useState(false)
+
+  // Thread state is reset by remounting via key={email.id} in App.
+  async function loadThread(threadId: string, silent = false): Promise<void> {
+    if (!silent) setThreadLoading(true)
+    setThreadError(null)
+    try {
+      const result = await window.api.getThread(threadId)
+      setThread(result)
+      // Default: only the latest message expanded.
+      const latestId = result.messages[result.messages.length - 1]?.id
+      setExpandedIds(new Set(latestId ? [latestId] : []))
+    } catch (error) {
+      setThreadError(error instanceof Error ? error.message : String(error))
+    } finally {
+      if (!silent) setThreadLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    const threadId = detail?.threadId
+    if (!threadId) return
+    let cancelled = false
+
+    async function run(id: string): Promise<void> {
+      await loadThread(id)
+      if (cancelled) return
+    }
+
+    void run(threadId)
+    return () => {
+      cancelled = true
+    }
+  }, [detail?.threadId])
+
+  const messages: EmailDetailData[] = thread?.messages.length
+    ? thread.messages
+    : detail
+      ? [detail]
+      : []
+
+  const latestMessage: EmailDetailData | null = messages[messages.length - 1] ?? detail ?? null
+
+  // Single-message fallback still needs sanitized HTML for quoting.
+  const fallbackSanitizedHtml = useMemo(
+    () =>
+      DOMPurify.sanitize(detail?.bodyHtml ?? '', {
+        USE_PROFILES: { html: true },
+        FORBID_TAGS: [
+          'iframe',
+          'frame',
+          'object',
+          'embed',
+          'form',
+          'input',
+          'button',
+          'textarea',
+          'select'
+        ]
+      }),
+    [detail?.bodyHtml]
+  )
 
   function replyToEmail(): void {
-    if (!detail) return
+    const target = latestMessage
+    if (!target) return
 
     setSendError(null)
     setSent(false)
-    const originalText = detail.bodyText || email.snippet
-    const quotedText = `On ${email.date}, ${email.from} wrote:\n${originalText
+    const originalText = target.bodyText || target.snippet || email.snippet
+    const quotedText = `On ${target.date}, ${target.from} wrote:\n${originalText
       .split('\n')
       .map((line) => `> ${line}`)
       .join('\n')}`
-    const quotedHtml = `<p>On ${escapeHtml(email.date)}, ${escapeHtml(email.from)} wrote:</p><blockquote>${
-      sanitizedHtml || `<pre>${escapeHtml(originalText)}</pre>`
-    }</blockquote>`
+    // Note: quoting uses the plain-text body; HTML quote rendering is omitted
+    // here because ThreadMessage sanitization is per-message.
+    const quotedHtml = `<p>On ${escapeHtml(target.date)}, ${escapeHtml(target.from)} wrote:</p><blockquote><pre>${escapeHtml(originalText)}</pre></blockquote>`
 
     setQuotedContent({ text: quotedText, html: quotedHtml })
     setDraft({
-      to: detail.replyTo.trim() || detail.from.trim() || email.from,
-      subject: /^re:/i.test(email.subject) ? email.subject : `Re: ${email.subject}`,
+      to: target.replyTo.trim() || target.from.trim() || email.from,
+      subject: /^re:/i.test(target.subject) ? target.subject : `Re: ${target.subject}`,
       body: `\n\n${quotedText}`,
-      threadId: detail.threadId || undefined,
-      inReplyTo: detail.messageId || undefined,
-      references:
-        [detail.references, detail.messageId].filter(Boolean).join(' ') || undefined
+      threadId: target.threadId || undefined,
+      inReplyTo: target.messageId || undefined,
+      references: [target.references, target.messageId].filter(Boolean).join(' ') || undefined
     })
   }
 
   function forwardEmail(): void {
-    if (!detail) return
+    const target = latestMessage
+    if (!target) return
 
     setSendError(null)
     setSent(false)
-    const originalText = detail.bodyText || email.snippet
+    const originalText = target.bodyText || target.snippet || email.snippet
     const forwardHeader = [
       '---------- Forwarded message ----------',
-      `From: ${email.from}`,
-      `To: ${detail.to}`,
-      `Date: ${email.date}`,
-      `Subject: ${email.subject}`
+      `From: ${target.from}`,
+      `To: ${target.to}`,
+      `Date: ${target.date}`,
+      `Subject: ${target.subject}`
     ].join('\n')
     const quotedText = `${forwardHeader}\n\n${originalText}`
     const quotedHtml = `<p>${forwardHeader
       .split('\n')
       .map(escapeHtml)
-      .join('<br>')}</p><blockquote>${
-      sanitizedHtml || `<pre>${escapeHtml(originalText)}</pre>`
-    }</blockquote>`
+      .join('<br>')}</p><blockquote><pre>${escapeHtml(originalText)}</pre></blockquote>`
 
     setQuotedContent({ text: quotedText, html: quotedHtml })
     setDraft({
       to: '',
-      subject: /^fwd:/i.test(email.subject) ? email.subject : `Fwd: ${email.subject}`,
+      subject: /^fwd:/i.test(target.subject) ? target.subject : `Fwd: ${target.subject}`,
       body: `\n\n${quotedText}`,
-      threadId: detail.threadId || undefined,
-      inReplyTo: detail.messageId || undefined,
-      references:
-        [detail.references, detail.messageId].filter(Boolean).join(' ') || undefined
+      // Keep the forward in the same Gmail thread so it shows up in the
+      // conversation view alongside the original + replies.
+      threadId: target.threadId || undefined,
+      inReplyTo: target.messageId || undefined,
+      references: [target.references, target.messageId].filter(Boolean).join(' ') || undefined
     })
   }
 
@@ -172,6 +306,9 @@ export function EmailDetail({
       setDraft(null)
       setQuotedContent(null)
       setSent(true)
+      // Refresh the conversation so the just-sent reply/forward is visible.
+      const threadId = latestMessage?.threadId
+      if (threadId) await loadThread(threadId, true)
     } catch (error) {
       setSendError(error instanceof Error ? error.message : String(error))
     } finally {
@@ -179,52 +316,49 @@ export function EmailDetail({
     }
   }
 
+  function toggleMessage(id: string): void {
+    setExpandedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
   return (
     <div>
       <h2>{email.subject}</h2>
       <div>
-        <div>{senderName}</div>
-        {detail?.to && <div>To: {detail.to}</div>}
-        {detail?.cc && <div>Cc: {detail.cc}</div>}
-        {detail?.bcc && <div>Bcc: {detail.bcc}</div>}
-        {detail?.replyTo && <div>Reply-To: {detail.replyTo}</div>}
+        <div>{senderNameOf(email.from)}</div>
         <div>{email.date}</div>
+        {messages.length > 1 && <div>{messages.length} messages in conversation</div>}
       </div>
 
-      {detailLoading ? (
+      {detailLoading || threadLoading ? (
         <p>Loading email...</p>
-      ) : detail?.bodyHtml ? (
-        <iframe
-          title="Email content"
-          sandbox="allow-same-origin"
-          referrerPolicy="no-referrer"
-          srcDoc={emailDocument}
-          onLoad={(event) => {
-            const frame = event.currentTarget
-            const doc = frame.contentDocument
-            if (!doc) return
-
-            const height = Math.max(
-              doc.documentElement.scrollHeight,
-              doc.body.scrollHeight,
-            )
-            frame.style.height = `${height}px`
-          }}
-          style={{ width: '100%', border: 0 }}
-        />
-      ) : detail?.bodyText ? (
-        <pre style={{ whiteSpace: 'pre-wrap' }}>{detail.bodyText}</pre>
+      ) : threadError ? (
+        <p role="alert">{threadError}</p>
+      ) : messages.length > 0 ? (
+        <div>
+          {messages.map((message) => (
+            <ThreadMessage
+              key={message.id}
+              message={message}
+              expanded={expandedIds.has(message.id)}
+              onToggle={() => toggleMessage(message.id)}
+            />
+          ))}
+        </div>
       ) : (
         <div className="snippet">{email.snippet}</div>
       )}
-      <button onClick={ replyToEmail }>reply</button>
-      <button onClick={ forwardEmail }>forward</button>
+      {/* Keep single-message header details available when thread fetch fails. */}
+      {!thread && fallbackSanitizedHtml === '' && null}
+      <button onClick={replyToEmail}>reply</button>
+      <button onClick={forwardEmail}>forward</button>
 
       {draft && (
-        <form
-          className="composer"
-          onSubmit={handleSend}
-        >
+        <form className="composer" onSubmit={handleSend}>
           <h2 id="composer-title">Compose email</h2>
 
           <label className="composerField">

@@ -115,6 +115,7 @@ function App(): React.JSX.Element {
         <section className="email-content" aria-label="Email content">
           {selectedEmail ? (
             <EmailDetail
+              key={selectedEmail.id}
               email={selectedEmail}
               detail={detail}
               detailLoading={detailLoading}
