@@ -148,6 +148,10 @@ export function EmailDetail({
       to: '',
       subject: /^fwd:/i.test(email.subject) ? email.subject : `Fwd: ${email.subject}`,
       body: `\n\n${quotedText}`,
+      threadId: detail.threadId || undefined,
+      inReplyTo: detail.messageId || undefined,
+      references:
+        [detail.references, detail.messageId].filter(Boolean).join(' ') || undefined
     })
   }
 
