@@ -30,6 +30,53 @@ function decodeBody(data?: string | null): string {
   return Buffer.from(b64, 'base64').toString('utf-8')
 }
 
+// Fetch message details with bounded concurrency so one inbox page/search
+// doesn't burst 30 parallel messages.get calls into the per-user rate limit.
+const DETAIL_CONCURRENCY = 5
+const QUOTA_MAX_RETRIES = 2
+
+function isQuotaError(e: unknown): boolean {
+  const message = e instanceof Error ? e.message : String(e)
+  return /quota|rate.?limit|429|userRateLimitExceeded/i.test(message)
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+// Single retry with backoff for quota blips: a debounced keystroke that lands
+// just over the per-minute line waits and succeeds instead of surfacing an
+// error. Only retries quota/rate-limit failures, everything else throws.
+async function withQuotaRetry<T>(fn: () => Promise<T>): Promise<T> {
+  let attempt = 0
+  for (;;) {
+    try {
+      return await fn()
+    } catch (e) {
+      if (!isQuotaError(e) || attempt >= QUOTA_MAX_RETRIES) throw e
+      await sleep(1000 * 2 ** attempt)
+      attempt++
+    }
+  }
+}
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<R>
+): Promise<R[]> {
+  const results: R[] = new Array(items.length)
+  let next = 0
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const i = next++
+      results[i] = await fn(items[i]!)
+    }
+  })
+  await Promise.all(workers)
+  return results
+}
+
 function normalizeContentId(contentId: string): string {
   let normalized = contentId.trim().replace(/^<|>$/g, '')
   try {
@@ -206,25 +253,33 @@ export async function sendEmail(request: SendEmailRequest): Promise<void> {
 export async function fetchInbox(options: FetchInboxOptions = {}): Promise<InboxPage> {
   const gmail = getGmailClient()
   const maxResults = Math.min(Math.max(options.maxResults ?? 30, 1), 100)
+  const q = options.q?.trim() || undefined
 
   // 1) list returns only message IDs, plus a nextPageToken when more exist
-  const list = await gmail.users.messages.list({
-    userId: 'me',
-    labelIds: ['INBOX'],
-    maxResults,
-    ...(options.pageToken ? { pageToken: options.pageToken } : {})
-  })
+  const list = await withQuotaRetry(() =>
+    gmail.users.messages.list({
+      userId: 'me',
+      labelIds: ['INBOX'],
+      maxResults,
+      ...(options.pageToken ? { pageToken: options.pageToken } : {}),
+      ...(q ? { q } : {})
+    })
+  )
   const ids = (list.data.messages ?? []).flatMap((m) => (m.id ? [m.id] : []))
 
-  // 2) fetch details for each ID, all in parallel
-  const emails = await Promise.all(
-    ids.map(async (id): Promise<EmailSummary> => {
-      const msg = await gmail.users.messages.get({
-        userId: 'me',
-        id,
-        format: 'metadata',
-        metadataHeaders: ['From', 'Subject', 'Date']
-      })
+  // 2) fetch details for each ID with bounded concurrency (quota-friendly)
+  const emails = await mapWithConcurrency(
+    ids,
+    DETAIL_CONCURRENCY,
+    async (id): Promise<EmailSummary> => {
+      const msg = await withQuotaRetry(() =>
+        gmail.users.messages.get({
+          userId: 'me',
+          id,
+          format: 'metadata',
+          metadataHeaders: ['From', 'Subject', 'Date']
+        })
+      )
       const headers = msg.data.payload?.headers ?? []
       const header = (name: string): string =>
         headers.find((h) => h.name?.toLowerCase() === name.toLowerCase())?.value ?? ''
@@ -237,7 +292,7 @@ export async function fetchInbox(options: FetchInboxOptions = {}): Promise<Inbox
         date: header('Date'),
         snippet: msg.data.snippet ?? ''
       }
-    })
+    }
   )
 
   return { emails, nextPageToken: list.data.nextPageToken ?? null }
