@@ -26,6 +26,7 @@ export interface EmailThread {
 export interface FetchInboxOptions {
   maxResults?: number
   pageToken?: string | null
+  q?: string
 }
 
 export interface InboxPage {

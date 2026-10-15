@@ -75,6 +75,29 @@ button {
   padding-top: 0px;
 }
 
+.search-bar {
+  position: sticky;
+  top: 0;
+  padding: 10px 0;
+  background: #fff;
+}
+
+.search-bar input {
+  display: block;
+  width: 100%;
+  padding: 10px 12px;
+  font: inherit;
+  border-radius: 8px;
+  border: 1px solid #ccc;
+  background: #fff;
+  outline: none;
+}
+
+.search-bar input:focus {
+  border-color: #000;
+  box-shadow: 0 0 0 2px #000;
+}
+
 .mail-layout {
   display: grid;
   flex: 1;
