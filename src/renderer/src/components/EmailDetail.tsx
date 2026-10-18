@@ -21,6 +21,8 @@ type EmailDetailProps = {
   // Reports a thread read-state flip (auto-read on open, manual toggle) so
   // App can move the list rows, which it owns.
   onThreadReadChanged: (threadId: string, unread: boolean) => void
+  // Reports a thread star flip so App can restyle or drop list rows.
+  onThreadStarChanged: (threadId: string, starred: boolean) => void
 }
 
 function escapeHtml(value: string): string {
@@ -197,7 +199,8 @@ export function EmailDetail({
   detailLoading,
   folder,
   onThreadRemoved,
-  onThreadReadChanged
+  onThreadReadChanged,
+  onThreadStarChanged
 }: EmailDetailProps): React.JSX.Element {
   const [thread, setThread] = useState<EmailThread | null>(null)
   const [threadLoading, setThreadLoading] = useState(false)
@@ -218,6 +221,9 @@ export function EmailDetail({
 
   const [togglingRead, setTogglingRead] = useState(false)
   const [readError, setReadError] = useState<string | null>(null)
+
+  const [togglingStar, setTogglingStar] = useState(false)
+  const [starError, setStarError] = useState<string | null>(null)
 
   // One auto-read attempt per opened email: the ref records the email id so
   // re-renders don't re-fire the labels.modify call. A failed attempt stays
@@ -249,6 +255,24 @@ export function EmailDetail({
       setReadError(error instanceof Error ? error.message : String(error))
     } finally {
       setTogglingRead(false)
+    }
+  }
+
+  async function handleToggleStar(): Promise<void> {
+    if (togglingStar) return
+    setTogglingStar(true)
+    setStarError(null)
+    try {
+      await window.api.modifyLabels({
+        kind: 'thread',
+        id: email.threadId,
+        ...(email.starred ? { removeLabelIds: ['STARRED'] } : { addLabelIds: ['STARRED'] })
+      })
+      onThreadStarChanged(email.threadId, !email.starred)
+    } catch (error) {
+      setStarError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setTogglingStar(false)
     }
   }
 
@@ -449,6 +473,15 @@ export function EmailDetail({
         <div>{senderNameOf(email.from)}</div>
         <div>{email.date}</div>
         {messages.length > 1 && <div>{messages.length} messages in conversation</div>}
+        <button
+          type="button"
+          className={`star-toggle${email.starred ? ' starred' : ''}`}
+          onClick={handleToggleStar}
+          disabled={togglingStar}
+          aria-pressed={email.starred}
+        >
+          {email.starred ? 'starred' : 'not starred'}
+        </button>
       </div>
 
       {detailLoading || threadLoading ? (
@@ -490,6 +523,7 @@ export function EmailDetail({
       {archiveError && <p role="alert">{archiveError}</p>}
       {deleteError && <p role="alert">{deleteError}</p>}
       {readError && <p role="alert">{readError}</p>}
+      {starError && <p role="alert">{starError}</p>}
 
       {draft && (
         <form className="composer" onSubmit={handleSend}>
