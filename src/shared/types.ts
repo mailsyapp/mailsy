@@ -1,3 +1,6 @@
+// Read state is Gmail's absence or presence of the UNREAD label, flattened
+// to a boolean where the summary is built so the renderer never parses
+// labelIds itself.
 export interface EmailSummary {
   id: string
   threadId: string
@@ -5,6 +8,7 @@ export interface EmailSummary {
   subject: string
   date: string
   snippet: string
+  unread: boolean
   draftId?: string
 }
 
