@@ -235,6 +235,25 @@ function App(): React.JSX.Element {
     closeEmail()
   }
 
+  // Read/unread is also thread-level: Gmail marks whole conversations, and
+  // threads.modify on UNREAD does the same batch shape as archive above.
+  function handleThreadReadChanged(threadId: string, unread: boolean): void {
+    setEmails((prev) =>
+      prev.map((e) => (e.threadId === threadId && e.unread !== unread ? { ...e, unread } : e))
+    )
+  }
+
+  function handleRowReadToggle(email: EmailSummary): void {
+    window.api
+      .modifyLabels({
+        kind: 'thread',
+        id: email.threadId,
+        ...(email.unread ? { removeLabelIds: ['UNREAD'] } : { addLabelIds: ['UNREAD'] })
+      })
+      .then(() => handleThreadReadChanged(email.threadId, !email.unread))
+      .catch((e: unknown) => setError(formatFetchError(e)))
+  }
+
   function handleFolderSelect(folder: MailFolder): void {
     if (folder === activeFolder) return
     setActiveFolder(folder)
@@ -446,7 +465,7 @@ function App(): React.JSX.Element {
           )}
           <ul className="emails">
             {displayedEmails.map((email) => (
-              <li key={email.id}>
+              <li key={email.id} className={email.unread ? 'unread' : undefined}>
                 <button
                   type="button"
                   onClick={() => handleSelect(email.id)}
@@ -456,6 +475,11 @@ function App(): React.JSX.Element {
                   <div className="from email-text">{email.from}</div>
                   <div className="snippet email-text">{email.snippet}</div>
                 </button>
+                {activeFolder !== 'drafts' && (
+                  <button type="button" onClick={() => handleRowReadToggle(email)}>
+                    {email.unread ? 'mark read' : 'mark unread'}
+                  </button>
+                )}
               </li>
             ))}
           </ul>
