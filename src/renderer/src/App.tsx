@@ -98,6 +98,13 @@ function App(): React.JSX.Element {
   // Draft rows removed shortly after sending: one timer per sent draft, so
   // removing A is never dropped because B was sent inside A's delay window.
   const draftPruneTimersRef = useRef(new Map<string, number>())
+  // Synchronous mirrors of the in-flight flags and next-page token. The
+  // mounted IntersectionObserver can fire several times during the first
+  // fetch, before any of those states have committed, so loadMore's guards
+  // read these instead of render-scoped state.
+  const loadingMoreRef = useRef(false)
+  const searchingRef = useRef(false)
+  const nextPageTokenRef = useRef<string | null | undefined>(undefined)
 
   const hasMore = nextPageToken !== null
   const isSearchActive = committedQuery.length > 0
@@ -238,27 +245,41 @@ function App(): React.JSX.Element {
     // The list resets with the folder: a stale nextPageToken from the old
     // folder must never pair with the new folder's next-page fetch.
     setEmails([])
+    nextPageTokenRef.current = undefined
     setNextPageToken(undefined)
+    searchingRef.current = false
     lastFetchedRef.current = null
   }
 
   const loadMore = useCallback((): void => {
-    if (loadingMore || searching || nextPageToken === null) return
+    // Guards read the synchronous refs: the observer can fire repeatedly
+    // within one fetch's window, before the states it mirrors have
+    // committed, and a stale false here appends duplicate pages.
+    if (loadingMoreRef.current || searchingRef.current || nextPageTokenRef.current === null) return
+    // Same request guard as the list effect below: a slower overlapping
+    // response must never write after a response a later request superseded.
+    const requestId = ++requestIdRef.current
+    loadingMoreRef.current = true
     setLoadingMore(true)
     window.api
       .listFolder({
         maxResults: committedQuery ? SEARCH_PAGE_SIZE : LIST_PAGE_SIZE,
-        pageToken: nextPageToken ?? undefined,
+        pageToken: nextPageTokenRef.current ?? undefined,
         folder: activeFolder,
         ...(committedQuery ? { q: committedQuery } : {})
       })
       .then((page) => {
+        if (requestIdRef.current !== requestId) return
         setEmails((prev) => [...prev, ...page.emails])
+        nextPageTokenRef.current = page.nextPageToken
         setNextPageToken(page.nextPageToken)
       })
       .catch((e: unknown) => setError(formatFetchError(e)))
-      .finally(() => setLoadingMore(false))
-  }, [loadingMore, searching, nextPageToken, committedQuery, activeFolder])
+      .finally(() => {
+        loadingMoreRef.current = false
+        setLoadingMore(false)
+      })
+  }, [committedQuery, activeFolder])
 
   useEffect(() => {
     const sentinel = sentinelRef.current
@@ -304,11 +325,13 @@ function App(): React.JSX.Element {
       : undefined
     if (cached) {
       setEmails(cached.emails)
+      nextPageTokenRef.current = cached.nextPageToken
       setNextPageToken(cached.nextPageToken)
       lastFetchedRef.current = { folder: activeFolder, q: committedQuery }
       return
     }
     const requestId = ++requestIdRef.current
+    searchingRef.current = true
     setSearching(true)
     setError(null)
     closeEmail()
@@ -321,6 +344,7 @@ function App(): React.JSX.Element {
       .then((page) => {
         if (requestIdRef.current !== requestId) return
         setEmails(page.emails)
+        nextPageTokenRef.current = page.nextPageToken
         setNextPageToken(page.nextPageToken)
         if (!committedQuery) {
           setUnfilteredByFolder((prev) => new Map(prev).set(activeFolder, page.emails))
@@ -338,7 +362,10 @@ function App(): React.JSX.Element {
         setError(formatFetchError(e))
       })
       .finally(() => {
-        if (requestIdRef.current === requestId) setSearching(false)
+        if (requestIdRef.current === requestId) {
+          searchingRef.current = false
+          setSearching(false)
+        }
       })
     // `emails.length` is intentionally read, not depended on: depending on
     // it would refetch after every result arrives.
