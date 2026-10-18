@@ -6,7 +6,6 @@ import type {
   MailPage,
   MailFolder
 } from '../../shared/types'
-import { SESSION_EXPIRED_ERROR } from '../../shared/types'
 import { EmailDetail } from './components/EmailDetail'
 import { DraftEditor } from './components/DraftEditor'
 import { FolderRail } from './components/FolderRail'
@@ -209,10 +208,12 @@ function App(): React.JSX.Element {
   // One funnel for every boundary failure. A dead Google grant (the main
   // process already dropped the token file) can never succeed by retrying,
   // so the only usable screen is the sign-in one: the list and its search
-  // state reset with the same flip.
+  // state reset with the same flip. Either boundary failure sentence can
+  // arrive (the token may already be gone between two racing calls), so
+  // both flip.
   function recordError(e: unknown): void {
     setError(formatFetchError(e))
-    if (e instanceof Error && e.message.includes(SESSION_EXPIRED_ERROR)) {
+    if (e instanceof Error && /session has expired|not signed in yet/i.test(e.message)) {
       setSignedIn(false)
       setCommittedQuery('')
       setSearchInput('')
