@@ -1,3 +1,6 @@
+// Read state is Gmail's absence or presence of the UNREAD label, flattened
+// to a boolean where the summary is built so the renderer never parses
+// labelIds itself.
 export interface EmailSummary {
   id: string
   threadId: string
@@ -5,6 +8,7 @@ export interface EmailSummary {
   subject: string
   date: string
   snippet: string
+  unread: boolean
   draftId?: string
 }
 
@@ -38,6 +42,10 @@ export interface MailPage {
   emails: EmailSummary[]
   nextPageToken: string | null
 }
+
+// The sentence main rewrites dead-grant failures to. The renderer matches on
+// it to drop back to the sign-in screen, so both sides share one constant.
+export const SESSION_EXPIRED_ERROR = 'Your Google session has expired. Sign in again.'
 
 export interface SendEmailRequest {
   to: string

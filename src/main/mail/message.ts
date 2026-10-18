@@ -61,6 +61,7 @@ export async function toEmailDetail(
     subject: headerOf(headers, 'Subject') || '(no subject)',
     date: headerOf(headers, 'Date'),
     snippet: msg.snippet ?? '',
+    unread: (msg.labelIds ?? []).includes('UNREAD'),
     bodyText: out.text,
     bodyHtml
   }
@@ -80,6 +81,7 @@ export function toEmailSummary(
     subject: headerOf(headers, 'Subject') || '(no subject)',
     date: headerOf(headers, 'Date'),
     snippet: msg.snippet ?? '',
+    unread: (msg.labelIds ?? []).includes('UNREAD'),
     ...(draftId ? { draftId } : {})
   }
 }

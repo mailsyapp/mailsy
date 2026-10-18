@@ -38,6 +38,14 @@ button {
   border-bottom: 1px solid #eee;
 }
 
+/* Unread rows read as bold text, the same weight signal Gmail gives
+   unread mail, so the mark-read toggle has an observable effect. */
+.emails li.unread .email-text,
+.emails li.unread .from,
+.emails li.unread .snippet {
+  font-weight: 700;
+}
+
 .from {
   color: #555;
   font-size: 13px;
