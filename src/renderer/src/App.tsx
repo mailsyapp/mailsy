@@ -6,6 +6,7 @@ import type {
   MailPage,
   MailFolder
 } from '../../shared/types'
+import { SESSION_EXPIRED_ERROR } from '../../shared/types'
 import { EmailDetail } from './components/EmailDetail'
 import { DraftEditor } from './components/DraftEditor'
 import { FolderRail } from './components/FolderRail'
@@ -183,7 +184,7 @@ function App(): React.JSX.Element {
     window.api
       .getMessage(id)
       .then(setDetail)
-      .catch((e: unknown) => setError(formatFetchError(e)))
+      .catch((e: unknown) => recordError(e))
       .finally(() => setDetailLoading(false))
   }
 
@@ -197,12 +198,31 @@ function App(): React.JSX.Element {
         lastFetchedRef.current = null
         setSignedIn(true)
       })
-      .catch((e: unknown) => setError(formatFetchError(e)))
+      .catch((e: unknown) => recordError(e))
   }
 
   function handleClearSearch(): void {
     setSearchInput('')
     if (committedQuery !== '') setCommittedQuery('')
+  }
+
+  // One funnel for every boundary failure. A dead Google grant (the main
+  // process already dropped the token file) can never succeed by retrying,
+  // so the only usable screen is the sign-in one: the list and its search
+  // state reset with the same flip.
+  function recordError(e: unknown): void {
+    setError(formatFetchError(e))
+    if (e instanceof Error && e.message.includes(SESSION_EXPIRED_ERROR)) {
+      setSignedIn(false)
+      setCommittedQuery('')
+      setSearchInput('')
+      closeEmail()
+      setEmails([])
+      nextPageTokenRef.current = undefined
+      setNextPageToken(undefined)
+      searchingRef.current = false
+      lastFetchedRef.current = null
+    }
   }
 
   function handleSearchSubmit(): void {
@@ -251,7 +271,7 @@ function App(): React.JSX.Element {
         ...(email.unread ? { removeLabelIds: ['UNREAD'] } : { addLabelIds: ['UNREAD'] })
       })
       .then(() => handleThreadReadChanged(email.threadId, !email.unread))
-      .catch((e: unknown) => setError(formatFetchError(e)))
+      .catch((e: unknown) => recordError(e))
   }
 
   function handleFolderSelect(folder: MailFolder): void {
@@ -293,11 +313,14 @@ function App(): React.JSX.Element {
         nextPageTokenRef.current = page.nextPageToken
         setNextPageToken(page.nextPageToken)
       })
-      .catch((e: unknown) => setError(formatFetchError(e)))
+      .catch((e: unknown) => recordError(e))
       .finally(() => {
         loadingMoreRef.current = false
         setLoadingMore(false)
       })
+    // recordError is render-scoped like the neighbouring handlers it calls;
+    // nothing it closes over changes this callback's behavior.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [committedQuery, activeFolder])
 
   useEffect(() => {
@@ -378,7 +401,7 @@ function App(): React.JSX.Element {
       })
       .catch((e: unknown) => {
         if (requestIdRef.current !== requestId) return
-        setError(formatFetchError(e))
+        recordError(e)
       })
       .finally(() => {
         if (requestIdRef.current === requestId) {
@@ -405,7 +428,7 @@ function App(): React.JSX.Element {
           setSignedIn(isAuthenticated)
         })
         .catch((e: unknown) => {
-          if (!cancelled) setError(formatFetchError(e))
+          if (!cancelled) recordError(e)
         })
     }
 
@@ -413,6 +436,8 @@ function App(): React.JSX.Element {
     return () => {
       cancelled = true
     }
+    // recordError is render-scoped and stable in behavior; mount-once stays.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   return (
