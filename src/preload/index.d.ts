@@ -8,6 +8,7 @@ declare global {
   type MailPage = import('../shared/types').MailPage
   type SendEmailRequest = import('../shared/types').SendEmailRequest
   type SendDraftRequest = import('../shared/types').SendDraftRequest
+  type ModifyLabelsRequest = import('../shared/types').ModifyLabelsRequest
 
   interface Window {
     electron: ElectronAPI
@@ -19,6 +20,7 @@ declare global {
       getThread(threadId: string): Promise<EmailThread>
       sendEmail(request: SendEmailRequest): Promise<void>
       sendDraft(request: SendDraftRequest): Promise<void>
+      modifyLabels(request: ModifyLabelsRequest): Promise<void>
     }
   }
 }

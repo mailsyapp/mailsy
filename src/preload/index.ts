@@ -5,6 +5,7 @@ import type {
   EmailThread,
   ListFolderOptions,
   MailPage,
+  ModifyLabelsRequest,
   SendDraftRequest,
   SendEmailRequest
 } from '../shared/types'
@@ -21,7 +22,9 @@ const api = {
   sendEmail: (request: SendEmailRequest): Promise<void> =>
     ipcRenderer.invoke('gmail:send', request),
   sendDraft: (request: SendDraftRequest): Promise<void> =>
-    ipcRenderer.invoke('gmail:send-draft', request)
+    ipcRenderer.invoke('gmail:send-draft', request),
+  modifyLabels: (request: ModifyLabelsRequest): Promise<void> =>
+    ipcRenderer.invoke('gmail:modify', request)
 }
 
 // Use `contextBridge` APIs to expose Electron APIs to
