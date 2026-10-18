@@ -221,9 +221,9 @@ function App(): React.JSX.Element {
     )
   }
 
-  // Archive is a thread mutation while the list is one row per message, so
-  // every row sharing the threadId is the archived conversation.
-  function handleArchived(threadId: string): void {
+  // Archive and delete are thread mutations while the list is one row per
+  // message, so every row sharing the threadId leaves the list together.
+  function handleThreadRemoved(threadId: string): void {
     setEmails((prev) => prev.filter((e) => e.threadId !== threadId))
     closeEmail()
   }
@@ -472,7 +472,7 @@ function App(): React.JSX.Element {
                 detail={detail}
                 detailLoading={detailLoading}
                 folder={activeFolder}
-                onArchived={handleArchived}
+                onThreadRemoved={handleThreadRemoved}
               />
             )
           ) : (

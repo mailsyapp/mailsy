@@ -14,9 +14,10 @@ type EmailDetailProps = {
   detail: EmailDetailData | null
   detailLoading: boolean
   folder: MailFolder
-  // Reports the archived thread's ID once the archive succeeded. List removal
-  // is owned by App because the list is one row per message, not per thread.
-  onArchived: (threadId: string) => void
+  // Reports the thread's ID once a list-clearing action (archive, delete)
+  // succeeded. List removal is owned by App because the list is one row per
+  // message, not per thread.
+  onThreadRemoved: (threadId: string) => void
 }
 
 function escapeHtml(value: string): string {
@@ -192,7 +193,7 @@ export function EmailDetail({
   detail,
   detailLoading,
   folder,
-  onArchived
+  onThreadRemoved
 }: EmailDetailProps): React.JSX.Element {
   const [thread, setThread] = useState<EmailThread | null>(null)
   const [threadLoading, setThreadLoading] = useState(false)
@@ -207,6 +208,9 @@ export function EmailDetail({
 
   const [archiving, setArchiving] = useState(false)
   const [archiveError, setArchiveError] = useState<string | null>(null)
+
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
 
   // Thread state is reset by remounting via key={email.id} in App.
   async function loadThread(threadId: string, silent = false): Promise<void> {
@@ -358,11 +362,34 @@ export function EmailDetail({
         id: email.threadId,
         removeLabelIds: ['INBOX']
       })
-      onArchived(email.threadId)
+      onThreadRemoved(email.threadId)
     } catch (error) {
       setArchiveError(error instanceof Error ? error.message : String(error))
     } finally {
       setArchiving(false)
+    }
+  }
+
+  // Trash, like archive, is a label mutation: add TRASH, remove INBOX. The
+  // draft and trash folders are excluded because trashing a draft thread
+  // leaves it in drafts.list, and an already-trashed thread has nothing to
+  // mutate.
+  async function handleDelete(): Promise<void> {
+    if (deleting) return
+    setDeleting(true)
+    setDeleteError(null)
+    try {
+      await window.api.modifyLabels({
+        kind: 'thread',
+        id: email.threadId,
+        addLabelIds: ['TRASH'],
+        removeLabelIds: ['INBOX']
+      })
+      onThreadRemoved(email.threadId)
+    } catch (error) {
+      setDeleteError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setDeleting(false)
     }
   }
 
@@ -411,8 +438,14 @@ export function EmailDetail({
           archive
         </button>
       )}
+      {folder !== 'trash' && folder !== 'drafts' && (
+        <button onClick={handleDelete} disabled={deleting}>
+          delete
+        </button>
+      )}
 
       {archiveError && <p role="alert">{archiveError}</p>}
+      {deleteError && <p role="alert">{deleteError}</p>}
 
       {draft && (
         <form className="composer" onSubmit={handleSend}>
