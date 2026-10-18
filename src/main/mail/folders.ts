@@ -12,7 +12,10 @@ import { toEmailSummary } from './message'
 const FOLDER_LABEL_IDS: Record<Exclude<MailFolder, 'drafts'>, string[]> = {
   inbox: ['INBOX'],
   sent: ['SENT'],
-  trash: ['TRASH']
+  trash: ['TRASH'],
+  // STARRED alone (no folder constraint): Gmail's Starred view spans every
+  // mail that carries the label, wherever it is.
+  starred: ['STARRED']
 }
 
 async function fetchDrafts(
