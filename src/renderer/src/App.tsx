@@ -524,6 +524,7 @@ function App(): React.JSX.Element {
                 detailLoading={detailLoading}
                 folder={activeFolder}
                 onThreadRemoved={handleThreadRemoved}
+                onThreadReadChanged={handleThreadReadChanged}
               />
             )
           ) : (

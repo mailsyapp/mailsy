@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import DOMPurify from 'dompurify'
 import { AutoGrowTextarea } from './AutoGrowTextarea'
 import type {
@@ -18,6 +18,9 @@ type EmailDetailProps = {
   // succeeded. List removal is owned by App because the list is one row per
   // message, not per thread.
   onThreadRemoved: (threadId: string) => void
+  // Reports a thread read-state flip (auto-read on open, manual toggle) so
+  // App can move the list rows, which it owns.
+  onThreadReadChanged: (threadId: string, unread: boolean) => void
 }
 
 function escapeHtml(value: string): string {
@@ -193,7 +196,8 @@ export function EmailDetail({
   detail,
   detailLoading,
   folder,
-  onThreadRemoved
+  onThreadRemoved,
+  onThreadReadChanged
 }: EmailDetailProps): React.JSX.Element {
   const [thread, setThread] = useState<EmailThread | null>(null)
   const [threadLoading, setThreadLoading] = useState(false)
@@ -211,6 +215,42 @@ export function EmailDetail({
 
   const [deleting, setDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
+
+  const [togglingRead, setTogglingRead] = useState(false)
+  const [readError, setReadError] = useState<string | null>(null)
+
+  // One auto-read attempt per opened email: the ref records the email id so
+  // re-renders don't re-fire the labels.modify call. A failed attempt stays
+  // recorded — retrying on every render would spam the quota on persistent
+  // errors, and the row stays bold until the manual toggle below succeeds.
+  const autoReadRef = useRef<string | null>(null)
+
+  useEffect(() => {
+    if (!email.unread || !email.threadId || autoReadRef.current === email.id) return
+    autoReadRef.current = email.id
+    window.api
+      .modifyLabels({ kind: 'thread', id: email.threadId, removeLabelIds: ['UNREAD'] })
+      .then(() => onThreadReadChanged(email.threadId, false))
+      .catch(() => {})
+  }, [email.id, email.unread, email.threadId, onThreadReadChanged])
+
+  async function handleToggleRead(): Promise<void> {
+    if (togglingRead) return
+    setTogglingRead(true)
+    setReadError(null)
+    try {
+      await window.api.modifyLabels({
+        kind: 'thread',
+        id: email.threadId,
+        ...(email.unread ? { removeLabelIds: ['UNREAD'] } : { addLabelIds: ['UNREAD'] })
+      })
+      onThreadReadChanged(email.threadId, !email.unread)
+    } catch (error) {
+      setReadError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setTogglingRead(false)
+    }
+  }
 
   // Thread state is reset by remounting via key={email.id} in App.
   async function loadThread(threadId: string, silent = false): Promise<void> {
@@ -433,6 +473,9 @@ export function EmailDetail({
 
       <button onClick={replyToEmail}>reply</button>
       <button onClick={forwardEmail}>forward</button>
+      <button onClick={handleToggleRead} disabled={togglingRead}>
+        {email.unread ? 'mark as read' : 'mark as unread'}
+      </button>
       {folder === 'inbox' && (
         <button onClick={handleArchive} disabled={archiving}>
           archive
@@ -446,6 +489,7 @@ export function EmailDetail({
 
       {archiveError && <p role="alert">{archiveError}</p>}
       {deleteError && <p role="alert">{deleteError}</p>}
+      {readError && <p role="alert">{readError}</p>}
 
       {draft && (
         <form className="composer" onSubmit={handleSend}>
