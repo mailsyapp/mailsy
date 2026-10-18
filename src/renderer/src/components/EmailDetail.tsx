@@ -31,6 +31,47 @@ function plainTextToHtml(value: string): string {
   return escapeHtml(value).replace(/\r?\n/g, '<br>')
 }
 
+function sanitizeEmailHtml(html: string): string {
+  return DOMPurify.sanitize(html, {
+    USE_PROFILES: { html: true },
+    FORBID_TAGS: [
+      'iframe',
+      'frame',
+      'object',
+      'embed',
+      'form',
+      'input',
+      'button',
+      'textarea',
+      'select'
+    ]
+  })
+}
+
+// Gmail renders the elided-quote affordance only for its own native quote
+// markup: a gmail_quote_container div holding a gmail_attr attribution line
+// and a gmail_quote blockquote. Anything else shows as literal text.
+const QUOTE_BLOCKQUOTE_STYLE =
+  'margin:0px 0px 0px 0.8ex;border-left:1px solid rgb(204,204,204);padding-left:1ex'
+
+function buildQuoteHtml(attrHtml: string, originalHtml: string, originalText: string): string {
+  const inner = originalHtml || plainTextToHtml(originalText)
+  return `<div class="gmail_quote gmail_quote_container"><div class="gmail_attr">${attrHtml}</div><blockquote class="gmail_quote" style="${QUOTE_BLOCKQUOTE_STYLE}">${inner}</blockquote></div>`
+}
+
+function gmailDateOf(value: string): string {
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) return value
+  return new Intl.DateTimeFormat('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit'
+  }).format(parsed)
+}
+
 function formatDraftHtml(body: string, quoteText: string, quoteHtml: string): string {
   if (!quoteText) return plainTextToHtml(body)
 
@@ -67,24 +108,7 @@ function ThreadMessage({
   expanded: boolean
   onToggle: () => void
 }): React.JSX.Element {
-  const sanitizedHtml = useMemo(
-    () =>
-      DOMPurify.sanitize(message.bodyHtml ?? '', {
-        USE_PROFILES: { html: true },
-        FORBID_TAGS: [
-          'iframe',
-          'frame',
-          'object',
-          'embed',
-          'form',
-          'input',
-          'button',
-          'textarea',
-          'select'
-        ]
-      }),
-    [message.bodyHtml]
-  )
+  const sanitizedHtml = useMemo(() => sanitizeEmailHtml(message.bodyHtml ?? ''), [message.bodyHtml])
 
   const emailDocument = `<!doctype html>
 <html>
@@ -222,9 +246,11 @@ export function EmailDetail({ email, detail, detailLoading }: EmailDetailProps):
       .split('\n')
       .map((line) => `> ${line}`)
       .join('\n')}`
-    // Note: quoting uses the plain-text body; HTML quote rendering is omitted
-    // here because ThreadMessage sanitization is per-message.
-    const quotedHtml = `<p>On ${escapeHtml(target.date)}, ${escapeHtml(target.from)} wrote:</p><blockquote><pre>${escapeHtml(originalText)}</pre></blockquote>`
+    const quotedHtml = buildQuoteHtml(
+      `On ${escapeHtml(gmailDateOf(target.date))}, ${escapeHtml(target.from)} wrote:<br>`,
+      target.bodyHtml ? sanitizeEmailHtml(target.bodyHtml) : '',
+      originalText
+    )
 
     setQuotedContent({ text: quotedText, html: quotedHtml })
     setDraft({
@@ -252,10 +278,21 @@ export function EmailDetail({ email, detail, detailLoading }: EmailDetailProps):
       `Subject: ${target.subject}`
     ].join('\n')
     const quotedText = `${forwardHeader}\n\n${originalText}`
-    const quotedHtml = `<p>${forwardHeader
-      .split('\n')
+    const forwardAttrHtml = [
+      '---------- Forwarded message ---------',
+      `From: ${target.from}`,
+      `To: ${target.to}`,
+      `Date: ${target.date}`,
+      `Subject: ${target.subject}`
+    ]
       .map(escapeHtml)
-      .join('<br>')}</p><blockquote><pre>${escapeHtml(originalText)}</pre></blockquote>`
+      .join('<br>')
+      .concat('<br><br>')
+    const quotedHtml = buildQuoteHtml(
+      forwardAttrHtml,
+      target.bodyHtml ? sanitizeEmailHtml(target.bodyHtml) : '',
+      originalText
+    )
 
     setQuotedContent({ text: quotedText, html: quotedHtml })
     setDraft({

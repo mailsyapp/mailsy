@@ -12,6 +12,11 @@ const CLIENT_SECRET = import.meta.env.MAIN_VITE_GOOGLE_CLIENT_SECRET as string
 const SCOPES = ['https://www.googleapis.com/auth/gmail.modify']
 
 function makeClient(redirectUri?: string): OAuth2Client {
+  if (!CLIENT_ID || !CLIENT_SECRET) {
+    throw new Error(
+      'Google OAuth credentials are missing. Set MAIN_VITE_GOOGLE_CLIENT_ID and MAIN_VITE_GOOGLE_CLIENT_SECRET in .env'
+    )
+  }
   return new OAuth2Client({
     clientId: CLIENT_ID,
     clientSecret: CLIENT_SECRET,
@@ -19,11 +24,9 @@ function makeClient(redirectUri?: string): OAuth2Client {
   })
 }
 
-// Encrypting and storing the token
 const tokenPath = (): string => path.join(app.getPath('userData'), 'refresh-token.bin')
 
 function saveRefreshToken(token: string): void {
-  // safeStorage encrypts using the OS (Keychain / Windows DPAPI / libsecret)
   fs.writeFileSync(tokenPath(), safeStorage.encryptString(token))
 }
 
@@ -37,10 +40,9 @@ export function signIn(): Promise<void> {
     const state = crypto.randomBytes(16).toString('hex')
     const server = http.createServer()
 
-    // port 0 = "OS, pick any free port for me"
     server.listen(0, '127.0.0.1', async () => {
       try {
-        const port = (server.address() as AddressInfo).port // asking what the random port is
+        const port = (server.address() as AddressInfo).port
         const client = makeClient(`http://127.0.0.1:${port}`)
         const { codeVerifier, codeChallenge } = await client.generateCodeVerifierAsync()
 
@@ -48,7 +50,6 @@ export function signIn(): Promise<void> {
           const url = new URL(req.url ?? '/', `http://127.0.0.1:${port}`)
           const code = url.searchParams.get('code')
 
-          // ignore stray requests (like the browser asking for a favicon)
           if (!code || url.searchParams.get('state') !== state) {
             res.end('Waiting for Google...')
             return
@@ -77,7 +78,7 @@ export function signIn(): Promise<void> {
           code_challenge: codeChallenge,
           code_challenge_method: CodeChallengeMethod.S256
         })
-        await shell.openExternal(authUrl) // opens the user's default browser
+        await shell.openExternal(authUrl)
       } catch (err) {
         server.close()
         reject(err)
@@ -86,14 +87,16 @@ export function signIn(): Promise<void> {
   })
 }
 
-// use the stored token
-export function getGmailClient(): ReturnType<typeof google.gmail> {
+export type GmailClient = ReturnType<typeof google.gmail>
+
+export function getGmailClient(): GmailClient {
   const refreshToken = loadRefreshToken()
   if (!refreshToken) throw new Error('Not signed in yet')
 
   const client = makeClient()
   client.setCredentials({ refresh_token: refreshToken })
-  // the library auto-fetches fresh access tokens from the refresh token
+  // google-auth-library fetches and caches a fresh access token from the
+  // refresh token on every call; nothing here does it manually.
   return google.gmail({ version: 'v1', auth: client })
 }
 
