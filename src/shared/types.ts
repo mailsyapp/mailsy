@@ -5,6 +5,7 @@ export interface EmailSummary {
   subject: string
   date: string
   snippet: string
+  draftId?: string
 }
 
 export interface EmailDetail extends EmailSummary {
@@ -13,6 +14,7 @@ export interface EmailDetail extends EmailSummary {
   bcc: string
   replyTo: string
   messageId: string
+  inReplyTo: string
   references: string
   bodyHtml?: string
   bodyText?: string
@@ -23,13 +25,16 @@ export interface EmailThread {
   messages: EmailDetail[]
 }
 
-export interface FetchInboxOptions {
+export type MailFolder = 'inbox' | 'drafts' | 'sent' | 'trash'
+
+export interface ListFolderOptions {
   maxResults?: number
   pageToken?: string | null
   q?: string
+  folder?: MailFolder
 }
 
-export interface InboxPage {
+export interface MailPage {
   emails: EmailSummary[]
   nextPageToken: string | null
 }
@@ -42,4 +47,10 @@ export interface SendEmailRequest {
   threadId?: string
   inReplyTo?: string
   references?: string
+}
+
+// A draft send is exactly a normal send plus the draft to consume; keeping
+// it as an extension makes the field sets identical by construction.
+export interface SendDraftRequest extends SendEmailRequest {
+  draftId: string
 }

@@ -3,8 +3,8 @@ import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { signIn, isSignedIn } from './auth'
-import { fetchInbox, fetchMessage, fetchThread, sendEmail } from './gmail'
-import type { FetchInboxOptions, SendEmailRequest } from '../shared/types'
+import { fetchFolder, fetchMessage, fetchThread, sendEmail, sendDraft } from './gmail'
+import type { ListFolderOptions, SendEmailRequest, SendDraftRequest } from '../shared/types'
 
 function createWindow(): void {
   // Create the browser window.
@@ -56,10 +56,11 @@ app.whenReady().then(() => {
   ipcMain.on('ping', () => console.log('pong'))
   ipcMain.handle('auth:sign-in', () => signIn())
   ipcMain.handle('auth:is-signed-in', () => isSignedIn())
-  ipcMain.handle('gmail:inbox', (_event, options?: FetchInboxOptions) => fetchInbox(options))
+  ipcMain.handle('gmail:list', (_event, options?: ListFolderOptions) => fetchFolder(options))
   ipcMain.handle('gmail:get', (_event, id: string) => fetchMessage(id))
   ipcMain.handle('gmail:thread', (_event, threadId: string) => fetchThread(threadId))
   ipcMain.handle('gmail:send', (_event, request: SendEmailRequest) => sendEmail(request))
+  ipcMain.handle('gmail:send-draft', (_event, request: SendDraftRequest) => sendDraft(request))
 
   createWindow()
 
