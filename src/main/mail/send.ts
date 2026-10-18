@@ -1,7 +1,7 @@
 import { getGmailClient } from '../auth'
 import type { GmailClient } from '../auth'
 import type { SendDraftRequest, SendEmailRequest } from '../../shared/types'
-import { withQuotaRetry } from './resilience'
+import { rethrowDeadGrant, withQuotaRetry } from './resilience'
 import { buildRawMessage } from './mime'
 
 function assertSendFields(request: SendEmailRequest): void {
@@ -30,17 +30,22 @@ async function resolveFromAddress(gmail: GmailClient): Promise<string> {
 export async function sendEmail(request: SendEmailRequest): Promise<void> {
   assertSendFields(request)
 
-  const gmail = getGmailClient()
-  const from = await resolveFromAddress(gmail)
-  const raw = await buildRawMessage(from, request)
+  try {
+    const gmail = getGmailClient()
+    const from = await resolveFromAddress(gmail)
+    const raw = await buildRawMessage(from, request)
 
-  await gmail.users.messages.send({
-    userId: 'me',
-    requestBody: {
-      raw,
-      ...(request.threadId ? { threadId: request.threadId } : {})
-    }
-  })
+    await gmail.users.messages.send({
+      userId: 'me',
+      requestBody: {
+        raw,
+        ...(request.threadId ? { threadId: request.threadId } : {})
+      }
+    })
+  } catch (e) {
+    rethrowDeadGrant(e)
+    throw e
+  }
 }
 
 export async function sendDraft(request: SendDraftRequest): Promise<void> {
@@ -49,32 +54,38 @@ export async function sendDraft(request: SendDraftRequest): Promise<void> {
     throw new Error('Draft ID is required')
   }
 
-  const gmail = getGmailClient()
-  const from = await resolveFromAddress(gmail)
+  try {
+    const gmail = getGmailClient()
+    const from = await resolveFromAddress(gmail)
 
-  // Atomicity contract of the Gmail drafts API: drafts.update replaces the
-  // draft content with exactly what the editor showed, then drafts.send
-  // transmits and deletes the draft in one operation. Using messages.send
-  // plus drafts.delete instead leaves a window where the mail is out but the
-  // draft lingers, and a retry after a successful send can duplicate the mail.
-  const raw = await buildRawMessage(from, request)
+    // Atomicity contract of the Gmail drafts API: drafts.update replaces the
+    // draft content with exactly what the editor showed, then drafts.send
+    // transmits and deletes the draft in one operation. Using messages.send
+    // plus drafts.delete instead leaves a window where the mail is out but
+    // the draft lingers, and a retry after a successful send can duplicate
+    // the mail.
+    const raw = await buildRawMessage(from, request)
 
-  await withQuotaRetry(() =>
-    gmail.users.drafts.update({
-      userId: 'me',
-      id: request.draftId,
-      requestBody: {
-        message: {
-          raw,
-          ...(request.threadId ? { threadId: request.threadId } : {})
+    await withQuotaRetry(() =>
+      gmail.users.drafts.update({
+        userId: 'me',
+        id: request.draftId,
+        requestBody: {
+          message: {
+            raw,
+            ...(request.threadId ? { threadId: request.threadId } : {})
+          }
         }
-      }
-    })
-  )
-  await withQuotaRetry(() =>
-    gmail.users.drafts.send({
-      userId: 'me',
-      requestBody: { id: request.draftId }
-    })
-  )
+      })
+    )
+    await withQuotaRetry(() =>
+      gmail.users.drafts.send({
+        userId: 'me',
+        requestBody: { id: request.draftId }
+      })
+    )
+  } catch (e) {
+    rethrowDeadGrant(e)
+    throw e
+  }
 }

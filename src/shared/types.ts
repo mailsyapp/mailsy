@@ -43,6 +43,10 @@ export interface MailPage {
   nextPageToken: string | null
 }
 
+// The sentence main rewrites dead-grant failures to. The renderer matches on
+// it to drop back to the sign-in screen, so both sides share one constant.
+export const SESSION_EXPIRED_ERROR = 'Your Google session has expired. Sign in again.'
+
 export interface SendEmailRequest {
   to: string
   subject: string

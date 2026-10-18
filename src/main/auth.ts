@@ -100,6 +100,14 @@ export function getGmailClient(): GmailClient {
   return google.gmail({ version: 'v1', auth: client })
 }
 
+// A refresh token rejected with invalid_grant is dead: Google expired or
+// revoked it, and no retry reactivates it. Only a fresh consent round
+// restores mail access, so keeping the file would make isSignedIn() report
+// signed-in forever and leave every launch in the same dead end.
+export function invalidateStoredGrant(): void {
+  if (fs.existsSync(tokenPath())) fs.unlinkSync(tokenPath())
+}
+
 export function isSignedIn(): boolean {
   return loadRefreshToken() !== null
 }
