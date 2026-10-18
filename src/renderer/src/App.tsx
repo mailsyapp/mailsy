@@ -183,7 +183,7 @@ function App(): React.JSX.Element {
     window.api
       .getMessage(id)
       .then(setDetail)
-      .catch((e: unknown) => setError(formatFetchError(e)))
+      .catch((e: unknown) => recordError(e))
       .finally(() => setDetailLoading(false))
   }
 
@@ -197,12 +197,33 @@ function App(): React.JSX.Element {
         lastFetchedRef.current = null
         setSignedIn(true)
       })
-      .catch((e: unknown) => setError(formatFetchError(e)))
+      .catch((e: unknown) => recordError(e))
   }
 
   function handleClearSearch(): void {
     setSearchInput('')
     if (committedQuery !== '') setCommittedQuery('')
+  }
+
+  // One funnel for every boundary failure. A dead Google grant (the main
+  // process already dropped the token file) can never succeed by retrying,
+  // so the only usable screen is the sign-in one: the list and its search
+  // state reset with the same flip. Either boundary failure sentence can
+  // arrive (the token may already be gone between two racing calls), so
+  // both flip.
+  function recordError(e: unknown): void {
+    setError(formatFetchError(e))
+    if (e instanceof Error && /session has expired|not signed in yet/i.test(e.message)) {
+      setSignedIn(false)
+      setCommittedQuery('')
+      setSearchInput('')
+      closeEmail()
+      setEmails([])
+      nextPageTokenRef.current = undefined
+      setNextPageToken(undefined)
+      searchingRef.current = false
+      lastFetchedRef.current = null
+    }
   }
 
   function handleSearchSubmit(): void {
@@ -233,6 +254,25 @@ function App(): React.JSX.Element {
   function handleThreadRemoved(threadId: string): void {
     setEmails((prev) => prev.filter((e) => e.threadId !== threadId))
     closeEmail()
+  }
+
+  // Read/unread is also thread-level: Gmail marks whole conversations, and
+  // threads.modify on UNREAD does the same batch shape as archive above.
+  function handleThreadReadChanged(threadId: string, unread: boolean): void {
+    setEmails((prev) =>
+      prev.map((e) => (e.threadId === threadId && e.unread !== unread ? { ...e, unread } : e))
+    )
+  }
+
+  function handleRowReadToggle(email: EmailSummary): void {
+    window.api
+      .modifyLabels({
+        kind: 'thread',
+        id: email.threadId,
+        ...(email.unread ? { removeLabelIds: ['UNREAD'] } : { addLabelIds: ['UNREAD'] })
+      })
+      .then(() => handleThreadReadChanged(email.threadId, !email.unread))
+      .catch((e: unknown) => recordError(e))
   }
 
   function handleFolderSelect(folder: MailFolder): void {
@@ -274,11 +314,14 @@ function App(): React.JSX.Element {
         nextPageTokenRef.current = page.nextPageToken
         setNextPageToken(page.nextPageToken)
       })
-      .catch((e: unknown) => setError(formatFetchError(e)))
+      .catch((e: unknown) => recordError(e))
       .finally(() => {
         loadingMoreRef.current = false
         setLoadingMore(false)
       })
+    // recordError is render-scoped like the neighbouring handlers it calls;
+    // nothing it closes over changes this callback's behavior.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [committedQuery, activeFolder])
 
   useEffect(() => {
@@ -359,7 +402,7 @@ function App(): React.JSX.Element {
       })
       .catch((e: unknown) => {
         if (requestIdRef.current !== requestId) return
-        setError(formatFetchError(e))
+        recordError(e)
       })
       .finally(() => {
         if (requestIdRef.current === requestId) {
@@ -386,7 +429,7 @@ function App(): React.JSX.Element {
           setSignedIn(isAuthenticated)
         })
         .catch((e: unknown) => {
-          if (!cancelled) setError(formatFetchError(e))
+          if (!cancelled) recordError(e)
         })
     }
 
@@ -394,6 +437,8 @@ function App(): React.JSX.Element {
     return () => {
       cancelled = true
     }
+    // recordError is render-scoped and stable in behavior; mount-once stays.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   return (
@@ -446,7 +491,7 @@ function App(): React.JSX.Element {
           )}
           <ul className="emails">
             {displayedEmails.map((email) => (
-              <li key={email.id}>
+              <li key={email.id} className={email.unread ? 'unread' : undefined}>
                 <button
                   type="button"
                   onClick={() => handleSelect(email.id)}
@@ -456,6 +501,11 @@ function App(): React.JSX.Element {
                   <div className="from email-text">{email.from}</div>
                   <div className="snippet email-text">{email.snippet}</div>
                 </button>
+                {activeFolder !== 'drafts' && (
+                  <button type="button" onClick={() => handleRowReadToggle(email)}>
+                    {email.unread ? 'mark read' : 'mark unread'}
+                  </button>
+                )}
               </li>
             ))}
           </ul>
@@ -500,6 +550,7 @@ function App(): React.JSX.Element {
                 detailLoading={detailLoading}
                 folder={activeFolder}
                 onThreadRemoved={handleThreadRemoved}
+                onThreadReadChanged={handleThreadReadChanged}
               />
             )
           ) : (
