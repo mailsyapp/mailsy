@@ -3,8 +3,13 @@ import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { signIn, isSignedIn } from './auth'
-import { fetchFolder, fetchMessage, fetchThread, sendEmail, sendDraft } from './mail'
-import type { ListFolderOptions, SendEmailRequest, SendDraftRequest } from '../shared/types'
+import { fetchFolder, fetchMessage, fetchThread, modifyLabels, sendEmail, sendDraft } from './mail'
+import type {
+  ListFolderOptions,
+  ModifyLabelsRequest,
+  SendEmailRequest,
+  SendDraftRequest
+} from '../shared/types'
 
 function createWindow(): void {
   const mainWindow = new BrowserWindow({
@@ -49,6 +54,7 @@ app.whenReady().then(() => {
   ipcMain.handle('gmail:thread', (_event, threadId: string) => fetchThread(threadId))
   ipcMain.handle('gmail:send', (_event, request: SendEmailRequest) => sendEmail(request))
   ipcMain.handle('gmail:send-draft', (_event, request: SendDraftRequest) => sendDraft(request))
+  ipcMain.handle('gmail:modify', (_event, request: ModifyLabelsRequest) => modifyLabels(request))
 
   createWindow()
 

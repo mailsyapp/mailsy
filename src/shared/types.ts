@@ -54,3 +54,10 @@ export interface SendEmailRequest {
 export interface SendDraftRequest extends SendEmailRequest {
   draftId: string
 }
+
+export interface ModifyLabelsRequest {
+  kind: 'message' | 'thread'
+  id: string
+  addLabelIds?: string[]
+  removeLabelIds?: string[]
+}
