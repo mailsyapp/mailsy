@@ -5,13 +5,18 @@ import type {
   EmailSummary,
   EmailDetail as EmailDetailData,
   EmailThread,
-  SendEmailRequest
+  SendEmailRequest,
+  MailFolder
 } from '../../../shared/types'
 
 type EmailDetailProps = {
   email: EmailSummary
   detail: EmailDetailData | null
   detailLoading: boolean
+  folder: MailFolder
+  // Reports the archived thread's ID once the archive succeeded. List removal
+  // is owned by App because the list is one row per message, not per thread.
+  onArchived: (threadId: string) => void
 }
 
 function escapeHtml(value: string): string {
@@ -182,7 +187,13 @@ function ThreadMessage({
   )
 }
 
-export function EmailDetail({ email, detail, detailLoading }: EmailDetailProps): React.JSX.Element {
+export function EmailDetail({
+  email,
+  detail,
+  detailLoading,
+  folder,
+  onArchived
+}: EmailDetailProps): React.JSX.Element {
   const [thread, setThread] = useState<EmailThread | null>(null)
   const [threadLoading, setThreadLoading] = useState(false)
   const [threadError, setThreadError] = useState<string | null>(null)
@@ -193,6 +204,9 @@ export function EmailDetail({ email, detail, detailLoading }: EmailDetailProps):
   const [sending, setSending] = useState(false)
   const [sendError, setSendError] = useState<string | null>(null)
   const [sent, setSent] = useState(false)
+
+  const [archiving, setArchiving] = useState(false)
+  const [archiveError, setArchiveError] = useState<string | null>(null)
 
   // Thread state is reset by remounting via key={email.id} in App.
   async function loadThread(threadId: string, silent = false): Promise<void> {
@@ -334,6 +348,24 @@ export function EmailDetail({ email, detail, detailLoading }: EmailDetailProps):
     }
   }
 
+  async function handleArchive(): Promise<void> {
+    if (archiving) return
+    setArchiving(true)
+    setArchiveError(null)
+    try {
+      await window.api.modifyLabels({
+        kind: 'thread',
+        id: email.threadId,
+        removeLabelIds: ['INBOX']
+      })
+      onArchived(email.threadId)
+    } catch (error) {
+      setArchiveError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setArchiving(false)
+    }
+  }
+
   function toggleMessage(id: string): void {
     setExpandedIds((prev) => {
       const next = new Set(prev)
@@ -374,6 +406,13 @@ export function EmailDetail({ email, detail, detailLoading }: EmailDetailProps):
 
       <button onClick={replyToEmail}>reply</button>
       <button onClick={forwardEmail}>forward</button>
+      {folder === 'inbox' && (
+        <button onClick={handleArchive} disabled={archiving}>
+          archive
+        </button>
+      )}
+
+      {archiveError && <p role="alert">{archiveError}</p>}
 
       {draft && (
         <form className="composer" onSubmit={handleSend}>
