@@ -6,9 +6,11 @@ import type {
   EmailSummary,
   EmailDetail,
   EmailThread,
-  FetchInboxOptions,
-  InboxPage,
-  SendEmailRequest
+  ListFolderOptions,
+  MailFolder,
+  MailPage,
+  SendEmailRequest,
+  SendDraftRequest
 } from '../shared/types'
 
 function toBuffer(message: Buffer | Readable): Promise<Buffer> {
@@ -40,6 +42,16 @@ function isQuotaError(e: unknown): boolean {
   return /quota|rate.?limit|429|userRateLimitExceeded/i.test(message)
 }
 
+// The entity isn't there (deleted elsewhere while we were listing, or a race
+// with another client). Distinct from quota/transport failures, which must
+// surface to the user instead of being treated as recoverable per-item gaps.
+function isNotFoundError(e: unknown): boolean {
+  const code = (e as { code?: unknown })?.code
+  if (code === 404) return true
+  const message = e instanceof Error ? e.message : String(e)
+  return /404|notfound|requested entity was not found/i.test(message)
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
@@ -60,20 +72,29 @@ async function withQuotaRetry<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
+// Runs fn over items with at most `limit` in flight. Settles ALL workers
+// before returning so a sibling failure can't strand its in-flight result
+// as an unhandled rejection; if anything failed, the first error is thrown.
 async function mapWithConcurrency<T, R>(
   items: T[],
   limit: number,
   fn: (item: T) => Promise<R>
 ): Promise<R[]> {
   const results: R[] = new Array(items.length)
+  const errors: unknown[] = []
   let next = 0
   const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
     while (next < items.length) {
       const i = next++
-      results[i] = await fn(items[i]!)
+      try {
+        results[i] = await fn(items[i]!)
+      } catch (e) {
+        errors.push(e)
+      }
     }
   })
   await Promise.all(workers)
+  if (errors.length > 0) throw errors[0]
   return results
 }
 
@@ -177,6 +198,7 @@ async function toEmailDetail(
     replyTo: header('Reply-To'),
     threadId: msg.threadId ?? '',
     messageId: header('Message-ID'),
+    inReplyTo: header('In-Reply-To'),
     references: header('References'),
     subject: header('Subject') || '(no subject)',
     date: header('Date'),
@@ -206,26 +228,12 @@ export async function fetchThread(threadId: string): Promise<EmailThread> {
   return { id: thread.data.id ?? threadId, messages }
 }
 
-export async function sendEmail(request: SendEmailRequest): Promise<void> {
-  if (
-    !request ||
-    typeof request.to !== 'string' ||
-    typeof request.subject !== 'string' ||
-    typeof request.body !== 'string' ||
-    (request.bodyHtml !== undefined && typeof request.bodyHtml !== 'string') ||
-    (request.threadId !== undefined && typeof request.threadId !== 'string') ||
-    (request.inReplyTo !== undefined && typeof request.inReplyTo !== 'string') ||
-    (request.references !== undefined && typeof request.references !== 'string')
-  ) {
-    throw new Error('Invalid email request')
-  }
-  if (!request.to.trim()) throw new Error('Recipient is required')
+type RawMessageFields = Pick<
+  SendEmailRequest,
+  'to' | 'subject' | 'body' | 'bodyHtml' | 'inReplyTo' | 'references'
+>
 
-  const gmail = getGmailClient()
-  const profile = await gmail.users.getProfile({ userId: 'me' })
-  const from = profile.data.emailAddress
-  if (!from) throw new Error('Could not determine the signed-in Gmail address')
-
+async function buildRawMessage(from: string, request: RawMessageFields): Promise<string> {
   const transport = createTransport({
     streamTransport: true,
     newline: 'unix'
@@ -240,26 +248,173 @@ export async function sendEmail(request: SendEmailRequest): Promise<void> {
     ...(request.references ? { references: request.references } : {})
   })
   const raw = await toBuffer(message.message)
+  return raw.toString('base64url')
+}
+
+// Both send paths must see the same request shape: every field string-typed
+// (optionally absent except to/subject/body) and a recipient required.
+function assertSendFields(request: SendEmailRequest): void {
+  if (
+    !request ||
+    typeof request.to !== 'string' ||
+    typeof request.subject !== 'string' ||
+    typeof request.body !== 'string' ||
+    (request.bodyHtml !== undefined && typeof request.bodyHtml !== 'string') ||
+    (request.threadId !== undefined && typeof request.threadId !== 'string') ||
+    (request.inReplyTo !== undefined && typeof request.inReplyTo !== 'string') ||
+    (request.references !== undefined && typeof request.references !== 'string')
+  ) {
+    throw new Error('Invalid email request')
+  }
+  if (!request.to.trim()) throw new Error('Recipient is required')
+}
+
+async function resolveFromAddress(gmail: ReturnType<typeof getGmailClient>): Promise<string> {
+  const profile = await gmail.users.getProfile({ userId: 'me' })
+  const from = profile.data.emailAddress
+  if (!from) throw new Error('Could not determine the signed-in Gmail address')
+  return from
+}
+
+export async function sendEmail(request: SendEmailRequest): Promise<void> {
+  assertSendFields(request)
+
+  const gmail = getGmailClient()
+  const from = await resolveFromAddress(gmail)
+  const raw = await buildRawMessage(from, request)
 
   await gmail.users.messages.send({
     userId: 'me',
     requestBody: {
-      raw: raw.toString('base64url'),
+      raw,
       ...(request.threadId ? { threadId: request.threadId } : {})
     }
   })
 }
 
-export async function fetchInbox(options: FetchInboxOptions = {}): Promise<InboxPage> {
+function toEmailSummary(id: string, msg: gmail_v1.Schema$Message, draftId?: string): EmailSummary {
+  const headers = msg.payload?.headers ?? []
+  const header = (name: string): string =>
+    headers.find((h) => h.name?.toLowerCase() === name.toLowerCase())?.value ?? ''
+
+  return {
+    id,
+    threadId: msg.threadId ?? '',
+    from: header('From'),
+    subject: header('Subject') || '(no subject)',
+    date: header('Date'),
+    snippet: msg.snippet ?? '',
+    ...(draftId ? { draftId } : {})
+  }
+}
+
+async function fetchDrafts(
+  gmail: ReturnType<typeof getGmailClient>,
+  options: ListFolderOptions,
+  maxResults: number,
+  q: string | undefined
+): Promise<MailPage> {
+  // Drafts are enumerated via drafts.list (message IDs alone can't resolve
+  // the draft IDs needed to delete a draft after sending it).
+  const list = await withQuotaRetry(() =>
+    gmail.users.drafts.list({
+      userId: 'me',
+      maxResults,
+      ...(options.pageToken ? { pageToken: options.pageToken } : {}),
+      ...(q ? { q } : {})
+    })
+  )
+  const drafts = (list.data.drafts ?? []).flatMap((d) => (d.id ? [{ id: d.id }] : []))
+
+  // A single unreadable draft (deleted in Gmail web while the app is open,
+  // or otherwise 404ing) must not fail the whole Drafts page: skip it and
+  // list the survivors. Quota/transport failures are NOT skipped — they
+  // propagate so the user sees an error instead of a silently empty list.
+  async function fetchDraftMessage(id: string): Promise<EmailSummary> {
+    const full = await withQuotaRetry(() =>
+      gmail.users.drafts.get({
+        userId: 'me',
+        id,
+        format: 'metadata'
+      })
+    )
+    const msg = full.data.message ?? {}
+    return toEmailSummary(msg.id ?? '', msg, full.data.id ?? id)
+  }
+
+  const results = await mapWithConcurrency(drafts, DETAIL_CONCURRENCY, async ({ id: draftId }) => {
+    try {
+      return await fetchDraftMessage(draftId)
+    } catch (e) {
+      if (!isNotFoundError(e)) throw e
+      console.warn(`skipping unreadable draft ${draftId}:`, e)
+      return null
+    }
+  })
+  const emails = results.filter((r): r is EmailSummary => r !== null)
+
+  return { emails, nextPageToken: list.data.nextPageToken ?? null }
+}
+
+export async function sendDraft(request: SendDraftRequest): Promise<void> {
+  assertSendFields(request)
+  if (typeof request.draftId !== 'string' || !request.draftId.trim()) {
+    throw new Error('Draft ID is required')
+  }
+
+  const gmail = getGmailClient()
+  const from = await resolveFromAddress(gmail)
+
+  // drafts.update replaces the draft content with the edited fields first, so
+  // drafts.send below transmits exactly what the user saw in the editor.
+  // Sending via drafts.send (not messages.send + drafts.delete) removes the
+  // draft server-side in the same operation: no window where the mail is out
+  // but the draft lingers, and a retry after a successful send can't duplicate
+  // the mail (the update fails once the draft is gone).
+  const raw = await buildRawMessage(from, request)
+  await withQuotaRetry(() =>
+    gmail.users.drafts.update({
+      userId: 'me',
+      id: request.draftId,
+      requestBody: {
+        message: {
+          raw,
+          ...(request.threadId ? { threadId: request.threadId } : {})
+        }
+      }
+    })
+  )
+  await withQuotaRetry(() =>
+    gmail.users.drafts.send({
+      userId: 'me',
+      requestBody: { id: request.draftId }
+    })
+  )
+}
+
+// messages.list label filter per folder. Drafts go through drafts.list
+// instead (see fetchDrafts), so they are deliberately absent here.
+const FOLDER_LABEL_IDS: Record<Exclude<MailFolder, 'drafts'>, string[]> = {
+  inbox: ['INBOX'],
+  sent: ['SENT'],
+  trash: ['TRASH']
+}
+
+export async function fetchFolder(options: ListFolderOptions = {}): Promise<MailPage> {
   const gmail = getGmailClient()
   const maxResults = Math.min(Math.max(options.maxResults ?? 30, 1), 100)
   const q = options.q?.trim() || undefined
+  const folder = options.folder ?? 'inbox'
+
+  if (folder === 'drafts') return fetchDrafts(gmail, options, maxResults, q)
+
+  const labelIds = FOLDER_LABEL_IDS[folder]
 
   // 1) list returns only message IDs, plus a nextPageToken when more exist
   const list = await withQuotaRetry(() =>
     gmail.users.messages.list({
       userId: 'me',
-      labelIds: ['INBOX'],
+      labelIds,
       maxResults,
       ...(options.pageToken ? { pageToken: options.pageToken } : {}),
       ...(q ? { q } : {})
@@ -280,18 +435,7 @@ export async function fetchInbox(options: FetchInboxOptions = {}): Promise<Inbox
           metadataHeaders: ['From', 'Subject', 'Date']
         })
       )
-      const headers = msg.data.payload?.headers ?? []
-      const header = (name: string): string =>
-        headers.find((h) => h.name?.toLowerCase() === name.toLowerCase())?.value ?? ''
-
-      return {
-        id,
-        threadId: msg.data.threadId ?? '',
-        from: header('From'),
-        subject: header('Subject') || '(no subject)',
-        date: header('Date'),
-        snippet: msg.data.snippet ?? ''
-      }
+      return toEmailSummary(id, msg.data)
     }
   )
 

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import DOMPurify from 'dompurify'
+import { AutoGrowTextarea } from './AutoGrowTextarea'
 import type {
   EmailSummary,
   EmailDetail as EmailDetailData,
@@ -210,26 +211,6 @@ export function EmailDetail({ email, detail, detailLoading }: EmailDetailProps):
 
   const latestMessage: EmailDetailData | null = messages[messages.length - 1] ?? detail ?? null
 
-  // Single-message fallback still needs sanitized HTML for quoting.
-  const fallbackSanitizedHtml = useMemo(
-    () =>
-      DOMPurify.sanitize(detail?.bodyHtml ?? '', {
-        USE_PROFILES: { html: true },
-        FORBID_TAGS: [
-          'iframe',
-          'frame',
-          'object',
-          'embed',
-          'form',
-          'input',
-          'button',
-          'textarea',
-          'select'
-        ]
-      }),
-    [detail?.bodyHtml]
-  )
-
   function replyToEmail(): void {
     const target = latestMessage
     if (!target) return
@@ -353,7 +334,7 @@ export function EmailDetail({ email, detail, detailLoading }: EmailDetailProps):
         <div className="snippet">{email.snippet}</div>
       )}
       {/* Keep single-message header details available when thread fetch fails. */}
-      {!thread && fallbackSanitizedHtml === '' && null}
+
       <button onClick={replyToEmail}>reply</button>
       <button onClick={forwardEmail}>forward</button>
 
@@ -380,8 +361,8 @@ export function EmailDetail({ email, detail, detailLoading }: EmailDetailProps):
 
           <label className="composerField">
             <span>Message</span>
-            <textarea
-              rows={12}
+            <AutoGrowTextarea
+              rows={5}
               value={draft.body}
               onChange={(event) => setDraft({ ...draft, body: event.target.value })}
             />

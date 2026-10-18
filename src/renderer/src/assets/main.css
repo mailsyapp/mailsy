@@ -1,8 +1,9 @@
-body { 
-  font-family: system-ui, sans-serif; 
-  margin: 0; color: #1a1a1a; 
+body {
+  font-family: system-ui, sans-serif;
+  margin: 0;
+  color: #1a1a1a;
   padding: 24px;
-  background: #fff; 
+  background: #fff;
 }
 
 .app {
@@ -15,36 +16,36 @@ body {
   margin: 0 0 16px;
 }
 
-.actions { 
-  display: flex; 
-  gap: 8px; 
-  margin-bottom: 16px; 
+.actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
 }
 
-button { 
-  padding: 8px 14px; 
-  cursor: pointer; 
+button {
+  padding: 8px 14px;
+  cursor: pointer;
 }
 
-.emails { 
-  list-style: none; 
-  padding: 0; 
+.emails {
+  list-style: none;
+  padding: 0;
   margin: 0;
 }
 
-.emails li { 
-  padding: 12px 0; 
-  border-bottom: 1px solid #eee; 
+.emails li {
+  padding: 12px 0;
+  border-bottom: 1px solid #eee;
 }
 
-.from { 
-  color: #555; 
-  font-size: 13px; 
+.from {
+  color: #555;
+  font-size: 13px;
 }
 
-.snippet { 
-  color: #777; 
-  font-size: 13px; 
+.snippet {
+  color: #777;
+  font-size: 13px;
 }
 
 .error {
@@ -72,7 +73,8 @@ button {
   min-height: 0;
   overflow: auto;
   padding: 16px;
-  padding-top: 0px;
+  display: flex;
+  flex-direction: column;
 }
 
 .search-bar {
@@ -101,15 +103,54 @@ button {
 .mail-layout {
   display: grid;
   flex: 1;
-  grid-template-columns: minmax(220px, 32%) minmax(0, 1fr);
+  grid-template-columns: 56px minmax(220px, 32%) minmax(0, 1fr);
   gap: 12px;
   min-height: 0;
+}
+
+.folder-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 12px 0;
+  border: 2px solid black;
+}
+
+.folder-rail-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+}
+
+.folder-rail-button:hover {
+  background: #f0f0f0;
+}
+
+.folder-rail-button.active {
+  background: #000;
+  color: #fff;
 }
 
 @media (max-width: 700px) {
   .mail-layout {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: minmax(120px, 35%) minmax(0, 1fr);
+    grid-template-rows: auto minmax(120px, 35%) minmax(0, 1fr);
+  }
+
+  /* Three grid children now: the rail becomes a compact horizontal row
+     instead of a 35%-height column block. */
+  .folder-rail {
+    flex-direction: row;
+    justify-content: center;
+    padding: 6px 0;
   }
 }
 
@@ -150,4 +191,42 @@ button {
 .composer textarea {
   height: 5rem;
   resize: vertical;
+}
+
+/* Draft editor fills the pane: fields on top, Send at the bottom by flow,
+   Message takes exactly the space in between and scrolls within it. */
+.composer-fill {
+  flex: 1;
+  min-height: 0;
+  margin-top: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.composer-fill .composerField-grow {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.composer-fill .composerField-grow > span {
+  flex: 0 0 56px;
+  padding-top: 8px;
+}
+
+.composer-fill .composerField-grow textarea {
+  flex: 1;
+  min-height: 8rem;
+  height: auto;
+}
+
+.composerActions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  padding: 8px 0;
+  border-top: 1px solid #eee;
+  background: #fff;
 }

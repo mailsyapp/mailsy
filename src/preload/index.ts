@@ -3,8 +3,9 @@ import { electronAPI } from '@electron-toolkit/preload'
 import type {
   EmailDetail,
   EmailThread,
-  FetchInboxOptions,
-  InboxPage,
+  ListFolderOptions,
+  MailPage,
+  SendDraftRequest,
   SendEmailRequest
 } from '../shared/types'
 
@@ -12,12 +13,15 @@ import type {
 const api = {
   signIn: (): Promise<void> => ipcRenderer.invoke('auth:sign-in'),
   isSignedIn: (): Promise<boolean> => ipcRenderer.invoke('auth:is-signed-in'),
-  getInbox: (options?: FetchInboxOptions): Promise<InboxPage> =>
-    ipcRenderer.invoke('gmail:inbox', options),
+  listFolder: (options?: ListFolderOptions): Promise<MailPage> =>
+    ipcRenderer.invoke('gmail:list', options),
   getMessage: (id: string): Promise<EmailDetail> => ipcRenderer.invoke('gmail:get', id),
   getThread: (threadId: string): Promise<EmailThread> =>
     ipcRenderer.invoke('gmail:thread', threadId),
-  sendEmail: (request: SendEmailRequest): Promise<void> => ipcRenderer.invoke('gmail:send', request)
+  sendEmail: (request: SendEmailRequest): Promise<void> =>
+    ipcRenderer.invoke('gmail:send', request),
+  sendDraft: (request: SendDraftRequest): Promise<void> =>
+    ipcRenderer.invoke('gmail:send-draft', request)
 }
 
 // Use `contextBridge` APIs to expose Electron APIs to
