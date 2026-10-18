@@ -1,9 +1,16 @@
 import { HugeiconsIcon } from '@hugeicons/react'
-import { Delete02Icon, InboxIcon, MailEdit01Icon, SentIcon } from '@hugeicons/core-free-icons'
+import {
+  Delete02Icon,
+  InboxIcon,
+  MailEdit01Icon,
+  SentIcon,
+  StarIcon
+} from '@hugeicons/core-free-icons'
 import type { MailFolder } from '../../../shared/types'
 
 const FOLDERS: Array<{ id: MailFolder; label: string; icon: typeof InboxIcon }> = [
   { id: 'inbox', label: 'Inbox', icon: InboxIcon },
+  { id: 'starred', label: 'Starred', icon: StarIcon },
   { id: 'drafts', label: 'Drafts', icon: MailEdit01Icon },
   { id: 'sent', label: 'Sent', icon: SentIcon },
   { id: 'trash', label: 'Trash', icon: Delete02Icon }
