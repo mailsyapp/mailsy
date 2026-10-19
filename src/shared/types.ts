@@ -9,6 +9,7 @@ export interface EmailSummary {
   date: string
   snippet: string
   unread: boolean
+  starred: boolean
   draftId?: string
 }
 
@@ -29,7 +30,7 @@ export interface EmailThread {
   messages: EmailDetail[]
 }
 
-export type MailFolder = 'inbox' | 'drafts' | 'sent' | 'trash'
+export type MailFolder = 'inbox' | 'drafts' | 'sent' | 'trash' | 'starred'
 
 export interface ListFolderOptions {
   maxResults?: number

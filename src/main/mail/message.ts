@@ -62,6 +62,7 @@ export async function toEmailDetail(
     date: headerOf(headers, 'Date'),
     snippet: msg.snippet ?? '',
     unread: (msg.labelIds ?? []).includes('UNREAD'),
+    starred: (msg.labelIds ?? []).includes('STARRED'),
     bodyText: out.text,
     bodyHtml
   }
@@ -82,6 +83,7 @@ export function toEmailSummary(
     date: headerOf(headers, 'Date'),
     snippet: msg.snippet ?? '',
     unread: (msg.labelIds ?? []).includes('UNREAD'),
+    starred: (msg.labelIds ?? []).includes('STARRED'),
     ...(draftId ? { draftId } : {})
   }
 }

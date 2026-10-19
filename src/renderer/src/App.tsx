@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Fuse from 'fuse.js'
+import { HugeiconsIcon } from '@hugeicons/react'
+import { StarIcon } from '@hugeicons/core-free-icons'
 import type {
   EmailSummary,
   EmailDetail as EmailDetailData,
@@ -29,7 +31,8 @@ const FOLDER_CONFIG: Record<
   inbox: { label: 'Inbox', empty: 'You’re all caught up', fallbackToLocal: true },
   drafts: { label: 'Drafts', empty: 'No drafts yet', fallbackToLocal: false },
   sent: { label: 'Sent', empty: 'No sent mail yet', fallbackToLocal: false },
-  trash: { label: 'Trash', empty: 'Trash is empty', fallbackToLocal: false }
+  trash: { label: 'Trash', empty: 'Trash is empty', fallbackToLocal: false },
+  starred: { label: 'Starred', empty: 'No starred mail yet', fallbackToLocal: false }
 }
 
 const FUSE_KEYS = [
@@ -275,6 +278,32 @@ function App(): React.JSX.Element {
       .catch((e: unknown) => recordError(e))
   }
 
+  // Star is thread-level like read/unread: threads.modify applies STARRED to
+  // every message in the conversation, so all rows sharing the threadId
+  // flip together.
+  function handleThreadStarChanged(threadId: string, starred: boolean): void {
+    // In the Starred folder an unstar removes the mail from this view, the
+    // same way archive leaves the Inbox list.
+    setEmails((prev) =>
+      activeFolder === 'starred' && !starred
+        ? prev.filter((e) => e.threadId !== threadId)
+        : prev.map((e) =>
+            e.threadId === threadId && e.starred !== starred ? { ...e, starred } : e
+          )
+    )
+  }
+
+  function handleRowStarToggle(email: EmailSummary): void {
+    window.api
+      .modifyLabels({
+        kind: 'thread',
+        id: email.threadId,
+        ...(email.starred ? { removeLabelIds: ['STARRED'] } : { addLabelIds: ['STARRED'] })
+      })
+      .then(() => handleThreadStarChanged(email.threadId, !email.starred))
+      .catch((e: unknown) => recordError(e))
+  }
+
   function handleFolderSelect(folder: MailFolder): void {
     if (folder === activeFolder) return
     setActiveFolder(folder)
@@ -502,9 +531,29 @@ function App(): React.JSX.Element {
                   <div className="snippet email-text">{email.snippet}</div>
                 </button>
                 {activeFolder !== 'drafts' && (
-                  <button type="button" onClick={() => handleRowReadToggle(email)}>
-                    {email.unread ? 'mark read' : 'mark unread'}
-                  </button>
+                  <>
+                    <button type="button" onClick={() => handleRowReadToggle(email)}>
+                      {email.unread ? 'mark read' : 'mark unread'}
+                    </button>
+                    <button
+                      type="button"
+                      className={`star-toggle${email.starred ? ' starred' : ''}`}
+                      onClick={() => handleRowStarToggle(email)}
+                      title={email.starred ? 'Unstar' : 'Star'}
+                      aria-label={email.starred ? 'Unstar' : 'Star'}
+                      aria-pressed={email.starred}
+                    >
+                      {/* The star glyph is a closed contour drawn unfilled by
+                          the icon set; filling it with the row's gold when
+                          starred is the whole state read. */}
+                      <HugeiconsIcon
+                        icon={StarIcon}
+                        size={18}
+                        strokeWidth={1.8}
+                        fill={email.starred ? 'currentColor' : 'none'}
+                      />
+                    </button>
+                  </>
                 )}
               </li>
             ))}
@@ -551,6 +600,7 @@ function App(): React.JSX.Element {
                 folder={activeFolder}
                 onThreadRemoved={handleThreadRemoved}
                 onThreadReadChanged={handleThreadReadChanged}
+                onThreadStarChanged={handleThreadStarChanged}
               />
             )
           ) : (

@@ -67,6 +67,19 @@ button {
   text-overflow: ellipsis;
 }
 
+/* Row star affordance: bare icon button; starred rows color the star gold. */
+.star-toggle {
+  background: none;
+  border: none;
+  padding: 4px;
+  color: #aaa;
+  vertical-align: middle;
+}
+
+.star-toggle.starred {
+  color: #f4b400;
+}
+
 .email-sidebar {
   border: 2px solid black;
   min-width: 0;
