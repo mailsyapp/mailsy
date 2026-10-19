@@ -201,10 +201,20 @@ function App(): React.JSX.Element {
     window.api
       .signIn()
       .then(() => {
-        // The [committedQuery, signedIn] effect below loads the list;
-        // fetching here too would double the quota cost.
+        // The list effect below loads the list; fetching here too would
+        // double the quota cost.
         lastFetchedRef.current = null
         setSignedIn(true)
+      })
+      .catch((e: unknown) => recordError(e))
+  }
+
+  function handleSignOut(): void {
+    window.api
+      .signOut()
+      .then(() => {
+        setError(null)
+        exitToSignedOut()
       })
       .catch((e: unknown) => recordError(e))
   }
@@ -212,6 +222,31 @@ function App(): React.JSX.Element {
   function handleClearSearch(): void {
     setSearchInput('')
     if (committedQuery !== '') setCommittedQuery('')
+  }
+
+  // Shared reset for the two user-visible ways a session ends: a dead grant
+  // found by recordError, and signing out. Bumping the request id drops any
+  // in-flight list response so it can't paint mail rows onto the
+  // signed-out screen.
+  function exitToSignedOut(): void {
+    ++requestIdRef.current
+    setSignedIn(false)
+    setCommittedQuery('')
+    setSearchInput('')
+    closeEmail()
+    setThreads([])
+// No per-folder mail content may survive: nothing typed or cached.
+    searchPageCacheRef.current.clear()
+    setUnfilteredByFolder(new Map<MailFolder, ThreadSummary[]>())
+    // null means pagination is exhausted, so the sentinel observer and
+    // loadMore can't refetch the folder after the flip. undefined would
+    // mean "unknown", which reopens the window: the observer fires and
+    // issues a doomed request against the signed-out session.
+    nextPageTokenRef.current = null
+    setNextPageToken(null)
+    searchingRef.current = false
+    setSearching(false)
+    lastFetchedRef.current = null
   }
 
   // One funnel for every boundary failure. A dead Google grant (the main
@@ -223,15 +258,7 @@ function App(): React.JSX.Element {
   function recordError(e: unknown): void {
     setError(formatFetchError(e))
     if (e instanceof Error && /session has expired|not signed in yet/i.test(e.message)) {
-      setSignedIn(false)
-      setCommittedQuery('')
-      setSearchInput('')
-      closeEmail()
-      setThreads([])
-      nextPageTokenRef.current = undefined
-      setNextPageToken(undefined)
-      searchingRef.current = false
-      lastFetchedRef.current = null
+      exitToSignedOut()
     }
   }
 
@@ -483,6 +510,7 @@ function App(): React.JSX.Element {
     <div className="app">
       <div className="actions">
         {signedIn === false && <button onClick={handleSignIn}>Sign in with Google</button>}
+        {signedIn === true && <button onClick={handleSignOut}>Sign out</button>}
         {searching && threads.length === 0 && !isSearchActive && (
           <span role="status">Loading…</span>
         )}
