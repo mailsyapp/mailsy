@@ -11,6 +11,7 @@ import type {
 import { EmailDetail } from './components/EmailDetail'
 import { senderNameOf } from './lib/format'
 import { DraftEditor } from './components/DraftEditor'
+import { ComposeEditor } from './components/ComposeEditor'
 import { FolderRail } from './components/FolderRail'
 
 const LIST_PAGE_SIZE = 30
@@ -133,6 +134,10 @@ function App(): React.JSX.Element {
   const [searchInput, setSearchInput] = useState('')
   const [committedQuery, setCommittedQuery] = useState('')
   const [activeFolder, setActiveFolder] = useState<MailFolder>('inbox')
+  // The content pane is mutually exclusive: a fresh compose vs a selected
+  // email. Every exit (sign-out, folder switch, selecting a row) runs
+  // closeEmail below, which clears this together with the selection.
+  const [composing, setComposing] = useState(false)
 
   const selectionRef = useRef<string | null>(null)
   const sentinelRef = useRef<HTMLDivElement | null>(null)
@@ -206,10 +211,19 @@ function App(): React.JSX.Element {
     setSelectedId(id)
   }
 
+  // Both pane entries clear all pane state through closeEmail first, so a
+  // compose and an open email can never be on screen together.
+  function openCompose(): void {
+    if (composing) return
+    closeEmail()
+    setComposing(true)
+  }
+
   function closeEmail(): void {
     selectionRef.current = null
     setSelectedId(null)
     setDraftDetail(null)
+    setComposing(false)
   }
 
   const displayedThreads = useMemo(() => {
@@ -267,8 +281,10 @@ function App(): React.JSX.Element {
   const selectedThread = displayedThreads.find((e) => e.id === selectedId) ?? null
 
   function handleSelect(row: ThreadSummary): void {
+    // The pane is exclusive: a selected row replaces an open compose (and
+    // everything else the pane draws), so the exit runs through closeEmail.
+    closeEmail()
     openEmail(row.id)
-    setDraftDetail(null)
     setError(null)
     // Conversation rows render from getThread inside EmailDetail; only the
     // drafts branch needs a message body fetch.
@@ -647,6 +663,9 @@ function App(): React.JSX.Element {
         {signedIn === false && <button onClick={handleSignIn}>Sign in with Google</button>}
         {signedIn === true && (
           <>
+            <button type="button" onClick={openCompose}>
+              Compose
+            </button>
             <button type="button" onClick={() => loadFirstPage('manual')} aria-label="Refresh mail">
               Refresh
             </button>
@@ -770,7 +789,9 @@ function App(): React.JSX.Element {
         </aside>
 
         <section className="email-content" aria-label="Email content">
-          {selectedThread ? (
+          {composing ? (
+            <ComposeEditor onClose={closeEmail} />
+          ) : selectedThread ? (
             activeFolder === 'drafts' ? (
               <DraftEditor
                 key={selectedThread.id}
