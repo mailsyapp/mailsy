@@ -543,7 +543,15 @@ function App(): React.JSX.Element {
                       aria-label={email.starred ? 'Unstar' : 'Star'}
                       aria-pressed={email.starred}
                     >
-                      <HugeiconsIcon icon={StarIcon} size={18} strokeWidth={1.8} />
+                      {/* The star glyph is a closed contour drawn unfilled by
+                          the icon set; filling it with the row's gold when
+                          starred is the whole state read. */}
+                      <HugeiconsIcon
+                        icon={StarIcon}
+                        size={18}
+                        strokeWidth={1.8}
+                        fill={email.starred ? 'currentColor' : 'none'}
+                      />
                     </button>
                   </>
                 )}
