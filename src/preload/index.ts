@@ -14,6 +14,7 @@ import type {
 const api = {
   signIn: (): Promise<void> => ipcRenderer.invoke('auth:sign-in'),
   isSignedIn: (): Promise<boolean> => ipcRenderer.invoke('auth:is-signed-in'),
+  signOut: (): Promise<void> => ipcRenderer.invoke('auth:sign-out'),
   listFolder: (options?: ListFolderOptions): Promise<ThreadPage> =>
     ipcRenderer.invoke('gmail:list', options),
   getMessage: (id: string): Promise<EmailDetail> => ipcRenderer.invoke('gmail:get', id),

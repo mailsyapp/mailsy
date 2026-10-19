@@ -15,6 +15,7 @@ declare global {
     api: {
       signIn(): Promise<void>
       isSignedIn(): Promise<boolean>
+      signOut(): Promise<void>
       listFolder(options?: ListFolderOptions): Promise<MailPage>
       getMessage(id: string): Promise<EmailDetail>
       getThread(threadId: string): Promise<EmailThread>

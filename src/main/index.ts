@@ -2,7 +2,7 @@ import { app, shell, BrowserWindow, ipcMain } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
-import { signIn, isSignedIn } from './auth'
+import { signIn, signOut, isSignedIn } from './auth'
 import { fetchFolder, fetchMessage, fetchThread, modifyLabels, sendEmail, sendDraft } from './mail'
 import type {
   ListFolderOptions,
@@ -49,6 +49,7 @@ app.whenReady().then(() => {
 
   ipcMain.handle('auth:sign-in', () => signIn())
   ipcMain.handle('auth:is-signed-in', () => isSignedIn())
+  ipcMain.handle('auth:sign-out', () => signOut())
   ipcMain.handle('gmail:list', (_event, options?: ListFolderOptions) => fetchFolder(options))
   ipcMain.handle('gmail:get', (_event, id: string) => fetchMessage(id))
   ipcMain.handle('gmail:thread', (_event, threadId: string) => fetchThread(threadId))
