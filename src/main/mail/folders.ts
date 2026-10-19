@@ -1,13 +1,13 @@
 import { getGmailClient } from '../auth'
 import type { GmailClient } from '../auth'
-import type { EmailSummary, ListFolderOptions, MailFolder, MailPage } from '../../shared/types'
+import type { ListFolderOptions, MailFolder, ThreadPage, ThreadSummary } from '../../shared/types'
 import {
   DETAIL_CONCURRENCY,
   isNotFoundError,
   mapWithConcurrency,
   withQuotaRetry
 } from './resilience'
-import { toEmailSummary } from './message'
+import { threadToSummary, toEmailSummary } from './message'
 
 const FOLDER_LABEL_IDS: Record<Exclude<MailFolder, 'drafts'>, string[]> = {
   inbox: ['INBOX'],
@@ -23,10 +23,11 @@ async function fetchDrafts(
   options: ListFolderOptions,
   maxResults: number,
   q: string | undefined
-): Promise<MailPage> {
+): Promise<ThreadPage> {
   // Drafts are enumerated via drafts.list because messages.list returns only
   // message IDs, which cannot resolve the draft IDs needed to delete a draft
-  // after sending it.
+  // after sending it. A draft is still a list row, so each draft wraps into a
+  // single-message ThreadSummary that carries its draftId.
   const list = await withQuotaRetry(() =>
     gmail.users.drafts.list({
       userId: 'me',
@@ -37,7 +38,7 @@ async function fetchDrafts(
   )
   const drafts = (list.data.drafts ?? []).flatMap((d) => (d.id ? [{ id: d.id }] : []))
 
-  async function fetchDraftMessage(id: string): Promise<EmailSummary> {
+  async function fetchDraftMessage(id: string): Promise<ThreadSummary | null> {
     const full = await withQuotaRetry(() =>
       gmail.users.drafts.get({
         userId: 'me',
@@ -46,7 +47,19 @@ async function fetchDrafts(
       })
     )
     const msg = full.data.message ?? {}
-    return toEmailSummary(msg.id ?? '', msg, full.data.id ?? id)
+    if (!msg.id || !msg.threadId) return null
+    const summary = toEmailSummary(msg.id, msg, full.data.id ?? id)
+    return {
+      id: summary.threadId,
+      subject: summary.subject,
+      snippet: summary.snippet,
+      participants: summary.from ? [summary.from] : [],
+      date: summary.date,
+      messageIds: [summary.id],
+      unreadCount: summary.unread ? 1 : 0,
+      starred: summary.starred,
+      ...(summary.draftId ? { draftId: summary.draftId } : {})
+    }
   }
 
   const results = await mapWithConcurrency(drafts, DETAIL_CONCURRENCY, async ({ id: draftId }) => {
@@ -58,12 +71,12 @@ async function fetchDrafts(
       return null
     }
   })
-  const emails = results.filter((r): r is EmailSummary => r !== null)
+  const threads = results.filter((r): r is ThreadSummary => r !== null)
 
-  return { emails, nextPageToken: list.data.nextPageToken ?? null }
+  return { threads, nextPageToken: list.data.nextPageToken ?? null }
 }
 
-export async function fetchFolder(options: ListFolderOptions = {}): Promise<MailPage> {
+export async function fetchFolder(options: ListFolderOptions = {}): Promise<ThreadPage> {
   const gmail = getGmailClient()
   const maxResults = Math.min(Math.max(options.maxResults ?? 30, 1), 100)
   const q = options.q?.trim() || undefined
@@ -74,7 +87,7 @@ export async function fetchFolder(options: ListFolderOptions = {}): Promise<Mail
   const labelIds = FOLDER_LABEL_IDS[folder]
 
   const list = await withQuotaRetry(() =>
-    gmail.users.messages.list({
+    gmail.users.threads.list({
       userId: 'me',
       labelIds,
       maxResults,
@@ -82,23 +95,23 @@ export async function fetchFolder(options: ListFolderOptions = {}): Promise<Mail
       ...(q ? { q } : {})
     })
   )
-  const ids = (list.data.messages ?? []).flatMap((m) => (m.id ? [m.id] : []))
+  const ids = (list.data.threads ?? []).flatMap((t) => (t.id ? [t.id] : []))
 
-  const emails = await mapWithConcurrency(
+  const threads = await mapWithConcurrency(
     ids,
     DETAIL_CONCURRENCY,
-    async (id): Promise<EmailSummary> => {
-      const msg = await withQuotaRetry(() =>
-        gmail.users.messages.get({
+    async (id): Promise<ThreadSummary> => {
+      const thread = await withQuotaRetry(() =>
+        gmail.users.threads.get({
           userId: 'me',
           id,
           format: 'metadata',
           metadataHeaders: ['From', 'Subject', 'Date']
         })
       )
-      return toEmailSummary(id, msg.data)
+      return threadToSummary(thread.data)
     }
   )
 
-  return { emails, nextPageToken: list.data.nextPageToken ?? null }
+  return { threads, nextPageToken: list.data.nextPageToken ?? null }
 }
