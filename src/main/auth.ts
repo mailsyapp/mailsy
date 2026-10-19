@@ -100,6 +100,21 @@ export function getGmailClient(): GmailClient {
   return google.gmail({ version: 'v1', auth: client })
 }
 
+// Delete-then-revoke: removing the file makes sign-out instant and final even
+// when the Google call fails (offline or the token is already dead), whereas
+// revoking first could leave the app usable with a token we just told Google
+// to kill. The revoke is fire-and-forget; its only job is best-effort cleanup
+// of the grant on Google's side.
+export function signOut(): void {
+  const refreshToken = loadRefreshToken()
+  invalidateStoredGrant()
+  if (refreshToken) {
+    makeClient()
+      .revokeToken(refreshToken)
+      .catch(() => {})
+  }
+}
+
 // A refresh token rejected with invalid_grant is dead: Google expired or
 // revoked it, and no retry reactivates it. Only a fresh consent round
 // restores mail access, so keeping the file would make isSignedIn() report
