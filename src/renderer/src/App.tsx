@@ -37,7 +37,8 @@ const FOLDER_CONFIG: Record<
   drafts: { label: 'Drafts', empty: 'No drafts yet', fallbackToLocal: false },
   sent: { label: 'Sent', empty: 'No sent mail yet', fallbackToLocal: false },
   trash: { label: 'Trash', empty: 'Trash is empty', fallbackToLocal: false },
-  starred: { label: 'Starred', empty: 'No starred mail yet', fallbackToLocal: false }
+  starred: { label: 'Starred', empty: 'No starred mail yet', fallbackToLocal: false },
+  all: { label: 'All Mail', empty: 'No mail yet', fallbackToLocal: false }
 }
 
 const FUSE_KEYS = [
