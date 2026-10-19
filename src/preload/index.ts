@@ -4,17 +4,17 @@ import type {
   EmailDetail,
   EmailThread,
   ListFolderOptions,
-  MailPage,
   ModifyLabelsRequest,
   SendDraftRequest,
-  SendEmailRequest
+  SendEmailRequest,
+  ThreadPage
 } from '../shared/types'
 
 // Custom APIs for renderer
 const api = {
   signIn: (): Promise<void> => ipcRenderer.invoke('auth:sign-in'),
   isSignedIn: (): Promise<boolean> => ipcRenderer.invoke('auth:is-signed-in'),
-  listFolder: (options?: ListFolderOptions): Promise<MailPage> =>
+  listFolder: (options?: ListFolderOptions): Promise<ThreadPage> =>
     ipcRenderer.invoke('gmail:list', options),
   getMessage: (id: string): Promise<EmailDetail> => ipcRenderer.invoke('gmail:get', id),
   getThread: (threadId: string): Promise<EmailThread> =>
