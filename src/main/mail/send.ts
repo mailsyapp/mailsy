@@ -19,18 +19,12 @@ function assertSendFields(request: SendEmailRequest): void {
   if (!request.to.trim()) throw new Error('Recipient is required')
 }
 
-async function resolveFromAddress(): Promise<string> {
-  const from = await getAccountEmail()
-  if (!from) throw new Error('Could not determine the signed-in Gmail address')
-  return from
-}
-
 export async function sendEmail(request: SendEmailRequest): Promise<void> {
   assertSendFields(request)
 
   try {
     const gmail = getGmailClient()
-    const from = await resolveFromAddress()
+    const from = await getAccountEmail()
     const raw = await buildRawMessage(from, request)
 
     await gmail.users.messages.send({
@@ -54,7 +48,7 @@ export async function sendDraft(request: SendDraftRequest): Promise<void> {
 
   try {
     const gmail = getGmailClient()
-    const from = await resolveFromAddress()
+    const from = await getAccountEmail()
 
     // Atomicity contract of the Gmail drafts API: drafts.update replaces the
     // draft content with exactly what the editor showed, then drafts.send
