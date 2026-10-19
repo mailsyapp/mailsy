@@ -1,6 +1,6 @@
 import type { gmail_v1 } from 'googleapis'
 import type { GmailClient } from '../auth'
-import type { EmailDetail, EmailSummary } from '../../shared/types'
+import type { EmailDetail, EmailSummary, ThreadSummary } from '../../shared/types'
 import { collectBodies, decodeBody, normalizeContentId, base64UrlToBuffer } from './mime'
 import type { MessageBodies } from './mime'
 
@@ -85,5 +85,36 @@ export function toEmailSummary(
     unread: (msg.labelIds ?? []).includes('UNREAD'),
     starred: (msg.labelIds ?? []).includes('STARRED'),
     ...(draftId ? { draftId } : {})
+  }
+}
+
+// A list row is a conversation, not a message: Gmail's row shows the thread's
+// original subject, the distinct senders, and the unread/starred state the
+// whole thread carries. These are flattened here so the renderer never reads
+// Gmail's labelIds or message array itself.
+export function threadToSummary(thread: gmail_v1.Schema$Thread): ThreadSummary {
+  const messages = thread.messages ?? []
+  const first = messages[0] ?? {}
+  const last = messages[messages.length - 1] ?? {}
+  const headersOf = (m: gmail_v1.Schema$Message) => m.payload?.headers ?? []
+
+  const participants: string[] = []
+  for (const message of messages) {
+    const from = headerOf(headersOf(message), 'From')
+    if (from && !participants.includes(from)) participants.push(from)
+  }
+
+  const id = thread.id ?? ''
+  const ids = messages.map((m) => m.id ?? '').filter((value) => value.trim())
+  return {
+    id,
+    subject:
+      headerOf(headersOf(first), 'Subject') || headerOf(headersOf(last), 'Subject') || '(no subject)',
+    snippet: last.snippet ?? thread.snippet ?? '',
+    participants,
+    date: headerOf(headersOf(last), 'Date'),
+    messageIds: ids,
+    unreadCount: messages.filter((m) => (m.labelIds ?? []).includes('UNREAD')).length,
+    starred: messages.some((m) => (m.labelIds ?? []).includes('STARRED'))
   }
 }
