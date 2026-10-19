@@ -21,6 +21,9 @@ const SEARCH_DEBOUNCE_MS = 800
 // How long "Message sent." stays visible before the spent draft row is
 // removed from the list.
 const DRAFT_PRUNE_DELAY_MS = 2000
+// How often the background tick re-reads the current view's first page, so
+// new mail appears without a folder switch or a search.
+const POLL_INTERVAL_MS = 60_000
 
 const FOLDER_CONFIG: Record<
   MailFolder,
@@ -66,6 +69,53 @@ function rerankWithFuse(threads: ThreadSummary[], query: string): ThreadSummary[
   if (results.length === 0) return threads
   const scoreById = new Map(results.map((r) => [r.item.id, r.score ?? 1]))
   return [...threads].sort((a, b) => (scoreById.get(a.id) ?? 2) - (scoreById.get(b.id) ?? 2))
+}
+
+// Every field the row renders, compared value by value: a poll supplies
+// freshly built row objects each minute, so reference equality would
+// trigger a re-render even when nothing changed.
+function rowsEqual(a: ThreadSummary, b: ThreadSummary): boolean {
+  return (
+    a.id === b.id &&
+    a.subject === b.subject &&
+    a.snippet === b.snippet &&
+    a.date === b.date &&
+    a.unreadCount === b.unreadCount &&
+    a.starred === b.starred &&
+    (a.draftId ?? null) === (b.draftId ?? null) &&
+    a.participants.join('\n') === b.participants.join('\n') &&
+    a.messageIds.join('\n') === b.messageIds.join('\n')
+  )
+}
+
+// First-page loads share one fetch pipeline. 'load' is a folder switch or
+// the initial mount and replaces the list; 'manual' is the Refresh button
+// and 'poll' is the background tick, which fold the page in through
+// mergeIncoming instead. Poll is the only mode that yields to an in-flight
+// fetch (its result is disposable) and the only one that keeps the status
+// state quiet; manual supersedes in-flight work through the shared
+// request id.
+type FirstPageMode = 'load' | 'manual' | 'poll'
+
+// Folds a fresh first page into the list on screen. The incoming page owns
+// order and content; rows it no longer returns keep their previous shape
+// at the tail. Whether the tail keeps every row (background poll, so a
+// sync never collapses loaded pages or closes the open email) or only the
+// selected row (manual refresh, which shows server truth but must not
+// yank away the message being read) is `keepAllDropped`.
+function mergeIncoming(
+  prev: ThreadSummary[],
+  incoming: ThreadSummary[],
+  keepAllDropped: boolean,
+  selectedId: string | null
+): ThreadSummary[] {
+  if (prev.length === incoming.length && prev.every((row, i) => rowsEqual(row, incoming[i]))) {
+    return prev
+  }
+  const incomingIds = new Set(incoming.map((row) => row.id))
+  const dropped = prev.filter((row) => !incomingIds.has(row.id))
+  const tail = keepAllDropped ? dropped : dropped.filter((row) => row.id === selectedId)
+  return [...incoming, ...tail]
 }
 
 function App(): React.JSX.Element {
@@ -123,6 +173,28 @@ function App(): React.JSX.Element {
   function setActiveSearching(active: boolean): void {
     searchingRef.current = active
     setSearching(active)
+  }
+
+  // The poll flips only the guard mirror: its background fetch must not
+  // flash the status line or toggle "Load more" every minute, so the state
+  // stays false while the ref says in-flight.
+  function setPollSearching(active: boolean): void {
+    searchingRef.current = active
+  }
+
+  // A fresh page's rows land wherever the folder keeps list truth:
+  // unfiltered pages back the Fuse fallback pool, search pages go into the
+  // per-query cache with the oldest evicted past 20.
+  function storeFirstPage(page: ThreadPage, folder: MailFolder, query: string): void {
+    lastFetchedRef.current = { folder, q: query }
+    if (!query) {
+      setUnfilteredByFolder((prev) => new Map(prev).set(folder, page.threads))
+      return
+    }
+    const folderCache = searchPageCacheRef.current.get(folder) ?? new Map<string, ThreadPage>()
+    searchPageCacheRef.current.set(folder, folderCache)
+    folderCache.set(query, page)
+    if (folderCache.size > 20) folderCache.delete(folderCache.keys().next().value!)
   }
 
   const hasMore = nextPageToken !== null
@@ -390,7 +462,12 @@ function App(): React.JSX.Element {
       })
       .then((page) => {
         if (requestIdRef.current !== requestId) return
-        setThreads((prev) => [...prev, ...page.threads])
+        // Merged-in tail rows reappear in an older page's token range;
+        // keyed dedup keeps them single.
+        setThreads((prev) => {
+          const seen = new Set(prev.map((row) => row.id))
+          return [...prev, ...page.threads.filter((row) => !seen.has(row.id))]
+        })
         setPageToken(page.nextPageToken)
       })
       .catch((e: unknown) => recordError(e))
@@ -402,6 +479,67 @@ function App(): React.JSX.Element {
     // nothing it closes over changes this callback's behavior.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [committedQuery, activeFolder])
+
+  // First-page loads share one fetch pipeline; the mode decides the rest
+  // of the behavior.
+  const loadFirstPage = useCallback(
+    (mode: FirstPageMode): void => {
+      // A colliding fetch would see its response dropped by the request
+      // id; skipping here keeps the poll from ever starting one it
+      // already knows will lose.
+      if (mode === 'poll' && (searchingRef.current || loadingMoreRef.current)) return
+      const requestId = ++requestIdRef.current
+      if (mode === 'poll') {
+        setPollSearching(true)
+      } else {
+        setActiveSearching(true)
+      }
+      setError(null)
+      if (mode === 'load') closeEmail()
+      window.api
+        .listFolder({
+          maxResults: committedQuery ? SEARCH_PAGE_SIZE : LIST_PAGE_SIZE,
+          folder: activeFolder,
+          ...(committedQuery ? { q: committedQuery } : {})
+        })
+        .then((page) => {
+          if (requestIdRef.current !== requestId) return
+          setThreads((prev) =>
+            mode === 'load'
+              ? page.threads
+              : mergeIncoming(prev, page.threads, mode === 'poll', selectionRef.current)
+          )
+          setPageToken(page.nextPageToken)
+          storeFirstPage(page, activeFolder, committedQuery)
+        })
+        .catch((e: unknown) => {
+          if (requestIdRef.current !== requestId) return
+          recordError(e)
+        })
+        .finally(() => {
+          if (requestIdRef.current === requestId) {
+            setActiveSearching(false)
+          }
+        })
+    },
+    // closeEmail, storeFirstPage and recordError are render-scoped like the
+    // neighbouring handlers; nothing they close over changes this callback's
+    // behavior.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [committedQuery, activeFolder]
+  )
+
+  // The interval resets whenever loadFirstPage's identity flips with the
+  // folder or query, so a freshly loaded view always gets one quiet minute
+  // before the first poll.
+  useEffect(() => {
+    if (signedIn !== true) return
+    const timer = window.setInterval(() => {
+      if (document.hidden) return
+      loadFirstPage('poll')
+    }, POLL_INTERVAL_MS)
+    return () => window.clearInterval(timer)
+  }, [loadFirstPage, signedIn])
 
   useEffect(() => {
     const sentinel = sentinelRef.current
@@ -429,9 +567,9 @@ function App(): React.JSX.Element {
     return () => clearTimeout(timer)
   }, [searchInput])
 
-  // Single source for list/search fetching. Skips duplicate queries so
-  // re-renders and the initial mount can't double-fire the same request,
-  // and reuses cached search pages instead of spending quota again.
+  // First-page loads go through loadFirstPage below. This effect owns the
+  // decision to skip: the view is already the list on screen, or the query
+  // has a cached first page to honor instead of spending quota again.
   useEffect(() => {
     if (signedIn !== true) return
     if (
@@ -451,42 +589,10 @@ function App(): React.JSX.Element {
       lastFetchedRef.current = { folder: activeFolder, q: committedQuery }
       return
     }
-    const requestId = ++requestIdRef.current
-    setActiveSearching(true)
-    setError(null)
-    closeEmail()
-    window.api
-      .listFolder({
-        maxResults: committedQuery ? SEARCH_PAGE_SIZE : LIST_PAGE_SIZE,
-        folder: activeFolder,
-        ...(committedQuery ? { q: committedQuery } : {})
-      })
-      .then((page) => {
-        if (requestIdRef.current !== requestId) return
-        setThreads(page.threads)
-        setPageToken(page.nextPageToken)
-        if (!committedQuery) {
-          setUnfilteredByFolder((prev) => new Map(prev).set(activeFolder, page.threads))
-        } else {
-          const folderCache =
-            searchPageCacheRef.current.get(activeFolder) ?? new Map<string, ThreadPage>()
-          searchPageCacheRef.current.set(activeFolder, folderCache)
-          folderCache.set(committedQuery, page)
-          if (folderCache.size > 20) folderCache.delete(folderCache.keys().next().value!)
-        }
-        lastFetchedRef.current = { folder: activeFolder, q: committedQuery }
-      })
-      .catch((e: unknown) => {
-        if (requestIdRef.current !== requestId) return
-        recordError(e)
-      })
-      .finally(() => {
-        if (requestIdRef.current === requestId) {
-          setActiveSearching(false)
-        }
-      })
+    loadFirstPage('load')
     // `emails.length` is intentionally read, not depended on: depending on
-    // it would refetch after every result arrives.
+    // it would refetch after every result arrives. loadFirstPage's identity
+    // flips with the same two inputs, so listing it would change nothing.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [committedQuery, signedIn, activeFolder])
 
@@ -520,7 +626,14 @@ function App(): React.JSX.Element {
     <div className="app">
       <div className="actions">
         {signedIn === false && <button onClick={handleSignIn}>Sign in with Google</button>}
-        {signedIn === true && <button onClick={handleSignOut}>Sign out</button>}
+        {signedIn === true && (
+          <>
+            <button type="button" onClick={() => loadFirstPage('manual')} aria-label="Refresh mail">
+              Refresh
+            </button>
+            <button onClick={handleSignOut}>Sign out</button>
+          </>
+        )}
         {searching && threads.length === 0 && !isSearchActive && (
           <span role="status">Loading…</span>
         )}
