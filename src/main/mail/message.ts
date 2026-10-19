@@ -96,7 +96,8 @@ export function threadToSummary(thread: gmail_v1.Schema$Thread): ThreadSummary {
   const messages = thread.messages ?? []
   const first = messages[0] ?? {}
   const last = messages[messages.length - 1] ?? {}
-  const headersOf = (m: gmail_v1.Schema$Message) => m.payload?.headers ?? []
+  const headersOf = (m: gmail_v1.Schema$Message): gmail_v1.Schema$MessagePartHeader[] =>
+    m.payload?.headers ?? []
 
   const participants: string[] = []
   for (const message of messages) {
@@ -109,7 +110,9 @@ export function threadToSummary(thread: gmail_v1.Schema$Thread): ThreadSummary {
   return {
     id,
     subject:
-      headerOf(headersOf(first), 'Subject') || headerOf(headersOf(last), 'Subject') || '(no subject)',
+      headerOf(headersOf(first), 'Subject') ||
+      headerOf(headersOf(last), 'Subject') ||
+      '(no subject)',
     snippet: last.snippet ?? thread.snippet ?? '',
     participants,
     date: headerOf(headersOf(last), 'Date'),

@@ -1,8 +1,9 @@
 import { useState } from 'react'
-import type { EmailSummary, EmailDetail as EmailDetailData } from '../../../shared/types'
+import type { EmailDetail as EmailDetailData, ThreadSummary } from '../../../shared/types'
 
 type DraftEditorProps = {
-  email: EmailSummary
+  // The draft row: subject plus the draftId/messageIds the send path needs.
+  row: ThreadSummary
   detail: EmailDetailData | null
   detailLoading: boolean
   // Reports the sent draft's row id once the send succeeded. Row removal is
@@ -110,17 +111,18 @@ function DraftForm({
 }
 
 export function DraftEditor({
-  email,
+  row,
   detail,
   detailLoading,
   onSent
 }: DraftEditorProps): React.JSX.Element {
   // Mount the form only once the draft content arrives so fields initialize
-  // from it directly. Remounting via key={email.id} in App resets per draft.
+  // from it directly. Remounting via key={row.id} in App resets per draft,
+  // and the row id (thread id) is what App prunes on send.
   if (detailLoading || !detail) {
     return (
       <div>
-        <h2>{email.subject}</h2>
+        <h2>{row.subject}</h2>
         <p>Loading draft...</p>
       </div>
     )
@@ -129,8 +131,8 @@ export function DraftEditor({
     <DraftForm
       key={detail.id}
       detail={detail}
-      draftId={email.draftId}
-      messageId={email.id}
+      draftId={row.draftId}
+      messageId={row.id}
       onSent={onSent}
     />
   )

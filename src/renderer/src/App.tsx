@@ -3,12 +3,13 @@ import Fuse from 'fuse.js'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { StarIcon } from '@hugeicons/core-free-icons'
 import type {
-  EmailSummary,
+  ThreadSummary,
   EmailDetail as EmailDetailData,
-  MailPage,
+  ThreadPage,
   MailFolder
 } from '../../shared/types'
 import { EmailDetail } from './components/EmailDetail'
+import { senderNameOf } from './lib/format'
 import { DraftEditor } from './components/DraftEditor'
 import { FolderRail } from './components/FolderRail'
 
@@ -37,7 +38,7 @@ const FOLDER_CONFIG: Record<
 
 const FUSE_KEYS = [
   { name: 'subject', weight: 0.6 },
-  { name: 'from', weight: 0.3 },
+  { name: 'participants', weight: 0.3 },
   { name: 'snippet', weight: 0.1 }
 ]
 
@@ -53,29 +54,31 @@ function formatFetchError(e: unknown): string {
   return message
 }
 
-function rerankWithFuse(emails: EmailSummary[], query: string): EmailSummary[] {
-  if (emails.length === 0 || !query || hasGmailOperator(query)) return emails
-  const fuse = new Fuse(emails, {
+function rerankWithFuse(threads: ThreadSummary[], query: string): ThreadSummary[] {
+  if (threads.length === 0 || !query || hasGmailOperator(query)) return threads
+  const fuse = new Fuse(threads, {
     keys: FUSE_KEYS,
     threshold: 0.4,
     ignoreLocation: true,
     includeScore: true
   })
   const results = fuse.search(query)
-  if (results.length === 0) return emails
+  if (results.length === 0) return threads
   const scoreById = new Map(results.map((r) => [r.item.id, r.score ?? 1]))
-  return [...emails].sort((a, b) => (scoreById.get(a.id) ?? 2) - (scoreById.get(b.id) ?? 2))
+  return [...threads].sort((a, b) => (scoreById.get(a.id) ?? 2) - (scoreById.get(b.id) ?? 2))
 }
 
 function App(): React.JSX.Element {
-  const [emails, setEmails] = useState<EmailSummary[]>([])
+  const [threads, setThreads] = useState<ThreadSummary[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [nextPageToken, setNextPageToken] = useState<string | null | undefined>(undefined)
   const [loadingMore, setLoadingMore] = useState(false)
   const [searching, setSearching] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [detail, setDetail] = useState<EmailDetailData | null>(null)
-  const [detailLoading, setDetailLoading] = useState(false)
+  // Only the drafts branch keeps a message fetch: the Draft editor needs the
+  // one draft's body, while conversation rows render from getThread alone.
+  const [draftDetail, setDraftDetail] = useState<EmailDetailData | null>(null)
+  const [draftDetailLoading, setDraftDetailLoading] = useState(false)
   const [signedIn, setSignedIn] = useState<boolean | null>(null)
   const [searchInput, setSearchInput] = useState('')
   const [committedQuery, setCommittedQuery] = useState('')
@@ -92,11 +95,11 @@ function App(): React.JSX.Element {
   // query in the same folder reuses it instead of spending quota again.
   // Unfiltered ('') lists are never cached here so clearing the search
   // always refreshes.
-  const searchPageCacheRef = useRef(new Map<MailFolder, Map<string, MailPage>>())
+  const searchPageCacheRef = useRef(new Map<MailFolder, Map<string, ThreadPage>>())
   // Last unfiltered page per folder, used by folder search fallbacks
   // (see FOLDER_CONFIG.fallbackToLocal).
   const [unfilteredByFolder, setUnfilteredByFolder] = useState(
-    new Map<MailFolder, EmailSummary[]>()
+    new Map<MailFolder, ThreadSummary[]>()
   )
   // Draft rows removed shortly after sending: one timer per sent draft, so
   // removing A is never dropped because B was sent inside A's delay window.
@@ -121,10 +124,10 @@ function App(): React.JSX.Element {
   function closeEmail(): void {
     selectionRef.current = null
     setSelectedId(null)
-    setDetail(null)
+    setDraftDetail(null)
   }
 
-  const displayedEmails = useMemo(() => {
+  const displayedThreads = useMemo(() => {
     const pending = searchInput.trim()
     const fallbackPool = unfilteredByFolder.get(activeFolder) ?? []
     const canFallbackLocally = FOLDER_CONFIG[activeFolder].fallbackToLocal
@@ -136,10 +139,10 @@ function App(): React.JSX.Element {
       hasPendingInput &&
       pending.length >= 2 &&
       !hasGmailOperator(pending) &&
-      (emails.length > 0 || (canFallbackLocally && fallbackPool.length > 0))
+      (threads.length > 0 || (canFallbackLocally && fallbackPool.length > 0))
     ) {
-      const seen = new Map<string, EmailSummary>()
-      for (const e of canFallbackLocally ? [...emails, ...fallbackPool] : emails) {
+      const seen = new Map<string, ThreadSummary>()
+      for (const e of canFallbackLocally ? [...threads, ...fallbackPool] : threads) {
         if (!seen.has(e.id)) seen.set(e.id, e)
       }
       const preview = new Fuse([...seen.values()], {
@@ -151,8 +154,8 @@ function App(): React.JSX.Element {
         .map((r) => r.item)
       if (preview.length > 0) return preview
     }
-    if (!isSearchActive) return emails
-    if (emails.length > 0) return rerankWithFuse(emails, committedQuery)
+    if (!isSearchActive) return threads
+    if (threads.length > 0) return rerankWithFuse(threads, committedQuery)
     // Server returned nothing: fuzzy-search the folder's cached unfiltered
     // page so a typo can still surface locally-loaded mail instead of a
     // dead end (only where the folder config allows it).
@@ -165,9 +168,9 @@ function App(): React.JSX.Element {
       const fallback = fuse.search(committedQuery).map((r) => r.item)
       if (fallback.length > 0) return fallback
     }
-    return emails
+    return threads
   }, [
-    emails,
+    threads,
     committedQuery,
     isSearchActive,
     unfilteredByFolder,
@@ -176,18 +179,21 @@ function App(): React.JSX.Element {
     activeFolder
   ])
 
-  const selectedEmail = displayedEmails.find((e) => e.id === selectedId) ?? null
+  const selectedThread = displayedThreads.find((e) => e.id === selectedId) ?? null
 
-  function handleSelect(id: string): void {
-    openEmail(id)
-    setDetail(null)
-    setDetailLoading(true)
+  function handleSelect(row: ThreadSummary): void {
+    openEmail(row.id)
+    setDraftDetail(null)
     setError(null)
+    // Conversation rows render from getThread inside EmailDetail; only the
+    // drafts branch needs a message body fetch.
+    if (activeFolder !== 'drafts') return
+    setDraftDetailLoading(true)
     window.api
-      .getMessage(id)
-      .then(setDetail)
+      .getMessage(row.messageIds[row.messageIds.length - 1])
+      .then(setDraftDetail)
       .catch((e: unknown) => recordError(e))
-      .finally(() => setDetailLoading(false))
+      .finally(() => setDraftDetailLoading(false))
   }
 
   function handleSignIn(): void {
@@ -221,7 +227,7 @@ function App(): React.JSX.Element {
       setCommittedQuery('')
       setSearchInput('')
       closeEmail()
-      setEmails([])
+      setThreads([])
       nextPageTokenRef.current = undefined
       setNextPageToken(undefined)
       searchingRef.current = false
@@ -244,7 +250,7 @@ function App(): React.JSX.Element {
       id,
       window.setTimeout(() => {
         draftPruneTimersRef.current.delete(id)
-        setEmails((prev) => prev.filter((e) => e.id !== id))
+        setThreads((prev) => prev.filter((e) => e.id !== id))
         // Retire the selection only if it's still this spent draft — a
         // newer selection made inside the delay window must survive.
         if (selectionRef.current === id) closeEmail()
@@ -252,55 +258,58 @@ function App(): React.JSX.Element {
     )
   }
 
-  // Archive and delete are thread mutations while the list is one row per
-  // message, so every row sharing the threadId leaves the list together.
+  // Archive and delete remove the thread: the row id is the thread id now,
+  // so one row disappears per mutation instead of every matching message.
   function handleThreadRemoved(threadId: string): void {
-    setEmails((prev) => prev.filter((e) => e.threadId !== threadId))
+    setThreads((prev) => prev.filter((e) => e.id !== threadId))
     closeEmail()
   }
 
-  // Read/unread is also thread-level: Gmail marks whole conversations, and
+  // Read/unread is thread-level: Gmail marks whole conversations, and
   // threads.modify on UNREAD does the same batch shape as archive above.
+  // The row's unread count collapses to the whole thread or clears to zero.
   function handleThreadReadChanged(threadId: string, unread: boolean): void {
-    setEmails((prev) =>
-      prev.map((e) => (e.threadId === threadId && e.unread !== unread ? { ...e, unread } : e))
+    setThreads((prev) =>
+      prev.map((e) => {
+        if (e.id !== threadId) return e
+        const next = unread ? e.messageIds.length : 0
+        return e.unreadCount === next ? e : { ...e, unreadCount: next }
+      })
     )
   }
 
-  function handleRowReadToggle(email: EmailSummary): void {
+  function handleRowReadToggle(row: ThreadSummary): void {
+    const unread = row.unreadCount > 0
     window.api
       .modifyLabels({
         kind: 'thread',
-        id: email.threadId,
-        ...(email.unread ? { removeLabelIds: ['UNREAD'] } : { addLabelIds: ['UNREAD'] })
+        id: row.id,
+        ...(unread ? { removeLabelIds: ['UNREAD'] } : { addLabelIds: ['UNREAD'] })
       })
-      .then(() => handleThreadReadChanged(email.threadId, !email.unread))
+      .then(() => handleThreadReadChanged(row.id, !unread))
       .catch((e: unknown) => recordError(e))
   }
 
   // Star is thread-level like read/unread: threads.modify applies STARRED to
-  // every message in the conversation, so all rows sharing the threadId
-  // flip together.
+  // every message in the conversation.
   function handleThreadStarChanged(threadId: string, starred: boolean): void {
     // In the Starred folder an unstar removes the mail from this view, the
     // same way archive leaves the Inbox list.
-    setEmails((prev) =>
+    setThreads((prev) =>
       activeFolder === 'starred' && !starred
-        ? prev.filter((e) => e.threadId !== threadId)
-        : prev.map((e) =>
-            e.threadId === threadId && e.starred !== starred ? { ...e, starred } : e
-          )
+        ? prev.filter((e) => e.id !== threadId)
+        : prev.map((e) => (e.id === threadId && e.starred !== starred ? { ...e, starred } : e))
     )
   }
 
-  function handleRowStarToggle(email: EmailSummary): void {
+  function handleRowStarToggle(row: ThreadSummary): void {
     window.api
       .modifyLabels({
         kind: 'thread',
-        id: email.threadId,
-        ...(email.starred ? { removeLabelIds: ['STARRED'] } : { addLabelIds: ['STARRED'] })
+        id: row.id,
+        ...(row.starred ? { removeLabelIds: ['STARRED'] } : { addLabelIds: ['STARRED'] })
       })
-      .then(() => handleThreadStarChanged(email.threadId, !email.starred))
+      .then(() => handleThreadStarChanged(row.id, !row.starred))
       .catch((e: unknown) => recordError(e))
   }
 
@@ -313,7 +322,7 @@ function App(): React.JSX.Element {
     setError(null)
     // The list resets with the folder: a stale nextPageToken from the old
     // folder must never pair with the new folder's next-page fetch.
-    setEmails([])
+    setThreads([])
     nextPageTokenRef.current = undefined
     setNextPageToken(undefined)
     searchingRef.current = false
@@ -339,7 +348,7 @@ function App(): React.JSX.Element {
       })
       .then((page) => {
         if (requestIdRef.current !== requestId) return
-        setEmails((prev) => [...prev, ...page.emails])
+        setThreads((prev) => [...prev, ...page.threads])
         nextPageTokenRef.current = page.nextPageToken
         setNextPageToken(page.nextPageToken)
       })
@@ -388,7 +397,7 @@ function App(): React.JSX.Element {
       lastFetchedRef.current &&
       lastFetchedRef.current.folder === activeFolder &&
       lastFetchedRef.current.q === committedQuery &&
-      emails.length > 0
+      threads.length > 0
     ) {
       return
     }
@@ -396,7 +405,7 @@ function App(): React.JSX.Element {
       ? searchPageCacheRef.current.get(activeFolder)?.get(committedQuery)
       : undefined
     if (cached) {
-      setEmails(cached.emails)
+      setThreads(cached.threads)
       nextPageTokenRef.current = cached.nextPageToken
       setNextPageToken(cached.nextPageToken)
       lastFetchedRef.current = { folder: activeFolder, q: committedQuery }
@@ -415,14 +424,14 @@ function App(): React.JSX.Element {
       })
       .then((page) => {
         if (requestIdRef.current !== requestId) return
-        setEmails(page.emails)
+        setThreads(page.threads)
         nextPageTokenRef.current = page.nextPageToken
         setNextPageToken(page.nextPageToken)
         if (!committedQuery) {
-          setUnfilteredByFolder((prev) => new Map(prev).set(activeFolder, page.emails))
+          setUnfilteredByFolder((prev) => new Map(prev).set(activeFolder, page.threads))
         } else {
           const folderCache =
-            searchPageCacheRef.current.get(activeFolder) ?? new Map<string, MailPage>()
+            searchPageCacheRef.current.get(activeFolder) ?? new Map<string, ThreadPage>()
           searchPageCacheRef.current.set(activeFolder, folderCache)
           folderCache.set(committedQuery, page)
           if (folderCache.size > 20) folderCache.delete(folderCache.keys().next().value!)
@@ -474,7 +483,9 @@ function App(): React.JSX.Element {
     <div className="app">
       <div className="actions">
         {signedIn === false && <button onClick={handleSignIn}>Sign in with Google</button>}
-        {searching && emails.length === 0 && !isSearchActive && <span role="status">Loading…</span>}
+        {searching && threads.length === 0 && !isSearchActive && (
+          <span role="status">Loading…</span>
+        )}
         {searching && isSearchActive && <span role="status">Searching…</span>}
       </div>
 
@@ -513,35 +524,42 @@ function App(): React.JSX.Element {
           </form>
           {isSearchActive && !searching && !hasPendingInput && (
             <p className="snippet" role="status">
-              {displayedEmails.length > 0
-                ? `${displayedEmails.length} result${displayedEmails.length === 1 ? '' : 's'} for “${committedQuery}”`
+              {displayedThreads.length > 0
+                ? `${displayedThreads.length} result${displayedThreads.length === 1 ? '' : 's'} for “${committedQuery}”`
                 : `No results for “${committedQuery}”`}
             </p>
           )}
           <ul className="emails">
-            {displayedEmails.map((email) => (
-              <li key={email.id} className={email.unread ? 'unread' : undefined}>
+            {displayedThreads.map((row) => (
+              <li key={row.id} className={row.unreadCount > 0 ? 'unread' : undefined}>
                 <button
                   type="button"
-                  onClick={() => handleSelect(email.id)}
+                  onClick={() => handleSelect(row)}
                   style={{ all: 'unset', display: 'block', cursor: 'pointer', width: '100%' }}
                 >
-                  <strong className="email-text">{email.subject}</strong>
-                  <div className="from email-text">{email.from}</div>
-                  <div className="snippet email-text">{email.snippet}</div>
+                  <strong className="email-text">
+                    {row.subject}
+                    {row.unreadCount > 1 ? ` (${row.unreadCount})` : ''}
+                  </strong>
+                  {/* Sender names for the whole conversation, like Gmail's
+                      participant summary on thread rows. */}
+                  <div className="from email-text">
+                    {row.participants.map(senderNameOf).join(', ')}
+                  </div>
+                  <div className="snippet email-text">{row.snippet}</div>
                 </button>
                 {activeFolder !== 'drafts' && (
                   <>
-                    <button type="button" onClick={() => handleRowReadToggle(email)}>
-                      {email.unread ? 'mark read' : 'mark unread'}
+                    <button type="button" onClick={() => handleRowReadToggle(row)}>
+                      {row.unreadCount > 0 ? 'mark read' : 'mark unread'}
                     </button>
                     <button
                       type="button"
-                      className={`star-toggle${email.starred ? ' starred' : ''}`}
-                      onClick={() => handleRowStarToggle(email)}
-                      title={email.starred ? 'Unstar' : 'Star'}
-                      aria-label={email.starred ? 'Unstar' : 'Star'}
-                      aria-pressed={email.starred}
+                      className={`star-toggle${row.starred ? ' starred' : ''}`}
+                      onClick={() => handleRowStarToggle(row)}
+                      title={row.starred ? 'Unstar' : 'Star'}
+                      aria-label={row.starred ? 'Unstar' : 'Star'}
+                      aria-pressed={row.starred}
                     >
                       {/* The star glyph is a closed contour drawn unfilled by
                           the icon set; filling it with the row's gold when
@@ -550,7 +568,7 @@ function App(): React.JSX.Element {
                         icon={StarIcon}
                         size={18}
                         strokeWidth={1.8}
-                        fill={email.starred ? 'currentColor' : 'none'}
+                        fill={row.starred ? 'currentColor' : 'none'}
                       />
                     </button>
                   </>
@@ -572,7 +590,7 @@ function App(): React.JSX.Element {
               )}
             </>
           ) : (
-            displayedEmails.length > 0 &&
+            displayedThreads.length > 0 &&
             !searching && (
               <p className="snippet">
                 {isSearchActive ? 'End of results' : FOLDER_CONFIG[activeFolder].empty}
@@ -582,21 +600,19 @@ function App(): React.JSX.Element {
         </aside>
 
         <section className="email-content" aria-label="Email content">
-          {selectedEmail ? (
+          {selectedThread ? (
             activeFolder === 'drafts' ? (
               <DraftEditor
-                key={selectedEmail.id}
-                email={selectedEmail}
-                detail={detail}
-                detailLoading={detailLoading}
+                key={selectedThread.id}
+                row={selectedThread}
+                detail={draftDetail}
+                detailLoading={draftDetailLoading}
                 onSent={handleDraftSent}
               />
             ) : (
               <EmailDetail
-                key={selectedEmail.id}
-                email={selectedEmail}
-                detail={detail}
-                detailLoading={detailLoading}
+                key={selectedThread.id}
+                thread={selectedThread}
                 folder={activeFolder}
                 onThreadRemoved={handleThreadRemoved}
                 onThreadReadChanged={handleThreadReadChanged}
