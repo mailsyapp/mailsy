@@ -1,4 +1,4 @@
-import { getGmailClient } from '../auth'
+import { getAccountEmail, getGmailClient } from '../auth'
 import type { EmailDetail, EmailThread } from '../../shared/types'
 import { toEmailDetail } from './message'
 import { DETAIL_CONCURRENCY, mapWithConcurrency, withQuotaRetry } from './resilience'
@@ -21,8 +21,16 @@ export async function fetchThread(threadId: string): Promise<EmailThread> {
       format: 'full'
     })
   )
-  const messages = await mapWithConcurrency(thread.data.messages ?? [], DETAIL_CONCURRENCY, (msg) =>
-    toEmailDetail(gmail, msg)
-  )
-  return { id: thread.data.id ?? threadId, messages }
+  // getAccountEmail rides along concurrently so the thread open is not
+  // serialized behind a profile call, and its failure degrades to an empty
+  // exclusion set (reply-all excludes nothing) rather than failing the open:
+  // a broken profile must not block reading mail a dead-grant token would
+  // anyway surface at the message fetches above.
+  const [messages, userEmail] = await Promise.all([
+    mapWithConcurrency(thread.data.messages ?? [], DETAIL_CONCURRENCY, (msg) =>
+      toEmailDetail(gmail, msg)
+    ),
+    getAccountEmail().catch(() => '')
+  ])
+  return { id: thread.data.id ?? threadId, messages, userEmail }
 }

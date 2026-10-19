@@ -1,5 +1,4 @@
-import { getGmailClient } from '../auth'
-import type { GmailClient } from '../auth'
+import { getAccountEmail, getGmailClient } from '../auth'
 import type { SendDraftRequest, SendEmailRequest } from '../../shared/types'
 import { rethrowDeadGrant, withQuotaRetry } from './resilience'
 import { buildRawMessage } from './mime'
@@ -20,9 +19,8 @@ function assertSendFields(request: SendEmailRequest): void {
   if (!request.to.trim()) throw new Error('Recipient is required')
 }
 
-async function resolveFromAddress(gmail: GmailClient): Promise<string> {
-  const profile = await gmail.users.getProfile({ userId: 'me' })
-  const from = profile.data.emailAddress
+async function resolveFromAddress(): Promise<string> {
+  const from = await getAccountEmail()
   if (!from) throw new Error('Could not determine the signed-in Gmail address')
   return from
 }
@@ -32,7 +30,7 @@ export async function sendEmail(request: SendEmailRequest): Promise<void> {
 
   try {
     const gmail = getGmailClient()
-    const from = await resolveFromAddress(gmail)
+    const from = await resolveFromAddress()
     const raw = await buildRawMessage(from, request)
 
     await gmail.users.messages.send({
@@ -56,7 +54,7 @@ export async function sendDraft(request: SendDraftRequest): Promise<void> {
 
   try {
     const gmail = getGmailClient()
-    const from = await resolveFromAddress(gmail)
+    const from = await resolveFromAddress()
 
     // Atomicity contract of the Gmail drafts API: drafts.update replaces the
     // draft content with exactly what the editor showed, then drafts.send
