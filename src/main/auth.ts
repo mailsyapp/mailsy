@@ -95,8 +95,8 @@ export function getGmailClient(): GmailClient {
 
   const client = makeClient()
   client.setCredentials({ refresh_token: refreshToken })
-  // google-auth-library fetches and caches a fresh access token from the
-  // refresh token on every call; nothing here does it manually.
+  // google-auth-library caches the access token and refreshes it once
+  // expired; nothing here manages tokens manually.
   return google.gmail({ version: 'v1', auth: client })
 }
 
