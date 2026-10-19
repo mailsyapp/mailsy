@@ -10,6 +10,10 @@ import {
 import { threadToSummary, toEmailSummary } from './message'
 
 const FOLDER_LABEL_IDS: Record<Exclude<MailFolder, 'drafts'>, string[]> = {
+  // No label filter: Gmail's All Mail is every thread the account holds,
+  // archived mail included. Spam and Trash are excluded by the API default
+  // and have folder views of their own.
+  all: [],
   inbox: ['INBOX'],
   sent: ['SENT'],
   trash: ['TRASH'],
@@ -89,10 +93,12 @@ export async function fetchFolder(options: ListFolderOptions = {}): Promise<Thre
   const list = await withQuotaRetry(() =>
     gmail.users.threads.list({
       userId: 'me',
-      labelIds,
       maxResults,
       ...(options.pageToken ? { pageToken: options.pageToken } : {}),
-      ...(q ? { q } : {})
+      ...(q ? { q } : {}),
+      // All Mail carries an empty filter, which must arrive as no labelIds
+      // parameter at all rather than an empty list.
+      ...(labelIds.length > 0 ? { labelIds } : {})
     })
   )
   const ids = (list.data.threads ?? []).flatMap((t) => (t.id ? [t.id] : []))
