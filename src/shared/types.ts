@@ -12,7 +12,6 @@ export interface EmailSummary {
   starred: boolean
   draftId?: string
 }
-
 export interface EmailDetail extends EmailSummary {
   to: string
   cc: string
@@ -32,6 +31,22 @@ export interface EmailThread {
 
 export type MailFolder = 'inbox' | 'drafts' | 'sent' | 'trash' | 'starred'
 
+// One list row per Gmail conversation. Row actions are thread-level, so the
+// row carries the thread id and aggregate label state; message ids stay on
+// the row for body fetches and draft sends. Subject and dates come from the
+// thread's messages and are flattened here like unread/starred above.
+export interface ThreadSummary {
+  id: string
+  subject: string
+  snippet: string
+  participants: string[]
+  date: string
+  messageIds: string[]
+  unreadCount: number
+  starred: boolean
+  draftId?: string
+}
+
 export interface ListFolderOptions {
   maxResults?: number
   pageToken?: string | null
@@ -39,8 +54,8 @@ export interface ListFolderOptions {
   folder?: MailFolder
 }
 
-export interface MailPage {
-  emails: EmailSummary[]
+export interface ThreadPage {
+  threads: ThreadSummary[]
   nextPageToken: string | null
 }
 
