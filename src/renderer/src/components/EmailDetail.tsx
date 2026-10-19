@@ -9,6 +9,7 @@ import type {
   MailFolder
 } from '../../../shared/types'
 import { senderNameOf } from '../lib/format'
+import { replyAllTargets } from '../lib/recipients'
 
 type EmailDetailProps = {
   // The row identity: subject, participant summary, and thread-level label
@@ -302,10 +303,7 @@ export function EmailDetail({
 
   const latestMessage: EmailDetailData | null = messages[messages.length - 1] ?? null
 
-  function replyToEmail(): void {
-    const target = latestMessage
-    if (!target) return
-
+  function openReplyComposer(target: EmailDetailData, toLine: string): void {
     setSendError(null)
     setSent(false)
     const originalText = target.bodyText || target.snippet || thread.snippet
@@ -321,13 +319,28 @@ export function EmailDetail({
 
     setQuotedContent({ text: quotedText, html: quotedHtml })
     setDraft({
-      to: target.replyTo.trim() || target.from.trim() || thread.participants[0] || '',
+      to: toLine,
       subject: /^re:/i.test(target.subject) ? target.subject : `Re: ${target.subject}`,
       body: `\n\n${quotedText}`,
       threadId: target.threadId || undefined,
       inReplyTo: target.messageId || undefined,
       references: [target.references, target.messageId].filter(Boolean).join(' ') || undefined
     })
+  }
+
+  function replyToEmail(): void {
+    const target = latestMessage
+    if (!target) return
+    openReplyComposer(
+      target,
+      target.replyTo.trim() || target.from.trim() || thread.participants[0] || ''
+    )
+  }
+
+  function replyAllToEmail(): void {
+    const target = latestMessage
+    if (!target) return
+    openReplyComposer(target, replyAllTargets(target, threadData?.userEmail ?? ''))
   }
 
   function forwardEmail(): void {
@@ -489,6 +502,7 @@ export function EmailDetail({
       )}
 
       <button onClick={replyToEmail}>reply</button>
+      <button onClick={replyAllToEmail}>reply all</button>
       <button onClick={forwardEmail}>forward</button>
       <button onClick={handleToggleRead} disabled={togglingRead}>
         {thread.unreadCount > 0 ? 'mark as read' : 'mark as unread'}
