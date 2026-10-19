@@ -2,21 +2,22 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import DOMPurify from 'dompurify'
 import { AutoGrowTextarea } from './AutoGrowTextarea'
 import type {
-  EmailSummary,
+  ThreadSummary,
   EmailDetail as EmailDetailData,
   EmailThread,
   SendEmailRequest,
   MailFolder
 } from '../../../shared/types'
+import { senderNameOf } from '../lib/format'
 
 type EmailDetailProps = {
-  email: EmailSummary
-  detail: EmailDetailData | null
-  detailLoading: boolean
+  // The row identity: subject, participant summary, and thread-level label
+  // state the list already displays. Mutations target its id (thread id).
+  thread: ThreadSummary
   folder: MailFolder
   // Reports the thread's ID once a list-clearing action (archive, delete)
   // succeeded. List removal is owned by App because the list is one row per
-  // message, not per thread.
+  // thread.
   onThreadRemoved: (threadId: string) => void
   // Reports a thread read-state flip (auto-read on open, manual toggle) so
   // App can move the list rows, which it owns.
@@ -93,10 +94,6 @@ function formatDraftHtml(body: string, quoteText: string, quoteHtml: string): st
   return (
     plainTextToHtml(body.slice(0, quoteStart)) + quoteHtml + plainTextToHtml(body.slice(quoteEnd))
   )
-}
-
-function senderNameOf(from: string): string {
-  return from.match(/^(.*?)\s*<[^>]+>$/)?.[1].replace(/^"|"$/g, '') ?? from
 }
 
 function fitFrame(frame: HTMLIFrameElement): void {
@@ -194,15 +191,13 @@ function ThreadMessage({
 }
 
 export function EmailDetail({
-  email,
-  detail,
-  detailLoading,
+  thread,
   folder,
   onThreadRemoved,
   onThreadReadChanged,
   onThreadStarChanged
 }: EmailDetailProps): React.JSX.Element {
-  const [thread, setThread] = useState<EmailThread | null>(null)
+  const [threadData, setThreadData] = useState<EmailThread | null>(null)
   const [threadLoading, setThreadLoading] = useState(false)
   const [threadError, setThreadError] = useState<string | null>(null)
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
@@ -225,32 +220,33 @@ export function EmailDetail({
   const [togglingStar, setTogglingStar] = useState(false)
   const [starError, setStarError] = useState<string | null>(null)
 
-  // One auto-read attempt per opened email: the ref records the email id so
+  // One auto-read attempt per opened email: the ref records the thread id so
   // re-renders don't re-fire the labels.modify call. A failed attempt stays
   // recorded — retrying on every render would spam the quota on persistent
   // errors, and the row stays bold until the manual toggle below succeeds.
   const autoReadRef = useRef<string | null>(null)
 
   useEffect(() => {
-    if (!email.unread || !email.threadId || autoReadRef.current === email.id) return
-    autoReadRef.current = email.id
+    if (thread.unreadCount === 0 || !thread.id || autoReadRef.current === thread.id) return
+    autoReadRef.current = thread.id
     window.api
-      .modifyLabels({ kind: 'thread', id: email.threadId, removeLabelIds: ['UNREAD'] })
-      .then(() => onThreadReadChanged(email.threadId, false))
+      .modifyLabels({ kind: 'thread', id: thread.id, removeLabelIds: ['UNREAD'] })
+      .then(() => onThreadReadChanged(thread.id, false))
       .catch(() => {})
-  }, [email.id, email.unread, email.threadId, onThreadReadChanged])
+  }, [thread.id, thread.unreadCount, onThreadReadChanged])
 
   async function handleToggleRead(): Promise<void> {
     if (togglingRead) return
     setTogglingRead(true)
     setReadError(null)
+    const unread = thread.unreadCount > 0
     try {
       await window.api.modifyLabels({
         kind: 'thread',
-        id: email.threadId,
-        ...(email.unread ? { removeLabelIds: ['UNREAD'] } : { addLabelIds: ['UNREAD'] })
+        id: thread.id,
+        ...(unread ? { removeLabelIds: ['UNREAD'] } : { addLabelIds: ['UNREAD'] })
       })
-      onThreadReadChanged(email.threadId, !email.unread)
+      onThreadReadChanged(thread.id, !unread)
     } catch (error) {
       setReadError(error instanceof Error ? error.message : String(error))
     } finally {
@@ -265,10 +261,10 @@ export function EmailDetail({
     try {
       await window.api.modifyLabels({
         kind: 'thread',
-        id: email.threadId,
-        ...(email.starred ? { removeLabelIds: ['STARRED'] } : { addLabelIds: ['STARRED'] })
+        id: thread.id,
+        ...(thread.starred ? { removeLabelIds: ['STARRED'] } : { addLabelIds: ['STARRED'] })
       })
-      onThreadStarChanged(email.threadId, !email.starred)
+      onThreadStarChanged(thread.id, !thread.starred)
     } catch (error) {
       setStarError(error instanceof Error ? error.message : String(error))
     } finally {
@@ -276,13 +272,13 @@ export function EmailDetail({
     }
   }
 
-  // Thread state is reset by remounting via key={email.id} in App.
+  // Thread state is reset by remounting via key={thread.id} in App.
   async function loadThread(threadId: string, silent = false): Promise<void> {
     if (!silent) setThreadLoading(true)
     setThreadError(null)
     try {
       const result = await window.api.getThread(threadId)
-      setThread(result)
+      setThreadData(result)
       // Default: only the latest message expanded.
       const latestId = result.messages[result.messages.length - 1]?.id
       setExpandedIds(new Set(latestId ? [latestId] : []))
@@ -294,28 +290,17 @@ export function EmailDetail({
   }
 
   useEffect(() => {
-    const threadId = detail?.threadId
-    if (!threadId) return
-    let cancelled = false
+    if (!thread.id) return
+    // The first loadThread statements run synchronously inside this effect;
+    // the lint rule flags it, but the old same-shape effect behaved the way
+    // this one does.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void loadThread(thread.id)
+  }, [thread.id])
 
-    async function run(id: string): Promise<void> {
-      await loadThread(id)
-      if (cancelled) return
-    }
+  const messages: EmailDetailData[] = threadData?.messages ?? []
 
-    void run(threadId)
-    return () => {
-      cancelled = true
-    }
-  }, [detail?.threadId])
-
-  const messages: EmailDetailData[] = thread?.messages.length
-    ? thread.messages
-    : detail
-      ? [detail]
-      : []
-
-  const latestMessage: EmailDetailData | null = messages[messages.length - 1] ?? detail ?? null
+  const latestMessage: EmailDetailData | null = messages[messages.length - 1] ?? null
 
   function replyToEmail(): void {
     const target = latestMessage
@@ -323,7 +308,7 @@ export function EmailDetail({
 
     setSendError(null)
     setSent(false)
-    const originalText = target.bodyText || target.snippet || email.snippet
+    const originalText = target.bodyText || target.snippet || thread.snippet
     const quotedText = `On ${target.date}, ${target.from} wrote:\n${originalText
       .split('\n')
       .map((line) => `> ${line}`)
@@ -336,7 +321,7 @@ export function EmailDetail({
 
     setQuotedContent({ text: quotedText, html: quotedHtml })
     setDraft({
-      to: target.replyTo.trim() || target.from.trim() || email.from,
+      to: target.replyTo.trim() || target.from.trim() || thread.participants[0] || '',
       subject: /^re:/i.test(target.subject) ? target.subject : `Re: ${target.subject}`,
       body: `\n\n${quotedText}`,
       threadId: target.threadId || undefined,
@@ -351,7 +336,7 @@ export function EmailDetail({
 
     setSendError(null)
     setSent(false)
-    const originalText = target.bodyText || target.snippet || email.snippet
+    const originalText = target.bodyText || target.snippet || thread.snippet
     const forwardHeader = [
       '---------- Forwarded message ----------',
       `From: ${target.from}`,
@@ -407,7 +392,7 @@ export function EmailDetail({
       setQuotedContent(null)
       setSent(true)
       // Refresh the conversation so the just-sent reply/forward is visible.
-      const threadId = latestMessage?.threadId
+      const threadId = latestMessage?.threadId ?? thread.id
       if (threadId) await loadThread(threadId, true)
     } catch (error) {
       setSendError(error instanceof Error ? error.message : String(error))
@@ -423,10 +408,10 @@ export function EmailDetail({
     try {
       await window.api.modifyLabels({
         kind: 'thread',
-        id: email.threadId,
+        id: thread.id,
         removeLabelIds: ['INBOX']
       })
-      onThreadRemoved(email.threadId)
+      onThreadRemoved(thread.id)
     } catch (error) {
       setArchiveError(error instanceof Error ? error.message : String(error))
     } finally {
@@ -445,11 +430,11 @@ export function EmailDetail({
     try {
       await window.api.modifyLabels({
         kind: 'thread',
-        id: email.threadId,
+        id: thread.id,
         addLabelIds: ['TRASH'],
         removeLabelIds: ['INBOX']
       })
-      onThreadRemoved(email.threadId)
+      onThreadRemoved(thread.id)
     } catch (error) {
       setDeleteError(error instanceof Error ? error.message : String(error))
     } finally {
@@ -468,23 +453,23 @@ export function EmailDetail({
 
   return (
     <div>
-      <h2>{email.subject}</h2>
+      <h2>{thread.subject}</h2>
       <div>
-        <div>{senderNameOf(email.from)}</div>
-        <div>{email.date}</div>
+        <div>{thread.participants.map(senderNameOf).join(', ')}</div>
+        <div>{thread.date}</div>
         {messages.length > 1 && <div>{messages.length} messages in conversation</div>}
         <button
           type="button"
-          className={`star-toggle${email.starred ? ' starred' : ''}`}
+          className={`star-toggle${thread.starred ? ' starred' : ''}`}
           onClick={handleToggleStar}
           disabled={togglingStar}
-          aria-pressed={email.starred}
+          aria-pressed={thread.starred}
         >
-          {email.starred ? 'starred' : 'not starred'}
+          {thread.starred ? 'starred' : 'not starred'}
         </button>
       </div>
 
-      {detailLoading || threadLoading ? (
+      {threadLoading ? (
         <p>Loading email...</p>
       ) : threadError ? (
         <p role="alert">{threadError}</p>
@@ -500,14 +485,13 @@ export function EmailDetail({
           ))}
         </div>
       ) : (
-        <div className="snippet">{email.snippet}</div>
+        <div className="snippet">{thread.snippet}</div>
       )}
-      {/* Keep single-message header details available when thread fetch fails. */}
 
       <button onClick={replyToEmail}>reply</button>
       <button onClick={forwardEmail}>forward</button>
       <button onClick={handleToggleRead} disabled={togglingRead}>
-        {email.unread ? 'mark as read' : 'mark as unread'}
+        {thread.unreadCount > 0 ? 'mark as read' : 'mark as unread'}
       </button>
       {folder === 'inbox' && (
         <button onClick={handleArchive} disabled={archiving}>
