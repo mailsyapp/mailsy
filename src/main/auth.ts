@@ -95,9 +95,26 @@ export function getGmailClient(): GmailClient {
 
   const client = makeClient()
   client.setCredentials({ refresh_token: refreshToken })
-  // google-auth-library fetches and caches a fresh access token from the
-  // refresh token on every call; nothing here does it manually.
+  // google-auth-library caches the access token and refreshes it once
+  // expired; nothing here manages tokens manually.
   return google.gmail({ version: 'v1', auth: client })
+}
+
+// Delete-then-revoke: removing the file makes sign-out instant and final even
+// when the Google call fails (offline or the token is already dead), whereas
+// revoking first could leave the app usable with a token we just told Google
+// to kill. The revoke is fire-and-forget; its only job is best-effort cleanup
+// of the grant on Google's side. A fresh bare client does the revoking: the
+// revoke endpoint needs no OAuth credentials, so sign-out must not depend on
+// them staying present.
+export function signOut(): void {
+  const refreshToken = loadRefreshToken()
+  invalidateStoredGrant()
+  if (refreshToken) {
+    new OAuth2Client()
+      .revokeToken(refreshToken)
+      .catch((e) => console.warn('Gmail token revoke failed:', e))
+  }
 }
 
 // A refresh token rejected with invalid_grant is dead: Google expired or
