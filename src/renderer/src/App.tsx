@@ -112,6 +112,19 @@ function App(): React.JSX.Element {
   const searchingRef = useRef(false)
   const nextPageTokenRef = useRef<string | null | undefined>(undefined)
 
+  // The sync mirrors above are read by the IntersectionObserver before any
+  // state has committed, so every write pairs the state with its ref. One
+  // setter per pair makes an unpaired write unrepresentable.
+  function setPageToken(token: string | null | undefined): void {
+    nextPageTokenRef.current = token
+    setNextPageToken(token)
+  }
+
+  function setActiveSearching(active: boolean): void {
+    searchingRef.current = active
+    setSearching(active)
+  }
+
   const hasMore = nextPageToken !== null
   const isSearchActive = committedQuery.length > 0
   const hasPendingInput = searchInput.trim() !== committedQuery
@@ -235,17 +248,20 @@ function App(): React.JSX.Element {
     setSearchInput('')
     closeEmail()
     setThreads([])
-// No per-folder mail content may survive: nothing typed or cached.
+    // No per-folder mail content may survive: nothing typed or cached.
     searchPageCacheRef.current.clear()
+    // Prune timers are canceled, not just dropped: their callbacks could
+    // otherwise outlive the flip into the next session's freshly loaded
+    // list and filter the wrong rows out of it.
+    draftPruneTimersRef.current.forEach((timer) => window.clearTimeout(timer))
+    draftPruneTimersRef.current.clear()
     setUnfilteredByFolder(new Map<MailFolder, ThreadSummary[]>())
     // null means pagination is exhausted, so the sentinel observer and
     // loadMore can't refetch the folder after the flip. undefined would
     // mean "unknown", which reopens the window: the observer fires and
     // issues a doomed request against the signed-out session.
-    nextPageTokenRef.current = null
-    setNextPageToken(null)
-    searchingRef.current = false
-    setSearching(false)
+    setPageToken(null)
+    setActiveSearching(false)
     lastFetchedRef.current = null
   }
 
@@ -350,9 +366,8 @@ function App(): React.JSX.Element {
     // The list resets with the folder: a stale nextPageToken from the old
     // folder must never pair with the new folder's next-page fetch.
     setThreads([])
-    nextPageTokenRef.current = undefined
-    setNextPageToken(undefined)
-    searchingRef.current = false
+    setPageToken(undefined)
+    setActiveSearching(false)
     lastFetchedRef.current = null
   }
 
@@ -376,8 +391,7 @@ function App(): React.JSX.Element {
       .then((page) => {
         if (requestIdRef.current !== requestId) return
         setThreads((prev) => [...prev, ...page.threads])
-        nextPageTokenRef.current = page.nextPageToken
-        setNextPageToken(page.nextPageToken)
+        setPageToken(page.nextPageToken)
       })
       .catch((e: unknown) => recordError(e))
       .finally(() => {
@@ -433,14 +447,12 @@ function App(): React.JSX.Element {
       : undefined
     if (cached) {
       setThreads(cached.threads)
-      nextPageTokenRef.current = cached.nextPageToken
-      setNextPageToken(cached.nextPageToken)
+      setPageToken(cached.nextPageToken)
       lastFetchedRef.current = { folder: activeFolder, q: committedQuery }
       return
     }
     const requestId = ++requestIdRef.current
-    searchingRef.current = true
-    setSearching(true)
+    setActiveSearching(true)
     setError(null)
     closeEmail()
     window.api
@@ -452,8 +464,7 @@ function App(): React.JSX.Element {
       .then((page) => {
         if (requestIdRef.current !== requestId) return
         setThreads(page.threads)
-        nextPageTokenRef.current = page.nextPageToken
-        setNextPageToken(page.nextPageToken)
+        setPageToken(page.nextPageToken)
         if (!committedQuery) {
           setUnfilteredByFolder((prev) => new Map(prev).set(activeFolder, page.threads))
         } else {
@@ -471,8 +482,7 @@ function App(): React.JSX.Element {
       })
       .finally(() => {
         if (requestIdRef.current === requestId) {
-          searchingRef.current = false
-          setSearching(false)
+          setActiveSearching(false)
         }
       })
     // `emails.length` is intentionally read, not depended on: depending on
