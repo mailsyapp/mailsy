@@ -27,6 +27,10 @@ export interface EmailDetail extends EmailSummary {
 export interface EmailThread {
   id: string
   messages: EmailDetail[]
+  // The signed-in account's address, the exclusion set for reply-all.
+  // An empty string (profile fetch failed) degrades reply-all to "exclude
+  // nothing" instead of failing the open.
+  userEmail: string
 }
 
 export type MailFolder = 'all' | 'drafts' | 'inbox' | 'sent' | 'starred' | 'trash'
