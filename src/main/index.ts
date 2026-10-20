@@ -9,9 +9,12 @@ import {
   fetchMessage,
   fetchThread,
   modifyLabels,
+  restoreThread,
   saveDraft,
   sendDraft,
-  sendEmail
+  sendEmail,
+  snoozeThread,
+  sweepDueSnoozed
 } from './mail'
 import type {
   ListFolderOptions,
@@ -68,6 +71,18 @@ app.whenReady().then(() => {
   ipcMain.handle('gmail:save-draft', (_event, request: SaveDraftRequest) => saveDraft(request))
   ipcMain.handle('gmail:discard-draft', (_event, draftId: string) => discardDraft(draftId))
   ipcMain.handle('gmail:modify', (_event, request: ModifyLabelsRequest) => modifyLabels(request))
+  ipcMain.handle('gmail:snooze', (_event, threadId: string, restoreAt: number) =>
+    snoozeThread(threadId, restoreAt)
+  )
+  ipcMain.handle('gmail:snooze-restore', (_event, threadId: string) => restoreThread(threadId))
+  ipcMain.handle('gmail:snooze-tick', () => sweepDueSnoozed())
+
+  // The app was closed at some parked thread's wake time: the catch-up
+  // restores everything due now. Signed-out launches skip quietly; the
+  // sweep retries on the next tick after sign-in.
+  void sweepDueSnoozed().catch((e: unknown) => {
+    console.warn('startup snooze catch-up skipped:', e)
+  })
 
   createWindow()
 
