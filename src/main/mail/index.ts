@@ -1,3 +1,4 @@
+export { listLabels, createUserLabel, deleteUserLabel } from './labels'
 export { modifyLabels } from './modify'
 export { fetchFolder } from './folders'
 export { fetchMessage, fetchThread } from './messages'
