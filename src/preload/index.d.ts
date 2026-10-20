@@ -8,6 +8,7 @@ declare global {
   type MailPage = import('../shared/types').MailPage
   type SendEmailRequest = import('../shared/types').SendEmailRequest
   type SendDraftRequest = import('../shared/types').SendDraftRequest
+  type SaveDraftRequest = import('../shared/types').SaveDraftRequest
   type ModifyLabelsRequest = import('../shared/types').ModifyLabelsRequest
 
   interface Window {
@@ -21,6 +22,8 @@ declare global {
       getThread(threadId: string): Promise<EmailThread>
       sendEmail(request: SendEmailRequest): Promise<void>
       sendDraft(request: SendDraftRequest): Promise<void>
+      saveDraft(request: SaveDraftRequest): Promise<string>
+      discardDraft(draftId: string): Promise<void>
       modifyLabels(request: ModifyLabelsRequest): Promise<void>
     }
   }
