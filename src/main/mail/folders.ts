@@ -17,6 +17,10 @@ const FOLDER_LABEL_IDS: Record<Exclude<MailFolder, 'drafts'>, string[]> = {
   inbox: ['INBOX'],
   sent: ['SENT'],
   trash: ['TRASH'],
+  // Gmail's Spam view: the mail the spam filter pulled out of every other
+  // folder view, including All Mail (whose no-label filter excludes Spam
+  // and Trash by the API default).
+  spam: ['SPAM'],
   // STARRED alone (no folder constraint): Gmail's Starred view spans every
   // mail that carries the label, wherever it is.
   starred: ['STARRED']

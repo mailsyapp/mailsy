@@ -33,7 +33,7 @@ export interface EmailThread {
   userEmail: string
 }
 
-export type MailFolder = 'all' | 'drafts' | 'inbox' | 'sent' | 'starred' | 'trash'
+export type MailFolder = 'all' | 'drafts' | 'inbox' | 'sent' | 'spam' | 'starred' | 'trash'
 
 // One list row per Gmail conversation. Row actions are thread-level, so the
 // row carries the thread id and aggregate label state; message ids stay on

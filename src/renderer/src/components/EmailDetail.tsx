@@ -218,6 +218,9 @@ export function EmailDetail({
   const [deleting, setDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
 
+  const [changingSpam, setChangingSpam] = useState(false)
+  const [spamError, setSpamError] = useState<string | null>(null)
+
   const [togglingRead, setTogglingRead] = useState(false)
   const [readError, setReadError] = useState<string | null>(null)
 
@@ -455,9 +458,9 @@ export function EmailDetail({
   }
 
   // Trash, like archive, is a label mutation: add TRASH, remove INBOX. The
-  // draft and trash folders are excluded because trashing a draft thread
-  // leaves it in drafts.list, and an already-trashed thread has nothing to
-  // mutate.
+  // draft, trash, and spam folders are excluded because trashing a draft
+  // thread leaves it in drafts.list, an already-trashed thread has nothing
+  // to mutate, and trashed but spammed mail would still paginate from Spam.
   async function handleDelete(): Promise<void> {
     if (deleting) return
     setDeleting(true)
@@ -474,6 +477,29 @@ export function EmailDetail({
       setDeleteError(error instanceof Error ? error.message : String(error))
     } finally {
       setDeleting(false)
+    }
+  }
+
+  // Spam state is one label too: reporting adds SPAM and drops INBOX, and
+  // unreporting does the reverse and restores INBOX. Both sides clear the
+  // thread from the current list, like archive and trash above, so one
+  // handler carries the pending/error state for either direction.
+  async function handleSetSpam(isSpam: boolean): Promise<void> {
+    if (changingSpam) return
+    setChangingSpam(true)
+    setSpamError(null)
+    try {
+      await window.api.modifyLabels({
+        kind: 'thread',
+        id: thread.id,
+        addLabelIds: [isSpam ? 'SPAM' : 'INBOX'],
+        removeLabelIds: [isSpam ? 'INBOX' : 'SPAM']
+      })
+      onThreadRemoved(thread.id)
+    } catch (error) {
+      setSpamError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setChangingSpam(false)
     }
   }
 
@@ -534,14 +560,25 @@ export function EmailDetail({
           archive
         </button>
       )}
-      {folder !== 'trash' && folder !== 'drafts' && (
+      {folder !== 'trash' && folder !== 'drafts' && folder !== 'spam' && (
         <button onClick={handleDelete} disabled={deleting}>
           delete
+        </button>
+      )}
+      {folder !== 'spam' && folder !== 'drafts' && folder !== 'sent' && folder !== 'trash' && (
+        <button onClick={() => handleSetSpam(true)} disabled={changingSpam}>
+          report spam
+        </button>
+      )}
+      {folder === 'spam' && (
+        <button onClick={() => handleSetSpam(false)} disabled={changingSpam}>
+          not spam
         </button>
       )}
 
       {archiveError && <p role="alert">{archiveError}</p>}
       {deleteError && <p role="alert">{deleteError}</p>}
+      {spamError && <p role="alert">{spamError}</p>}
       {readError && <p role="alert">{readError}</p>}
       {starError && <p role="alert">{starError}</p>}
 

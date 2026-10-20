@@ -37,6 +37,7 @@ const FOLDER_CONFIG: Record<
   drafts: { label: 'Drafts', empty: 'No drafts yet', fallbackToLocal: false },
   sent: { label: 'Sent', empty: 'No sent mail yet', fallbackToLocal: false },
   trash: { label: 'Trash', empty: 'Trash is empty', fallbackToLocal: false },
+  spam: { label: 'Spam', empty: 'Spam is empty', fallbackToLocal: false },
   starred: { label: 'Starred', empty: 'No starred mail yet', fallbackToLocal: false },
   all: { label: 'All Mail', empty: 'No mail yet', fallbackToLocal: false }
 }
@@ -438,6 +439,21 @@ function App(): React.JSX.Element {
       .catch((e: unknown) => recordError(e))
   }
 
+  // "Not spam" restores the thread to the Inbox: the removal of the SPAM
+  // label is also a list-clearing action, so the row leaves this view's
+  // list the way archive and trashing leave theirs.
+  function handleRowNotSpam(row: ThreadSummary): void {
+    window.api
+      .modifyLabels({
+        kind: 'thread',
+        id: row.id,
+        addLabelIds: ['INBOX'],
+        removeLabelIds: ['SPAM']
+      })
+      .then(() => handleThreadRemoved(row.id))
+      .catch((e: unknown) => recordError(e))
+  }
+
   // Star is thread-level like read/unread: threads.modify applies STARRED to
   // every message in the conversation.
   function handleThreadStarChanged(threadId: string, starred: boolean): void {
@@ -748,6 +764,11 @@ function App(): React.JSX.Element {
                   </div>
                   <div className="snippet email-text">{row.snippet}</div>
                 </button>
+                {activeFolder === 'spam' && (
+                  <button type="button" onClick={() => handleRowNotSpam(row)}>
+                    not spam
+                  </button>
+                )}
                 {activeFolder !== 'drafts' && (
                   <>
                     <button type="button" onClick={() => handleRowReadToggle(row)}>
