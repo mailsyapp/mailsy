@@ -38,6 +38,7 @@ const FOLDER_CONFIG: Record<
   sent: { label: 'Sent', empty: 'No sent mail yet', fallbackToLocal: false },
   trash: { label: 'Trash', empty: 'Trash is empty', fallbackToLocal: false },
   spam: { label: 'Spam', empty: 'Spam is empty', fallbackToLocal: false },
+  snoozed: { label: 'Snoozed', empty: 'No snoozed mail', fallbackToLocal: false },
   starred: { label: 'Starred', empty: 'No starred mail yet', fallbackToLocal: false },
   all: { label: 'All Mail', empty: 'No mail yet', fallbackToLocal: false }
 }
@@ -454,6 +455,21 @@ function App(): React.JSX.Element {
       .catch((e: unknown) => recordError(e))
   }
 
+  // Unsnooze on a Snoozed row, mirroring the row-level not spam above: the
+  // row leaves this view's list when the mail rejoins the Inbox. The write
+  // is an INBOX add only — SNOOZED itself is not a writable label on the
+  // Gmail API (see EmailDetail's unsnooze note).
+  function handleRowUnsnooze(row: ThreadSummary): void {
+    window.api
+      .modifyLabels({
+        kind: 'thread',
+        id: row.id,
+        addLabelIds: ['INBOX']
+      })
+      .then(() => handleThreadRemoved(row.id))
+      .catch((e: unknown) => recordError(e))
+  }
+
   // Star is thread-level like read/unread: threads.modify applies STARRED to
   // every message in the conversation.
   function handleThreadStarChanged(threadId: string, starred: boolean): void {
@@ -767,6 +783,11 @@ function App(): React.JSX.Element {
                 {activeFolder === 'spam' && (
                   <button type="button" onClick={() => handleRowNotSpam(row)}>
                     not spam
+                  </button>
+                )}
+                {activeFolder === 'snoozed' && (
+                  <button type="button" onClick={() => handleRowUnsnooze(row)}>
+                    unsnooze
                   </button>
                 )}
                 {activeFolder !== 'drafts' && (

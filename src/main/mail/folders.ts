@@ -9,6 +9,14 @@ import {
 } from './resilience'
 import { threadToSummary, toEmailSummary } from './message'
 
+// Snoozed and All Mail are the two views whose listing cannot use labelIds.
+// All Mail's no-label default excludes only SPAM and TRASH, so parked mail
+// (which carries no label) stays listed there, like Gmail's All Mail label
+// view. The Snoozed view reads the parking state through the search
+// operator instead: SNOOZED is a Gmail pseudo-label outside labels.list, and
+// threads.list(labelIds:['SNOOZED']) is rejected with 400 "Invalid label:
+// SNOOZED" just like writes are, while q:'in:snoozed' is the query path the
+// API answers (Google feature request 109952618).
 const FOLDER_LABEL_IDS: Record<Exclude<MailFolder, 'drafts'>, string[]> = {
   // No label filter: Gmail's All Mail is every thread the account holds,
   // archived mail included. Spam and Trash are excluded by the API default
@@ -23,7 +31,10 @@ const FOLDER_LABEL_IDS: Record<Exclude<MailFolder, 'drafts'>, string[]> = {
   spam: ['SPAM'],
   // STARRED alone (no folder constraint): Gmail's Starred view spans every
   // mail that carries the label, wherever it is.
-  starred: ['STARRED']
+  starred: ['STARRED'],
+  // Empty filter: the Snoozed view rides the q operator instead of a
+  // labelIds entry. See the comment above FOLDER_LABEL_IDS.
+  snoozed: []
 }
 
 async function fetchDrafts(
@@ -87,12 +98,17 @@ async function fetchDrafts(
 export async function fetchFolder(options: ListFolderOptions = {}): Promise<ThreadPage> {
   const gmail = getGmailClient()
   const maxResults = Math.min(Math.max(options.maxResults ?? 30, 1), 100)
-  const q = options.q?.trim() || undefined
+  const userQuery = options.q?.trim() || undefined
   const folder = options.folder ?? 'inbox'
 
-  if (folder === 'drafts') return fetchDrafts(gmail, options, maxResults, q)
+  if (folder === 'drafts') return fetchDrafts(gmail, options, maxResults, userQuery)
 
   const labelIds = FOLDER_LABEL_IDS[folder]
+
+  // The Snoozed view appends its operator to the user's query, so parking
+  // and a search narrow one Gmail search instead of stacking two.
+  const q =
+    folder === 'snoozed' ? [userQuery, 'in:snoozed'].filter((part) => part).join(' ') : userQuery
 
   const list = await withQuotaRetry(() =>
     gmail.users.threads.list({
