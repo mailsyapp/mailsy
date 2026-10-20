@@ -675,8 +675,8 @@ export function EmailDetail({
                 <label key={label.id} className="labels-menu-item">
                   <input
                     type="checkbox"
-                    checked={(threadData.labelIds ?? []).includes(label.id)}
-                    disabled={togglingLabel === label.id}
+                    checked={threadData.labelIds.includes(label.id)}
+                    disabled={threadLoading || Boolean(threadError) || togglingLabel === label.id}
                     onChange={() => handleLabelToggle(label)}
                   />
                   {/* The label's color reads as the chip next to the name,

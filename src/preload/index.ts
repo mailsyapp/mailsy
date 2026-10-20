@@ -36,7 +36,7 @@ const api = {
   restoreThread: (threadId: string): Promise<void> =>
     ipcRenderer.invoke('gmail:snooze-restore', threadId),
   snoozeTick: (): Promise<number> => ipcRenderer.invoke('gmail:snooze-tick'),
-  listUserLabels: (): Promise<MailLabel[]> => ipcRenderer.invoke('gmail:list-labels'),
+  listLabels: (): Promise<MailLabel[]> => ipcRenderer.invoke('gmail:list-labels'),
   createUserLabel: (name: string): Promise<MailLabel> =>
     ipcRenderer.invoke('gmail:create-label', name),
   deleteUserLabel: (id: string): Promise<void> => ipcRenderer.invoke('gmail:delete-label', id)
