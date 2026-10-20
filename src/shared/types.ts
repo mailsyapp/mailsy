@@ -54,6 +54,10 @@ export interface ThreadSummary {
   // exclude drafts never read it; All Mail uses it to route a click into
   // the draft editor instead of the read-only detail.
   hasDraft?: boolean
+  // The thread carries Mailsy's parking label ('Snoozed by Mailsy'), so its
+  // unsnooze is the full restore pair (INBOX add plus label removal and a
+  // schedule-record clear). Native-parked threads keep the plain INBOX add.
+  snoozedByMailsy?: boolean
 }
 
 export interface ListFolderOptions {

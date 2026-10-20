@@ -29,7 +29,12 @@ const api = {
   discardDraft: (draftId: string): Promise<void> =>
     ipcRenderer.invoke('gmail:discard-draft', draftId),
   modifyLabels: (request: ModifyLabelsRequest): Promise<void> =>
-    ipcRenderer.invoke('gmail:modify', request)
+    ipcRenderer.invoke('gmail:modify', request),
+  snoozeThread: (threadId: string, restoreAt: number): Promise<void> =>
+    ipcRenderer.invoke('gmail:snooze', threadId, restoreAt),
+  restoreThread: (threadId: string): Promise<void> =>
+    ipcRenderer.invoke('gmail:snooze-restore', threadId),
+  snoozeTick: (): Promise<number> => ipcRenderer.invoke('gmail:snooze-tick')
 }
 
 if (process.contextIsolated) {
