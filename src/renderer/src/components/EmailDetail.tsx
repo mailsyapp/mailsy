@@ -10,10 +10,17 @@ import type {
 } from '../../../shared/types'
 import { senderNameOf } from '../lib/format'
 import { replyAllTargets } from '../lib/recipients'
+import { SNOOZE_PRESETS } from '../lib/snooze'
 
 // Folders where report spam makes sense: drafts and sent (mail you own),
 // spam itself, and Trash are the excluded rest.
 const REPORT_SPAM_FOLDERS: MailFolder[] = ['inbox', 'all', 'starred']
+
+// Snoozing makes exactly where parking leaves Inbox ownership in question:
+// the mail-ownership views, not sent/draft/trash/spam or the parked set
+// itself. No custom datetime picker in v1: the presets are the whole
+// snooze surface (follow-up: a picker).
+const SNOOZE_FOLDERS: MailFolder[] = ['inbox', 'all', 'starred']
 
 type EmailDetailProps = {
   // The row identity: subject, participant summary, and thread-level label
@@ -227,6 +234,9 @@ export function EmailDetail({
 
   const [changingSnooze, setChangingSnooze] = useState(false)
   const [snoozeError, setSnoozeError] = useState<string | null>(null)
+  // The snooze affordance opens into Gmail's preset choices; the presets
+  // collapse again on pick, on exit through a successful park, and on failure.
+  const [pickingSnooze, setPickingSnooze] = useState(false)
 
   const [togglingRead, setTogglingRead] = useState(false)
   const [readError, setReadError] = useState<string | null>(null)
@@ -514,17 +524,38 @@ export function EmailDetail({
   // that alone is what ends the parking state. SNOOZED is a pseudo-label the
   // API refuses as a label mutation (400 "Invalid label"), so there is no
   // reverse pair to send — re-adding the mail to the Inbox is the whole
-  // unsnooze. The thread clears from the Snoozed list either way.
+  // unsnooze. Mail parked by Mailsy instead carries its user label, and the
+  // restore verb takes the reverse pair with it (and clears the wake
+  // schedule); the wrong verb here would leave the rail showing a
+  // half-unsnoozed thread. The thread clears from the Snoozed list either way.
   async function handleUnsnooze(): Promise<void> {
     if (changingSnooze) return
     setChangingSnooze(true)
     setSnoozeError(null)
     try {
-      await window.api.modifyLabels({
-        kind: 'thread',
-        id: thread.id,
-        addLabelIds: ['INBOX']
-      })
+      if (thread.snoozedByMailsy) {
+        await window.api.restoreThread(thread.id)
+      } else {
+        await window.api.modifyLabels({ kind: 'thread', id: thread.id, addLabelIds: ['INBOX'] })
+      }
+      onThreadRemoved(thread.id)
+    } catch (error) {
+      setSnoozeError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setChangingSnooze(false)
+    }
+  }
+
+  // Snoozing parks the thread out of the Inbox for the chosen preset: main
+  // tags it 'Snoozed by Mailsy' and persists the wake time, so the row
+  // leaves this list the way archive and delete leave theirs.
+  async function handleSnooze(restoreAt: number): Promise<void> {
+    if (changingSnooze) return
+    setChangingSnooze(true)
+    setSnoozeError(null)
+    setPickingSnooze(false)
+    try {
+      await window.api.snoozeThread(thread.id, restoreAt)
       onThreadRemoved(thread.id)
     } catch (error) {
       setSnoozeError(error instanceof Error ? error.message : String(error))
@@ -606,6 +637,25 @@ export function EmailDetail({
         <button onClick={() => handleSetSpam(false)} disabled={changingSpam}>
           not spam
         </button>
+      )}
+      {SNOOZE_FOLDERS.includes(folder) && (
+        <>
+          <button
+            onClick={() => setPickingSnooze(!pickingSnooze)}
+            disabled={changingSnooze}
+            aria-expanded={pickingSnooze}
+          >
+            snooze
+          </button>
+          {/* Presets sit open next to the affordance, the plain-button
+              idiom of every action above; a menu popup is a v2 surface. */}
+          {pickingSnooze &&
+            SNOOZE_PRESETS.map((preset) => (
+              <button key={preset.key} onClick={() => void handleSnooze(preset.at())}>
+                {preset.label}
+              </button>
+            ))}
+        </>
       )}
       {folder === 'snoozed' && (
         <button onClick={handleUnsnooze} disabled={changingSnooze}>
