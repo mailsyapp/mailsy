@@ -10,34 +10,54 @@ import {
 import { resolveSnoozeLabelId } from './snooze'
 import { threadToSummary, toEmailSummary } from './message'
 
-// Snoozed and All Mail are the two views whose native listing cannot use
-// labelIds. All Mail's no-label default excludes only SPAM and TRASH, so
-// parked mail (which carries no label) stays listed there, like Gmail's All
-// Mail label view. The Snoozed view reads the native parking state through
-// the search operator instead: SNOOZED is a Gmail pseudo-label outside
-// labels.list, and threads.list(labelIds:['SNOOZED']) is rejected with 400
-// "Invalid label: SNOOZED" just like writes are, while q:'in:snoozed' is
-// the query path the API answers (Google feature request 109952618). Mail
-// snoozed by Mailsy itself carries a user label, whose listing CAN use
-// labelIds, so the view unions both sets.
-const FOLDER_LABEL_IDS: Record<Exclude<MailFolder, 'drafts'>, string[]> = {
+// Snoozed and All Mail are the two views whose native listing shape differs
+// from the rest of the table. All Mail's no-label default excludes only
+// SPAM and TRASH, so parked mail (which carries no label) stays listed
+// there, like Gmail's All Mail label view. The Snoozed view reads parking
+// through the union in fetchSnoozed: SNOOZED is a Gmail pseudo-label
+// outside labels.list, and threads.list(labelIds:['SNOOZED']) is rejected
+// with 400 "Invalid label: SNOOZED" just like writes are, while
+// q:'in:snoozed' is the query path the API answers (Google feature request
+// 109952618) — and mail snoozed by Mailsy itself carries a user label,
+// whose listing CAN use labelIds, so the view unions both sets. The rest
+// of the table's views list through direct labelId filters: Important and
+// the categories carry documented system labels (IMPORTANT,
+// CATEGORY_SOCIAL, CATEGORY_PROMOTIONS, CATEGORY_UPDATES, CATEGORY_FORUMS
+// — Google's label types guide), and a category label is not an All Mail
+// removal above.
+
+// One listing spec per folder view: the label filter the view lists
+// through, plus a Gmail search fragment for views whose state the API
+// exposes only through the query.
+interface FolderListing {
+  labelIds: string[]
+  fragment?: string
+}
+
+const FOLDER_LISTING: Record<Exclude<MailFolder, 'drafts'>, FolderListing> = {
   // No label filter: Gmail's All Mail is every thread the account holds,
   // archived mail included. Spam and Trash are excluded by the API default
   // and have folder views of their own.
-  all: [],
-  inbox: ['INBOX'],
-  sent: ['SENT'],
-  trash: ['TRASH'],
+  all: { labelIds: [] },
+  inbox: { labelIds: ['INBOX'] },
+  sent: { labelIds: ['SENT'] },
+  trash: { labelIds: ['TRASH'] },
   // Gmail's Spam view: the mail the spam filter pulled out of every other
   // folder view, including All Mail (whose no-label filter excludes Spam
   // and Trash by the API default).
-  spam: ['SPAM'],
+  spam: { labelIds: ['SPAM'] },
   // STARRED alone (no folder constraint): Gmail's Starred view spans every
   // mail that carries the label, wherever it is.
-  starred: ['STARRED'],
-  // Empty filter: the Snoozed view is the union in fetchSnoozed above (the
-  // native q operator plus the Mailsy parking label), not a labelIds filter.
-  snoozed: []
+  starred: { labelIds: ['STARRED'] },
+  // Type-carrying dead entry: the Snoozed view dispatches to fetchSnoozed
+  // above (the native q operator plus the Mailsy parking label union)
+  // before this table is read, so this slot never lists on its own.
+  snoozed: { labelIds: [] },
+  important: { labelIds: ['IMPORTANT'] },
+  social: { labelIds: ['CATEGORY_SOCIAL'] },
+  promotions: { labelIds: ['CATEGORY_PROMOTIONS'] },
+  updates: { labelIds: ['CATEGORY_UPDATES'] },
+  forums: { labelIds: ['CATEGORY_FORUMS'] }
 }
 
 async function fetchDrafts(
@@ -170,14 +190,18 @@ export async function fetchFolder(options: ListFolderOptions = {}): Promise<Thre
   if (folder === 'drafts') return fetchDrafts(gmail, options, maxResults, userQuery)
   if (folder === 'snoozed') return fetchSnoozed(gmail, options, maxResults, userQuery)
 
-  const labelIds = FOLDER_LABEL_IDS[folder]
+  const { labelIds, fragment } = FOLDER_LISTING[folder]
+
+  // A fragment appends to the user's query instead of a separate call, so
+  // the view's condition and a search narrow one Gmail search.
+  const q = fragment ? [userQuery, fragment].filter((part) => part).join(' ') : userQuery
 
   const list = await withQuotaRetry(() =>
     gmail.users.threads.list({
       userId: 'me',
       maxResults,
       ...(options.pageToken ? { pageToken: options.pageToken } : {}),
-      ...(userQuery ? { q: userQuery } : {}),
+      ...(q ? { q } : {}),
       // All Mail carries an empty filter, which must arrive as no labelIds
       // parameter at all rather than an empty list.
       ...(labelIds.length > 0 ? { labelIds } : {})
