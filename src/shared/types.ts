@@ -27,6 +27,10 @@ export interface EmailDetail extends EmailSummary {
 export interface EmailThread {
   id: string
   messages: EmailDetail[]
+  // The thread's raw label ids, deduped across its messages: the renderer
+  // reads label membership from this intersection with the user labels it
+  // already holds, never parsed out of message labelIds again.
+  labelIds: string[]
   // The signed-in account's address, the exclusion set for reply-all.
   // An empty string (profile fetch failed) degrades reply-all to "exclude
   // nothing" instead of failing the open.
@@ -39,6 +43,9 @@ export type MailFolder =
   | 'forums'
   | 'important'
   | 'inbox'
+  // A user-label view: every list paragraph is the folder plumbing, but the
+  // label filter arrives as ListFolderOptions.userLabelId.
+  | 'label'
   | 'promotions'
   | 'sent'
   | 'social'
@@ -77,11 +84,28 @@ export interface ListFolderOptions {
   pageToken?: string | null
   q?: string
   folder?: MailFolder
+  // A user-label view lists through its label id instead of a folder's
+  // system-label filter; folder then carries the shared label-view plumbing.
+  userLabelId?: string
 }
 
 export interface ThreadPage {
   threads: ThreadSummary[]
   nextPageToken: string | null
+}
+
+// One row of Gmail's label section, flattened at the boundary like the mail
+// summaries above. ids and names travel together (threads.modify and
+// labels.delete need the id; the rail shows the name), type separates the
+// user labels the rail owns from Gmail's system labels, and totals float
+// exactly what labels.list reports.
+export interface MailLabel {
+  id: string
+  name: string
+  type: 'user' | 'system'
+  color: { background: string; text: string } | null
+  messagesTotal: number
+  threadsTotal: number
 }
 
 // The sentence main rewrites dead-grant failures to. The renderer matches on
