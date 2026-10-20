@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { SaveDraftRequest } from '../../../shared/types'
+import type { SendEmailRequest } from '../../../shared/types'
 
 // The composer fields the bridge persists. The optional send fields ride
 // along for drafts that already carry threading (an existing draft keeps
 // its linkage when the autosave updates it).
-type AutosaveFields = Omit<SaveDraftRequest, 'draftId'>
+type AutosaveFields = SendEmailRequest
 
 // How long a keystroke pauses before its fields reach the drafts bridge:
 // one Gmail drafts call per settled edit, not per character.
@@ -45,9 +45,15 @@ export function useDraftAutosave(
   const lastSavedRef = useRef(JSON.stringify(fields))
   const enabledRef = useRef(enabled)
   const retiredRef = useRef(false)
-  // Set while a save rides the bridge; only one write is ever in flight.
+  // The latest write on the bridge; flushPending awaits it. The unmount
+  // flush may start a second write before the first resolves, so runs
+  // supersede by identity rather than assuming a single in-flight write.
   const pendingSaveRef = useRef<Promise<void> | null>(null)
   const timerRef = useRef<number | null>(null)
+  // Serialized per render: the debounce key is the content, so unrelated
+  // re-renders (a poll fold-in, a send-error state flip) re-run the effect
+  // without restarting a save that was already going to be a no-op.
+  const fieldsJson = JSON.stringify(fields)
 
   // Resolves whether the write failed or not: flushPending is a
   // synchronization point for send, not a retry surface.
@@ -68,7 +74,9 @@ export function useDraftAutosave(
         setError(e instanceof Error ? e.message : String(e))
       })
       .finally(() => {
-        pendingSaveRef.current = null
+        // A newer save may have superseded this run: only the latest write
+        // owns the flushPending handle.
+        if (pendingSaveRef.current === run) pendingSaveRef.current = null
       })
     pendingSaveRef.current = run
     setStatus('saving')
@@ -79,7 +87,7 @@ export function useDraftAutosave(
     fieldsRef.current = fields
     enabledRef.current = enabled
     if (!enabled || retiredRef.current) return
-    if (JSON.stringify(fields) === lastSavedRef.current) return
+    if (fieldsJson === lastSavedRef.current) return
     const timer = window.setTimeout(() => {
       timerRef.current = null
       if (JSON.stringify(fieldsRef.current) === lastSavedRef.current) return
@@ -90,7 +98,11 @@ export function useDraftAutosave(
       window.clearTimeout(timer)
       timerRef.current = null
     }
-  }, [fields, enabled, save])
+    // fieldsJson is the debounce key: field-object identity flips every
+    // render, but its content is what distinguishes a fresh edit from a
+    // rerender of unchanged values.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fieldsJson, enabled, save])
 
   // True unmount only: the accidental-close path (row click, folder
   // switch) flushes fields still inside the debounce window, because that
@@ -104,7 +116,10 @@ export function useDraftAutosave(
       }
       if (!enabledRef.current || retiredRef.current) return
       if (JSON.stringify(fieldsRef.current) === lastSavedRef.current) return
-      if (!pendingSaveRef.current) void save()
+      // A save may already be in flight from the debounce; this fires a
+      // second one for fields typed after it dispatched. Sequential IPC
+      // delivery makes the newer write the last drafts.update applied.
+      void save()
     }
   }, [save])
 
@@ -123,7 +138,10 @@ export function useDraftAutosave(
         timerRef.current = null
       }
     },
-    currentDraftId: (): string | undefined => draftIdRef.current,
+    currentDraftId: (): string | undefined =>
+      // Retired after send or Cancel: the draft was consumed or discarded,
+      // so it no longer exists for any later write to target.
+      (retiredRef.current ? undefined : draftIdRef.current),
     status,
     error
   }
