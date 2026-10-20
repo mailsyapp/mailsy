@@ -129,7 +129,10 @@ export function useDraftAutosave(
         window.clearTimeout(timerRef.current)
         timerRef.current = null
       }
-      await pendingSaveRef
+      // Await the in-flight write itself, not the ref object: a ref has no
+      // `then`, so awaiting it would resolve before the save does and send
+      // would read currentDraftId() while the drafts.create still flew.
+      await pendingSaveRef.current
     },
     stop: (): void => {
       retiredRef.current = true
