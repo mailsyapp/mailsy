@@ -32,9 +32,7 @@ function theSchedule(): SnoozeSchedule {
     schedule = new Map(
       Object.entries(parsed).filter(
         (entry): entry is [string, number] =>
-          typeof entry[0] === 'string' &&
-          typeof entry[1] === 'number' &&
-          Number.isFinite(entry[1])
+          typeof entry[0] === 'string' && typeof entry[1] === 'number' && Number.isFinite(entry[1])
       )
     )
   } catch {
@@ -63,8 +61,17 @@ function persist(next: SnoozeSchedule): void {
 
 // The parking state is a user label, so its id is resolved through the labels
 // API (ids are not assumed to be the name). createIfMissing is the write path
-// only: reads never create mailbox state.
-async function resolveSnoozeLabelId(
+// only: reads never create mailbox state, and a read resolving to nothing
+// answers null.
+export async function resolveSnoozeLabelId(
+  gmail: GmailClient,
+  createIfMissing: true
+): Promise<string>
+export async function resolveSnoozeLabelId(
+  gmail: GmailClient,
+  createIfMissing: false
+): Promise<string | null>
+export async function resolveSnoozeLabelId(
   gmail: GmailClient,
   createIfMissing: boolean
 ): Promise<string | null> {
@@ -121,7 +128,12 @@ export async function snoozeThread(threadId: string, restoreAt: number): Promise
   const labelId = await resolveSnoozeLabelId(gmail, true)
   // ONE threads.modify parks the thread: INBOX moves out and the parking
   // label moves in, which is the whole emulated snooze write.
-  await modifyLabels({ kind: 'thread', id: threadId, addLabelIds: [labelId], removeLabelIds: ['INBOX'] })
+  await modifyLabels({
+    kind: 'thread',
+    id: threadId,
+    addLabelIds: [labelId],
+    removeLabelIds: ['INBOX']
+  })
   setSnoozed(threadId, restoreAt)
 }
 

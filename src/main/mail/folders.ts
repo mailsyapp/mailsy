@@ -7,7 +7,7 @@ import {
   mapWithConcurrency,
   withQuotaRetry
 } from './resilience'
-import { withQuotaRetry, resolveSnoozeLabelId } from './snooze'
+import { resolveSnoozeLabelId } from './snooze'
 import { threadToSummary, toEmailSummary } from './message'
 
 // Snoozed and All Mail are the two views whose native listing cannot use

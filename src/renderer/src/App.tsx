@@ -25,6 +25,10 @@ const DRAFT_PRUNE_DELAY_MS = 2000
 // How often the background tick re-reads the current view's first page, so
 // new mail appears without a folder switch or a search.
 const POLL_INTERVAL_MS = 60_000
+// How often the signed-in renderer asks main to sweep due snoozes. The tick
+// is the minutes-level sweep of the wake design: main also arms a timer at
+// the next due moment, and the startup catch-up absorbs closed-window gaps.
+const SNOOZE_TICK_MS = 30_000
 
 const FOLDER_CONFIG: Record<
   MailFolder,
@@ -456,18 +460,15 @@ function App(): React.JSX.Element {
   }
 
   // Unsnooze on a Snoozed row, mirroring the row-level not spam above: the
-  // row leaves this view's list when the mail rejoins the Inbox. The write
-  // is an INBOX add only — SNOOZED itself is not a writable label on the
-  // Gmail API (see EmailDetail's unsnooze note).
+  // row leaves this view's list when the mail rejoins the Inbox. Mail parked
+  // natively carries no writable label, so the INBOX add alone ends the
+  // parking state; mail Mailsy parked itself restores through the restore
+  // pair, which also clears the wake schedule (EmailDetail's note).
   function handleRowUnsnooze(row: ThreadSummary): void {
-    window.api
-      .modifyLabels({
-        kind: 'thread',
-        id: row.id,
-        addLabelIds: ['INBOX']
-      })
-      .then(() => handleThreadRemoved(row.id))
-      .catch((e: unknown) => recordError(e))
+    const write = row.snoozedByMailsy
+      ? window.api.restoreThread(row.id)
+      : window.api.modifyLabels({ kind: 'thread', id: row.id, addLabelIds: ['INBOX'] })
+    write.then(() => handleThreadRemoved(row.id)).catch((e: unknown) => recordError(e))
   }
 
   // Star is thread-level like read/unread: threads.modify applies STARRED to
@@ -616,6 +617,26 @@ function App(): React.JSX.Element {
       if (document.hidden) return
       loadFirstPage('poll')
     }, POLL_INTERVAL_MS)
+    return () => window.clearInterval(timer)
+  }, [loadFirstPage, signedIn])
+
+  // The snooze heartbeat, the same shape as the poll above: an immediate
+  // tick on mount is the startup catch-up, and every tick that returns a
+  // restored count above zero refreshes the view so the returning thread
+  // appears without waiting for the next poll. A failed tick self-corrects
+  // on the interval (and the poll), so it never nags the error line.
+  useEffect(() => {
+    if (signedIn !== true) return
+    const snoozeSweep = (): void => {
+      window.api
+        .snoozeTick()
+        .then((restored) => {
+          if (restored > 0) loadFirstPage('manual')
+        })
+        .catch(() => {})
+    }
+    snoozeSweep()
+    const timer = window.setInterval(snoozeSweep, SNOOZE_TICK_MS)
     return () => window.clearInterval(timer)
   }, [loadFirstPage, signedIn])
 
