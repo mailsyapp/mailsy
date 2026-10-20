@@ -87,6 +87,14 @@ export interface SendDraftRequest extends SendEmailRequest {
   draftId: string
 }
 
+// One composer autosave write. Same field set as a send, but the recipient
+// is optional (Gmail keeps recipient-less drafts) and the target draft is
+// optional: absent means create one. The resolved draft id comes back, so
+// the autosave and the send path stay pinned to the same server draft.
+export interface SaveDraftRequest extends SendEmailRequest {
+  draftId?: string
+}
+
 export interface ModifyLabelsRequest {
   kind: 'message' | 'thread'
   id: string
