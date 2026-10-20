@@ -8,7 +8,7 @@ import { isNotFoundError, withQuotaRetry } from './resilience'
 
 // Gmail's REST API cannot write its own SNOOZED state (400 "Invalid label"),
 // so Mailsy's snooze is the mover pattern every real client converges on:
-// a user label plus INBOX removal, restored on a client-skept schedule.
+// a user label plus INBOX removal, restored on the client's own schedule.
 // The caveat that buys this is Mailspring's honest one: while the app is
 // closed nobody sweeps, so mail parked before a wake time returns on the
 // next launch.
@@ -25,7 +25,7 @@ const MAX_TIMEOUT_MS = 2 ** 31 - 1
 let schedule: SnoozeSchedule | null = null
 let wakeTimer: NodeJS.Timeout | null = null
 
-function theSchedule(): SnoozeSchedule {
+function getSchedule(): SnoozeSchedule {
   if (schedule) return schedule
   try {
     const parsed = JSON.parse(readFileSync(storePath(), 'utf8')) as Record<string, unknown>
@@ -94,7 +94,7 @@ export async function resolveSnoozeLabelId(
 // idempotent, so all three can race safely.
 function armNextWake(): void {
   if (wakeTimer) clearTimeout(wakeTimer)
-  const next = Math.min(...theSchedule().values())
+  const next = Math.min(...getSchedule().values())
   if (next === Infinity) {
     wakeTimer = null
     return
@@ -107,14 +107,14 @@ function armNextWake(): void {
 }
 
 function recall(threadId: string): void {
-  if (!theSchedule().has(threadId)) return
-  theSchedule().delete(threadId)
-  persist(theSchedule())
+  if (!getSchedule().has(threadId)) return
+  getSchedule().delete(threadId)
+  persist(getSchedule())
 }
 
 function setSnoozed(threadId: string, restoreAt: number): void {
-  persist(new Map(theSchedule()).set(threadId, restoreAt))
-  armNextWake()
+  getSchedule().set(threadId, restoreAt)
+  persist(getSchedule())
 }
 
 export async function snoozeThread(threadId: string, restoreAt: number): Promise<void> {
@@ -162,7 +162,7 @@ export async function restoreThread(threadId: string): Promise<void> {
 // the count of threads actually returned to the Inbox.
 export async function sweepDueSnoozed(): Promise<number> {
   const now = Date.now()
-  const due = [...theSchedule().entries()].filter(([, restoreAt]) => restoreAt <= now)
+  const due = [...getSchedule().entries()].filter(([, restoreAt]) => restoreAt <= now)
   let restored = 0
   for (const [threadId] of due) {
     try {

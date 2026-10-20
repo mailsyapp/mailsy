@@ -37,7 +37,6 @@ const FOLDER_LABEL_IDS: Record<Exclude<MailFolder, 'drafts'>, string[]> = {
   starred: ['STARRED'],
   // Empty filter: the Snoozed view is the union in fetchSnoozed above (the
   // native q operator plus the Mailsy parking label), not a labelIds filter.
-
   snoozed: []
 }
 
