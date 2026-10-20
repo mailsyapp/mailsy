@@ -795,10 +795,13 @@ function App(): React.JSX.Element {
                   onClick={() => handleSelect(row)}
                   style={{ all: 'unset', display: 'block', cursor: 'pointer', width: '100%' }}
                 >
-                  <strong className="email-text">
+                  {/* Bold is the unread affordance, so the row owns the
+                      weight through li.unread; the subject itself is plain
+                      markup. */}
+                  <span className="email-text">
                     {row.subject}
                     {row.unreadCount > 1 ? ` (${row.unreadCount})` : ''}
-                  </strong>
+                  </span>
                   {/* Sender names for the whole conversation, like Gmail's
                       participant summary on thread rows. */}
                   <div className="from email-text">
