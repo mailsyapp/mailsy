@@ -2,11 +2,7 @@ import { app, shell, BrowserWindow, ipcMain } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
-import {
-  signIn,
-  signOut,
-  isSignedIn
-} from './auth'
+import { signIn, signOut, isSignedIn } from './auth'
 import {
   discardDraft,
   fetchFolder,

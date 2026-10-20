@@ -1,9 +1,5 @@
 import { getAccountEmail, getGmailClient } from '../auth'
-import type {
-  SaveDraftRequest,
-  SendDraftRequest,
-  SendEmailRequest
-} from '../../shared/types'
+import type { SaveDraftRequest, SendDraftRequest, SendEmailRequest } from '../../shared/types'
 import { isNotFoundError, rethrowDeadGrant, withQuotaRetry } from './resilience'
 import { buildRawMessage } from './mime'
 import type { gmail_v1 } from 'googleapis'
