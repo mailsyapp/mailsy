@@ -39,10 +39,10 @@ button {
 }
 
 /* Unread rows read as bold text, the same weight signal Gmail gives
-   unread mail, so the mark-read toggle has an observable effect. */
-.emails li.unread .email-text,
-.emails li.unread .from,
-.emails li.unread .snippet {
+   unread mail, so the mark-read toggle has an observable effect. Every
+   row text line carries .email-text, including the from and snippet
+   lines, so one selector covers the row. */
+.emails li.unread .email-text {
   font-weight: 700;
 }
 
