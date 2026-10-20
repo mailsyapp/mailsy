@@ -11,6 +11,10 @@ import type {
 import { senderNameOf } from '../lib/format'
 import { replyAllTargets } from '../lib/recipients'
 
+// Folders where report spam makes sense: your own sent or draft mail,
+// Trash, and Spam itself are the excluded rest.
+const REPORT_SPAM_FOLDERS: MailFolder[] = ['inbox', 'all', 'starred']
+
 type EmailDetailProps = {
   // The row identity: subject, participant summary, and thread-level label
   // state the list already displays. Mutations target its id (thread id).
@@ -565,7 +569,7 @@ export function EmailDetail({
           delete
         </button>
       )}
-      {folder !== 'spam' && folder !== 'drafts' && folder !== 'sent' && folder !== 'trash' && (
+      {REPORT_SPAM_FOLDERS.includes(folder) && (
         <button onClick={() => handleSetSpam(true)} disabled={changingSpam}>
           report spam
         </button>
