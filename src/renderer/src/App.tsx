@@ -226,7 +226,10 @@ function App(): React.JSX.Element {
   function storeFirstPage(page: ThreadPage, query: string): void {
     lastFetchedRef.current = { folder: activeFolder, labelId: activeLabel?.id ?? null, q: query }
     if (!query) {
-      setUnfilteredByFolder((prev) => new Map(prev).set(activeFolder, page.threads))
+      // Label views have no local search fallback, so only folder pages
+      // back the pool; two label views must not clobber one key.
+      if (!activeLabel)
+        setUnfilteredByFolder((prev) => new Map(prev).set(activeFolder, page.threads))
       return
     }
     const viewCache = searchPageCacheRef.current.get(viewKey) ?? new Map<string, ThreadPage>()
@@ -378,7 +381,8 @@ function App(): React.JSX.Element {
     setActiveLabel(null)
     setLabels([])
     // No per-folder mail content may survive: nothing typed or cached.
-    searchPageCacheRef.current.clear() // Prune timers are canceled, not just dropped: their callbacks could
+    searchPageCacheRef.current.clear()
+    // Prune timers are canceled, not just dropped: their callbacks could
     // otherwise outlive the flip into the next session's freshly loaded
     // list and filter the wrong rows out of it.
     draftPruneTimersRef.current.forEach((timer) => window.clearTimeout(timer))
@@ -523,7 +527,7 @@ function App(): React.JSX.Element {
   // closes over changes this callback's behavior.
   const refreshLabels = useCallback((): void => {
     window.api
-      .listUserLabels()
+      .listLabels()
       .then((labelList) =>
         // The rail and the detail menu are the user-label surfaces; system
         // labels are Gmail's own views and stay out of both.
@@ -540,9 +544,12 @@ function App(): React.JSX.Element {
     refreshLabels()
   }, [signedIn, refreshLabels])
 
+  // Switching to a label sets the view pair: activeFolder carries the
+  // label-view plumbing and activeLabel the id, together the whole view.
   function handleLabelSelect(label: MailLabel): void {
     if (activeLabel?.id === label.id) return
     setActiveLabel(label)
+    setActiveFolder('label')
     setSearchInput('')
     setCommittedQuery('')
     closeEmail()
@@ -576,12 +583,17 @@ function App(): React.JSX.Element {
       .deleteUserLabel(label.id)
       .then(() => {
         setError(null)
+        // The deleted view's search cache has no live label behind it; a
+        // future label may reuse the id family, so the stale pages go with
+        // the label.
+        searchPageCacheRef.current.delete(`label:${label.id}`)
         refreshLabels()
         // The open view was exactly this label: its threads got unlabeled
-        // server-side, so the view itself is gone and the folder rail takes
-        // the screen back.
-        if (activeLabel?.id === label.id)
-          handleFolderSelect(activeFolder === 'label' ? 'inbox' : activeFolder)
+        // server-side, so the view itself is gone and the Inbox takes the
+        // screen back. A label view is the only place activeLabel tracks a
+        // still-existing label, so handleFolderSelect('inbox') is the full
+        // reset.
+        if (activeLabel?.id === label.id) handleFolderSelect('inbox')
       })
       .catch((e: unknown) => recordError(e))
   }

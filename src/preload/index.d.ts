@@ -29,7 +29,7 @@ declare global {
       snoozeThread(threadId: string, restoreAt: number): Promise<void>
       restoreThread(threadId: string): Promise<void>
       snoozeTick(): Promise<number>
-      listUserLabels(): Promise<MailLabel[]>
+      listLabels(): Promise<MailLabel[]>
       createUserLabel(name: string): Promise<MailLabel>
       deleteUserLabel(id: string): Promise<void>
     }

@@ -46,16 +46,26 @@ export async function listLabels(): Promise<MailLabel[]> {
 export async function createUserLabel(name: string): Promise<MailLabel> {
   const gmail: GmailClient = getGmailClient()
   const labelName = name.trim()
-  if (!name) throw new Error('Label name is required')
+  if (!labelName) throw new Error('Label name is required')
 
   const list = await withQuotaRetry(() => gmail.users.labels.list({ userId: 'me' }))
-  const known = new Set(
-    (list.data.labels ?? [])
-      .filter((l) => (l.type ?? 'user') !== 'system')
-      .map((l) => (l.name ?? '').toLowerCase())
-  )
+  const userLabels = (list.data.labels ?? []).filter((label) => (label.type ?? 'user') !== 'system')
+  const known = new Set(userLabels.map((label) => (label.name ?? '').toLowerCase()))
 
   const segments = labelName.split('/')
+  if (segments.some((segment) => !segment.trim())) {
+    throw new Error('Label name has an empty segment')
+  }
+
+  const byName = (name: string): gmail_v1.Schema$Label | undefined =>
+    userLabels.find((label) => (label.name ?? '').toLowerCase() === name.toLowerCase())
+
+  // An already-existing label (or one differing only in case) is returned
+  // from the first listing, mirroring Gmail's "names are unique" behavior
+  // instead of a 409.
+  const existing = byName(labelName)
+  if (existing) return toLabel(existing)
+
   for (let i = 1; i < segments.length; i++) {
     const ancestor = segments.slice(0, i).join('/')
     if (known.has(ancestor.toLowerCase())) continue
@@ -63,16 +73,6 @@ export async function createUserLabel(name: string): Promise<MailLabel> {
       gmail.users.labels.create({ userId: 'me', requestBody: { name: ancestor } })
     )
     known.add(ancestor.toLowerCase())
-  }
-
-  if (known.has(labelName.toLowerCase())) {
-    // The label itself already exists: refresh and return it, mirroring
-    // Gmail's "names are unique" behavior instead of a 409.
-    const refreshed = await withQuotaRetry(() => gmail.users.labels.list({ userId: 'me' }))
-    const existing = (refreshed.data.labels ?? []).find(
-      (l) => (l.name ?? '').toLowerCase() === labelName.toLowerCase()
-    )
-    if (existing) return toLabel(existing)
   }
 
   const created = await withQuotaRetry(() =>

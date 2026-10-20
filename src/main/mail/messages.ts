@@ -34,11 +34,9 @@ export async function fetchThread(threadId: string): Promise<EmailThread> {
   ])
   // The thread's full label id set, deduped: EmailThread carries label
   // membership at the boundary so the labels menu never re-parses messages.
-  const labelIds: string[] = []
+  const labelIds = new Set<string>()
   for (const msg of thread.data.messages ?? []) {
-    for (const labelId of msg.labelIds ?? []) {
-      if (!labelIds.includes(labelId)) labelIds.push(labelId)
-    }
+    for (const labelId of msg.labelIds ?? []) labelIds.add(labelId)
   }
-  return { id: thread.data.id ?? threadId, messages, labelIds, userEmail }
+  return { id: thread.data.id ?? threadId, messages, labelIds: [...labelIds], userEmail }
 }
