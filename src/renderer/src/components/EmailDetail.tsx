@@ -225,6 +225,9 @@ export function EmailDetail({
   const [changingSpam, setChangingSpam] = useState(false)
   const [spamError, setSpamError] = useState<string | null>(null)
 
+  const [changingSnooze, setChangingSnooze] = useState(false)
+  const [snoozeError, setSnoozeError] = useState<string | null>(null)
+
   const [togglingRead, setTogglingRead] = useState(false)
   const [readError, setReadError] = useState<string | null>(null)
 
@@ -507,6 +510,29 @@ export function EmailDetail({
     }
   }
 
+  // Unsnooze is Gmail's own "move to Inbox": the write is an INBOX add, and
+  // that alone is what ends the parking state. SNOOZED is a pseudo-label the
+  // API refuses as a label mutation (400 "Invalid label"), so there is no
+  // reverse pair to send — re-adding the mail to the Inbox is the whole
+  // unsnooze. The thread clears from the Snoozed list either way.
+  async function handleUnsnooze(): Promise<void> {
+    if (changingSnooze) return
+    setChangingSnooze(true)
+    setSnoozeError(null)
+    try {
+      await window.api.modifyLabels({
+        kind: 'thread',
+        id: thread.id,
+        addLabelIds: ['INBOX']
+      })
+      onThreadRemoved(thread.id)
+    } catch (error) {
+      setSnoozeError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setChangingSnooze(false)
+    }
+  }
+
   function toggleMessage(id: string): void {
     setExpandedIds((prev) => {
       const next = new Set(prev)
@@ -564,7 +590,9 @@ export function EmailDetail({
           archive
         </button>
       )}
-      {folder !== 'trash' && folder !== 'drafts' && folder !== 'spam' && (
+      {/* Delete is hidden in Snoozed for the same reason it already is in
+          Spam: keeping resting mail out of collision-prone mutations. */}
+      {folder !== 'trash' && folder !== 'drafts' && folder !== 'spam' && folder !== 'snoozed' && (
         <button onClick={handleDelete} disabled={deleting}>
           delete
         </button>
@@ -579,10 +607,16 @@ export function EmailDetail({
           not spam
         </button>
       )}
+      {folder === 'snoozed' && (
+        <button onClick={handleUnsnooze} disabled={changingSnooze}>
+          unsnooze
+        </button>
+      )}
 
       {archiveError && <p role="alert">{archiveError}</p>}
       {deleteError && <p role="alert">{deleteError}</p>}
       {spamError && <p role="alert">{spamError}</p>}
+      {snoozeError && <p role="alert">{snoozeError}</p>}
       {readError && <p role="alert">{readError}</p>}
       {starError && <p role="alert">{starError}</p>}
 
