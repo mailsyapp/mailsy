@@ -14,13 +14,25 @@ function assertMessageFields(request: SendEmailRequest, requireRecipient: boolea
     typeof request.subject !== 'string' ||
     typeof request.body !== 'string' ||
     (request.bodyHtml !== undefined && typeof request.bodyHtml !== 'string') ||
+    (request.cc !== undefined && typeof request.cc !== 'string') ||
+    (request.bcc !== undefined && typeof request.bcc !== 'string') ||
     (request.threadId !== undefined && typeof request.threadId !== 'string') ||
     (request.inReplyTo !== undefined && typeof request.inReplyTo !== 'string') ||
     (request.references !== undefined && typeof request.references !== 'string')
   ) {
     throw new Error('Invalid email request')
   }
-  if (requireRecipient && !request.to.trim()) throw new Error('Recipient is required')
+  // One address list of the three must survive: a send may legitimately go
+  // out to Cc/Bcc alone (a reply-all whose To is only the user's own
+  // address), an empty To is not the whole receipt test.
+  if (
+    requireRecipient &&
+    !request.to.trim() &&
+    !(request.cc ?? '').trim() &&
+    !(request.bcc ?? '').trim()
+  ) {
+    throw new Error('Recipient is required')
+  }
 }
 
 export async function sendEmail(request: SendEmailRequest): Promise<void> {

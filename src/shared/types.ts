@@ -114,6 +114,13 @@ export const SESSION_EXPIRED_ERROR = 'Your Google session has expired. Sign in a
 
 export interface SendEmailRequest {
   to: string
+  // Optional carbon lists in the same comma-separated address-line shape as
+  // `to`, so one representation rides through composer state, draft autosave,
+  // send payload, and the headers main emits. Bcc recipients reach Gmail in
+  // the raw message (which strips the header on delivery), and reply
+  // derivation never writes a Bcc the user did not type.
+  cc?: string
+  bcc?: string
   subject: string
   body: string
   bodyHtml?: string
