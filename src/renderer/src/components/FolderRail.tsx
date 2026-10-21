@@ -2,38 +2,38 @@ import { useRef, useState } from 'react'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
   AddIcon,
-  Bookmark01Icon,
+  AlarmClockIcon,
   Cancel01Icon,
-  Clock01Icon,
   Delete02Icon,
+  DiscountTag01Icon,
   InboxIcon,
-  InformationSquareIcon,
-  Mail01Icon,
+  InformationCircleIcon,
+  LabelImportantIcon,
+  Mail02Icon,
   MailEdit01Icon,
   MessageMultiple02Icon,
-  SaleTag01Icon,
   SentIcon,
   SpamIcon,
   StarIcon,
-  UserMultiple02Icon
+  User02Icon
 } from '@hugeicons/core-free-icons'
 import type { MailFolder, MailLabel } from '../../../shared/types'
 
 const FOLDERS: Array<{ id: MailFolder; label: string; icon: typeof InboxIcon }> = [
   { id: 'inbox', label: 'Inbox', icon: InboxIcon },
   { id: 'starred', label: 'Starred', icon: StarIcon },
-  { id: 'snoozed', label: 'Snoozed', icon: Clock01Icon },
+  { id: 'snoozed', label: 'Snoozed', icon: AlarmClockIcon },
   // Gmail's category stack, Important first, the four inbox tabs after it.
-  { id: 'important', label: 'Important', icon: Bookmark01Icon },
-  { id: 'social', label: 'Social', icon: UserMultiple02Icon },
-  { id: 'promotions', label: 'Promotions', icon: SaleTag01Icon },
-  { id: 'updates', label: 'Updates', icon: InformationSquareIcon },
+  { id: 'important', label: 'Important', icon: LabelImportantIcon },
+  { id: 'social', label: 'Social', icon: User02Icon },
+  { id: 'promotions', label: 'Promotions', icon: DiscountTag01Icon },
+  { id: 'updates', label: 'Updates', icon: InformationCircleIcon },
   { id: 'forums', label: 'Forums', icon: MessageMultiple02Icon },
   { id: 'drafts', label: 'Drafts', icon: MailEdit01Icon },
   { id: 'sent', label: 'Sent', icon: SentIcon },
   { id: 'spam', label: 'Spam', icon: SpamIcon },
   { id: 'trash', label: 'Trash', icon: Delete02Icon },
-  { id: 'all', label: 'All Mail', icon: Mail01Icon }
+  { id: 'all', label: 'All Mail', icon: Mail02Icon }
 ]
 
 // One chip per user label, held together by the count it opens: the body
