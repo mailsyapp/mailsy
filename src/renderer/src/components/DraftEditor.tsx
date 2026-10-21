@@ -13,18 +13,23 @@ type DraftEditorProps = {
   // owned by App (2s delay so the "Message sent." proof stays on screen,
   // exactly-once by construction because App never unmounts).
   onSent: (id: string) => void
+  // Asks App to delete this draft. App owns the confirm, the bridge call
+  // and the row prune; the editor only retires when App re-renders it away.
+  onDraftDiscard: () => void
 }
 
 function DraftForm({
   detail,
   draftId,
   messageId,
-  onSent
+  onSent,
+  onDraftDiscard
 }: {
   detail: EmailDetailData
   draftId?: string
   messageId: string
   onSent: (id: string) => void
+  onDraftDiscard: () => void
 }): React.JSX.Element {
   // One recipients block, not three loose lines: a recipient edit is one
   // spread, a Gmail draft's stored headers map straight onto it, and the
@@ -146,6 +151,9 @@ function DraftForm({
         {/* Once sent, the draft no longer exists server-side (a second send
             would surface a confusing drafts.update 404, not a new mail), so
             the button retires instead of re-arming. */}
+        <button type="button" onClick={onDraftDiscard} disabled={sending || sent}>
+          delete draft
+        </button>
         <button type="submit" disabled={sending || sent || !hasRecipient(recipients)}>
           {sending ? 'Sending...' : sent ? 'Sent' : 'Send'}
         </button>
@@ -159,7 +167,8 @@ export function DraftEditor({
   row,
   detail,
   detailLoading,
-  onSent
+  onSent,
+  onDraftDiscard
 }: DraftEditorProps): React.JSX.Element {
   // Mount the form only once the draft content arrives so fields initialize
   // from it directly. Remounting via key={row.id} in App resets per draft,
@@ -179,6 +188,7 @@ export function DraftEditor({
       draftId={row.draftId}
       messageId={row.id}
       onSent={onSent}
+      onDraftDiscard={onDraftDiscard}
     />
   )
 }
