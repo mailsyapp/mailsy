@@ -1,5 +1,6 @@
 import { getAccountEmail, getGmailClient } from '../auth'
 import type { SaveDraftRequest, SendDraftRequest, SendEmailRequest } from '../../shared/types'
+import { hasRecipient } from '../../shared/types'
 import { isNotFoundError, rethrowDeadGrant, withQuotaRetry } from './resilience'
 import { buildRawMessage } from './mime'
 import type { gmail_v1 } from 'googleapis'
@@ -22,17 +23,9 @@ function assertMessageFields(request: SendEmailRequest, requireRecipient: boolea
   ) {
     throw new Error('Invalid email request')
   }
-  // One address list of the three must survive: a send may legitimately go
-  // out to Cc/Bcc alone (a reply-all whose To is only the user's own
-  // address), an empty To is not the whole receipt test.
-  if (
-    requireRecipient &&
-    !request.to.trim() &&
-    !(request.cc ?? '').trim() &&
-    !(request.bcc ?? '').trim()
-  ) {
-    throw new Error('Recipient is required')
-  }
+  // The send receipt test is the shared rule; main re-asks it at the trust
+  // boundary so a renderer that skipped the gate still cannot send empty.
+  if (requireRecipient && !hasRecipient(request)) throw new Error('Recipient is required')
 }
 
 export async function sendEmail(request: SendEmailRequest): Promise<void> {

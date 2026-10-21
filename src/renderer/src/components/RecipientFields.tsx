@@ -1,5 +1,5 @@
 import { useId, useState } from 'react'
-import type { RecipientLines } from '../lib/recipients'
+import type { RecipientLines } from '../../../shared/types'
 
 type RecipientFieldsProps = {
   to: string
@@ -30,11 +30,7 @@ export function RecipientFields({
     <>
       <div className="composerField composerField-reveal">
         <label htmlFor={toId}>To</label>
-        <input
-          id={toId}
-          value={to}
-          onChange={(event) => onChange({ to: event.target.value })}
-        />
+        <input id={toId} value={to} onChange={(event) => onChange({ to: event.target.value })} />
         {(!showCc || !showBcc) && (
           <span className="composerReveal">
             {!showCc && (
