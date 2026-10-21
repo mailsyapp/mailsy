@@ -11,6 +11,8 @@ import type {
 } from '../../shared/types'
 import { EmailDetail } from './components/EmailDetail'
 import { senderNameOf } from './lib/format'
+import { applyMailDelta, mergeIncoming, viewLabelOf } from './lib/syncApply'
+import type { SyncResult } from '../../shared/sync'
 import { DraftEditor } from './components/DraftEditor'
 import { ComposeEditor } from './components/ComposeEditor'
 import { FolderRail } from './components/FolderRail'
@@ -23,9 +25,6 @@ const SEARCH_DEBOUNCE_MS = 800
 // How long "Message sent." stays visible before the spent draft row is
 // removed from the list.
 const DRAFT_PRUNE_DELAY_MS = 2000
-// How often the background tick re-reads the current view's first page, so
-// new mail appears without a folder switch or a search.
-const POLL_INTERVAL_MS = 60_000
 // How often the signed-in renderer asks main to sweep due snoozes. The tick
 // is the minutes-level sweep of the wake design: main also arms a timer at
 // the next due moment, and the startup catch-up absorbs closed-window gaps.
@@ -61,7 +60,6 @@ const FUSE_KEYS = [
   { name: 'participants', weight: 0.3 },
   { name: 'snippet', weight: 0.1 }
 ]
-
 function hasGmailOperator(query: string): boolean {
   return /[a-zA-Z]+:/.test(query)
 }
@@ -88,53 +86,14 @@ function rerankWithFuse(threads: ThreadSummary[], query: string): ThreadSummary[
   return [...threads].sort((a, b) => (scoreById.get(a.id) ?? 2) - (scoreById.get(b.id) ?? 2))
 }
 
-// Every field the row renders, compared value by value: a poll supplies
-// freshly built row objects each minute, so reference equality would
-// trigger a re-render even when nothing changed.
-function rowsEqual(a: ThreadSummary, b: ThreadSummary): boolean {
-  return (
-    a.id === b.id &&
-    a.subject === b.subject &&
-    a.snippet === b.snippet &&
-    a.date === b.date &&
-    a.unreadCount === b.unreadCount &&
-    a.starred === b.starred &&
-    (a.draftId ?? null) === (b.draftId ?? null) &&
-    a.hasDraft === b.hasDraft &&
-    a.participants.join('\n') === b.participants.join('\n') &&
-    a.messageIds.join('\n') === b.messageIds.join('\n')
-  )
-}
-
 // First-page loads share one fetch pipeline. 'load' is a folder switch or
 // the initial mount and replaces the list; 'manual' is the Refresh button
-// and 'poll' is the background tick, which fold the page in through
-// mergeIncoming instead. Poll is the only mode that yields to an in-flight
+// and 'sync' is a pushed reset fold, which both fold the page in through
+// mergeIncoming instead. Sync is the only mode that yields to an in-flight
 // fetch (its result is disposable) and the only one that keeps the status
 // state quiet; manual supersedes in-flight work through the shared
 // request id.
-type FirstPageMode = 'load' | 'manual' | 'poll'
-
-// Folds a fresh first page into the list on screen. The incoming page owns
-// order and content; rows it no longer returns keep their previous shape
-// at the tail. Whether the tail keeps every row (background poll, so a
-// sync never collapses loaded pages or closes the open email) or only the
-// selected row (manual refresh, which shows server truth but must not
-// yank away the message being read) is `keepAllDropped`.
-function mergeIncoming(
-  prev: ThreadSummary[],
-  incoming: ThreadSummary[],
-  keepAllDropped: boolean,
-  selectedId: string | null
-): ThreadSummary[] {
-  if (prev.length === incoming.length && prev.every((row, i) => rowsEqual(row, incoming[i]))) {
-    return prev
-  }
-  const incomingIds = new Set(incoming.map((row) => row.id))
-  const dropped = prev.filter((row) => !incomingIds.has(row.id))
-  const tail = keepAllDropped ? dropped : dropped.filter((row) => row.id === selectedId)
-  return [...incoming, ...tail]
-}
+type FirstPageMode = 'load' | 'manual' | 'sync'
 
 function App(): React.JSX.Element {
   const [threads, setThreads] = useState<ThreadSummary[]>([])
@@ -209,10 +168,10 @@ function App(): React.JSX.Element {
     setSearching(active)
   }
 
-  // The poll flips only the guard mirror: its background fetch must not
-  // flash the status line or toggle "Load more" every minute, so the state
+  // A background fold flips only the guard mirror: its fetch must not
+  // flash the status line or toggle "Load more" every sweep, so the state
   // stays false while the ref says in-flight.
-  function setPollSearching(active: boolean): void {
+  function setQuietSearching(active: boolean): void {
     searchingRef.current = active
   }
 
@@ -663,12 +622,12 @@ function App(): React.JSX.Element {
   const loadFirstPage = useCallback(
     (mode: FirstPageMode): void => {
       // A colliding fetch would see its response dropped by the request
-      // id; skipping here keeps the poll from ever starting one it
-      // already knows will lose.
-      if (mode === 'poll' && (searchingRef.current || loadingMoreRef.current)) return
+      // id; skipping here keeps a pushed reset fold from ever starting
+      // one it already knows will lose.
+      if (mode === 'sync' && (searchingRef.current || loadingMoreRef.current)) return
       const requestId = ++requestIdRef.current
-      if (mode === 'poll') {
-        setPollSearching(true)
+      if (mode === 'sync') {
+        setQuietSearching(true)
       } else {
         setActiveSearching(true)
       }
@@ -686,7 +645,7 @@ function App(): React.JSX.Element {
           setThreads((prev) =>
             mode === 'load'
               ? page.threads
-              : mergeIncoming(prev, page.threads, mode === 'poll', selectionRef.current)
+              : mergeIncoming(prev, page.threads, mode === 'sync', selectionRef.current)
           )
           // A deeper token survives a poll or manual fold: string when more
           // pages remain, null when exhausted. Resetting it to the fresh
@@ -721,23 +680,77 @@ function App(): React.JSX.Element {
     [committedQuery, activeFolder, activeLabel]
   )
 
-  // The interval resets whenever loadFirstPage's identity flips with the
-  // folder or query, so a freshly loaded view always gets one quiet minute
-  // before the first poll.
+  // The pushed-sync channel replaces the old fixed-interval poll: main
+  // sweeps the mailbox incrementally on its own adaptive clock (and on
+  // window focus), and every sweep result arrives here. The subscription
+  // lives only while signed in, so a result landing after sign-out finds
+  // no listener to repaint the empty screen. handleSyncResult below is a
+  // function declaration, so the render body can pin the latest copy to
+  // the ref the subscription reads.
+  const syncResultHandlerRef = useRef<(result: SyncResult) => void>(() => {})
+
+  function handleSyncResult(result: SyncResult): void {
+    if (result.kind === 'reset') {
+      loadFirstPage('sync')
+      return
+    }
+    const viewLabel = viewLabelOf(activeFolder, activeLabel?.id ?? null)
+    // Query-defined views and server-search results cannot be judged by
+    // the swept label sets; they take a full quiet fold, but only when
+    // the sweep actually saw mailbox movement — an idle sweep costs
+    // them nothing.
+    if (viewLabel === null) {
+      if (result.threads.length > 0 || result.deletedThreadIds.length > 0) loadFirstPage('sync')
+      return
+    }
+    setThreads(
+      (prev) =>
+        applyMailDelta(prev, result, {
+          labelId: viewLabel,
+          isSearchActive: committedQuery.length > 0
+        }) ?? prev
+    )
+  }
+  // Pinned every render (effects are fine with refs; render bodies are
+  // not): the subscription reads the latest handler while staying
+  // mounted across the render-scoped list inputs it closes over.
+  useEffect(() => {
+    syncResultHandlerRef.current = handleSyncResult
+  })
+
   useEffect(() => {
     if (signedIn !== true) return
-    const timer = window.setInterval(() => {
-      if (document.hidden) return
-      loadFirstPage('poll')
-    }, POLL_INTERVAL_MS)
-    return () => window.clearInterval(timer)
-  }, [loadFirstPage, signedIn])
+    return window.api.onSyncResult((result) => syncResultHandlerRef.current(result))
+  }, [signedIn])
 
-  // The snooze heartbeat, the same shape as the poll above: an immediate
-  // tick on mount is the startup catch-up, and every tick that returns a
-  // restored count above zero refreshes the view so the returning thread
-  // appears without waiting for the next poll. A failed tick self-corrects
-  // on the interval (and the poll), so it never nags the error line.
+  // The Refresh button's path through the same funnel. In-flight clicks
+  // neither queue a second sweep nor get swallowed: the guard drops them
+  // while the button is already showing the sweep, and main coalesces
+  // anything that reaches it onto the running sweep. Failures surface
+  // through the shared error line.
+  const [syncing, setSyncing] = useState(false)
+  const syncingRef = useRef(false)
+
+  function handleRefresh(): void {
+    if (syncingRef.current) return
+    syncingRef.current = true
+    setSyncing(true)
+    window.api
+      .syncMail('button')
+      .then(handleSyncResult)
+      .catch((e: unknown) => recordError(e))
+      .finally(() => {
+        syncingRef.current = false
+        setSyncing(false)
+      })
+  }
+
+  // The snooze heartbeat, the minutes-level sweep of the wake design: an
+  // immediate tick on mount is the startup catch-up, and every tick that
+  // returns a restored count above zero refreshes the view so the
+  // returning thread appears without waiting for the next sync sweep. A
+  // failed tick self-corrects on the interval, so it never nags the
+  // error line.
   useEffect(() => {
     if (signedIn !== true) return
     const snoozeSweep = (): void => {
@@ -848,7 +861,13 @@ function App(): React.JSX.Element {
             <button type="button" onClick={openCompose}>
               Compose
             </button>
-            <button type="button" onClick={() => loadFirstPage('manual')} aria-label="Refresh mail">
+            <button
+              type="button"
+              className={syncing ? 'refresh-button syncing' : 'refresh-button'}
+              aria-busy={syncing}
+              onClick={() => handleRefresh()}
+              aria-label="Refresh mail"
+            >
               Refresh
             </button>
             <button onClick={handleSignOut}>Sign out</button>

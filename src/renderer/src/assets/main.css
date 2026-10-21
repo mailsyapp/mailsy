@@ -27,6 +27,31 @@ button {
   cursor: pointer;
 }
 
+/* The Refresh button is the live refresh affordance: a click turns the
+   spinner on for as long as the sweep runs, so the button never reads as
+   dead. The spinner slot is always printed at its final size, so the
+   never-spinning state and the spinning one owe the same width. */
+.refresh-button::before {
+  content: '';
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 6px;
+}
+
+.refresh-button.syncing::before {
+  border: 2px solid currentColor;
+  border-bottom-color: transparent;
+  border-radius: 50%;
+  animation: refresh-spin 0.7s linear infinite;
+}
+
+@keyframes refresh-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .emails {
   list-style: none;
   padding: 0;
