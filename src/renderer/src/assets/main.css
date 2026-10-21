@@ -324,6 +324,28 @@ button {
   background: #f0f0f0;
 }
 
+/* The inline name entry for New label: Electron has no window.prompt,
+   so create takes its name from this one-line rail form instead. */
+.user-label-create-form {
+  margin: 2px 0;
+}
+
+.user-label-create-input {
+  width: 100%;
+  min-width: 0;
+  padding: 4px 6px;
+  border: 1px solid #d0d0d0;
+  border-radius: 6px;
+  background: #fff;
+  color: #202124;
+  font-size: 11px;
+}
+
+.user-label-create-input:focus {
+  outline: none;
+  border-color: #1a73e8;
+}
+
 /* The open thread's Labels menu: the apply/remove affordance. */
 .labels-menu {
   margin: 12px 0;

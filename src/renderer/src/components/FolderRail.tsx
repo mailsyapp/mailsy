@@ -1,3 +1,4 @@
+import { useRef, useState } from 'react'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
   AddIcon,
@@ -86,7 +87,7 @@ interface FolderRailProps {
   labels: MailLabel[]
   onSelect: (folder: MailFolder) => void
   onSelectLabel: (label: MailLabel) => void
-  onCreateLabel: () => void
+  onCreateLabel: (name: string) => void
   onDeleteLabel: (label: MailLabel) => void
 }
 
@@ -99,6 +100,22 @@ export function FolderRail({
   onCreateLabel,
   onDeleteLabel
 }: FolderRailProps): React.JSX.Element {
+  // The name entry is an inline rail input, not window.prompt: Electron
+  // does not support prompt() and throws on it, while the 56px rail is
+  // wide enough for one line of text. The draft closes on commit and on
+  // Escape; blur never closes it so a stray click cannot eat the name.
+  const [draftOpen, setDraftOpen] = useState(false)
+  const [draftName, setDraftName] = useState('')
+  const draftRef = useRef<HTMLInputElement | null>(null)
+
+  function commitDraft(): void {
+    const name = draftName.trim()
+    if (!name) return
+    onCreateLabel(name)
+    setDraftName('')
+    setDraftOpen(false)
+  }
+
   return (
     <nav className="folder-rail" aria-label="Mail folders">
       {FOLDERS.map((folder) => {
@@ -130,12 +147,42 @@ export function FolderRail({
           ))}
         </div>
       )}
+      {draftOpen && (
+        <form
+          className="user-label-create-form"
+          onSubmit={(e) => {
+            e.preventDefault()
+            commitDraft()
+          }}
+        >
+          <input
+            ref={draftRef}
+            className="user-label-create-input"
+            aria-label="Label name"
+            placeholder="New label"
+            value={draftName}
+            autoFocus
+            onChange={(e) => setDraftName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') {
+                setDraftName('')
+                setDraftOpen(false)
+              }
+            }}
+          />
+        </form>
+      )}
       <button
         type="button"
         className="user-label-create"
         aria-label="New label"
         title="New label"
-        onClick={onCreateLabel}
+        onClick={() => {
+          setDraftOpen(true)
+          // autofocus fires on mount, but an already-visited draft may
+          // not re-run it; focus explicitly too.
+          requestAnimationFrame(() => draftRef.current?.focus())
+        }}
       >
         <HugeiconsIcon icon={AddIcon} size={18} strokeWidth={2.2} />
       </button>
