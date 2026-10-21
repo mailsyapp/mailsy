@@ -1,4 +1,6 @@
 import { useState } from 'react'
+import { RecipientFields } from './RecipientFields'
+import { hasRecipient, type RecipientLines } from '../lib/recipients'
 import { useDraftAutosave } from './useDraftAutosave'
 
 type ComposeEditorProps = {
@@ -17,6 +19,8 @@ type ComposeEditorProps = {
 // discards it; Send consumes it through the atomic update+send pair.
 export function ComposeEditor({ onClose }: ComposeEditorProps): React.JSX.Element {
   const [to, setTo] = useState('')
+  const [cc, setCc] = useState('')
+  const [bcc, setBcc] = useState('')
   const [subject, setSubject] = useState('')
   const [body, setBody] = useState('')
   const [sending, setSending] = useState(false)
@@ -24,7 +28,9 @@ export function ComposeEditor({ onClose }: ComposeEditorProps): React.JSX.Elemen
   // Once sent, the form retires instead of re-arming: a second send would
   // be a real second message, not a retry (there is no draft to consume).
   const [sent, setSent] = useState(false)
-  const autosave = useDraftAutosave({ to, subject, body }, undefined, true)
+  // The carbon lists ride the same autosave payload as everything else, so
+  // a restored draft reopens with them.
+  const autosave = useDraftAutosave({ to, cc, bcc, subject, body }, undefined, true)
 
   async function handleCancel(): Promise<void> {
     // Cancel is today's discard action: let any in-flight or queued write
@@ -40,9 +46,17 @@ export function ComposeEditor({ onClose }: ComposeEditorProps): React.JSX.Elemen
     if (draftId) void window.api.discardDraft(draftId)
   }
 
+  function handleRecipientChange(patch: RecipientLines): void {
+    if (patch.to !== undefined) setTo(patch.to)
+    if (patch.cc !== undefined) setCc(patch.cc)
+    if (patch.bcc !== undefined) setBcc(patch.bcc)
+  }
+
   async function handleSend(event: React.FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault()
-    if (sending || sent || !to.trim()) return
+    // The Enter key submits the form even with the Send button disabled, so
+    // the receipt test lives here, not only on the button.
+    if (sending || sent || !hasRecipient({ to, cc, bcc })) return
 
     setSending(true)
     setSendError(null)
@@ -58,12 +72,13 @@ export function ComposeEditor({ onClose }: ComposeEditorProps): React.JSX.Elemen
       autosave.suspend()
       try {
         if (draftId) {
-          await window.api.sendDraft({ draftId, to, subject, body })
+          await window.api.sendDraft({ draftId, to, cc, bcc, subject, body })
         } else {
-          await window.api.sendEmail({ to, subject, body })
+          await window.api.sendEmail({ to, cc, bcc, subject, body })
         }
       } finally {
         autosave.resume()
+      }
       }
       autosave.stop()
       setSent(true)
@@ -78,10 +93,7 @@ export function ComposeEditor({ onClose }: ComposeEditorProps): React.JSX.Elemen
     <form className="composer composer-fill" onSubmit={handleSend}>
       <h2>New email</h2>
 
-      <label className="composerField">
-        <span>To</span>
-        <input required value={to} onChange={(event) => setTo(event.target.value)} />
-      </label>
+      <RecipientFields to={to} cc={cc} bcc={bcc} onChange={handleRecipientChange} />
 
       <label className="composerField">
         <span>Subject</span>
@@ -102,7 +114,7 @@ export function ComposeEditor({ onClose }: ComposeEditorProps): React.JSX.Elemen
         <button type="button" onClick={handleCancel}>
           {sent ? 'Close' : 'Cancel'}
         </button>
-        <button type="submit" disabled={sending || sent || !to.trim()}>
+        <button type="submit" disabled={sending || sent || !hasRecipient({ to, cc, bcc })}>
           {sending ? 'Sending...' : sent ? 'Sent' : 'Send'}
         </button>
       </div>

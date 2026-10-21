@@ -1,5 +1,7 @@
 import { useState } from 'react'
 import type { EmailDetail as EmailDetailData, ThreadSummary } from '../../../shared/types'
+import { RecipientFields } from './RecipientFields'
+import { hasRecipient, type RecipientLines } from '../lib/recipients'
 import { useDraftAutosave } from './useDraftAutosave'
 
 type DraftEditorProps = {
@@ -25,6 +27,10 @@ function DraftForm({
   onSent: (id: string) => void
 }): React.JSX.Element {
   const [to, setTo] = useState(detail.to || '')
+  // Gmail drafts carry their own Cc/Bcc headers, so a draft saved with
+  // carbon lists reopens with them (and opens the matching field).
+  const [cc, setCc] = useState(detail.cc || '')
+  const [bcc, setBcc] = useState(detail.bcc || '')
   const [subject, setSubject] = useState(detail.subject || '')
   const [body, setBody] = useState(detail.bodyText || detail.snippet || '')
   const [sending, setSending] = useState(false)
@@ -39,6 +45,8 @@ function DraftForm({
   const autosave = useDraftAutosave(
     {
       to,
+      cc,
+      bcc,
       subject,
       body,
       threadId: detail.threadId || undefined,
@@ -52,9 +60,17 @@ function DraftForm({
     draftId !== undefined
   )
 
+  function handleRecipientChange(patch: RecipientLines): void {
+    if (patch.to !== undefined) setTo(patch.to)
+    if (patch.cc !== undefined) setCc(patch.cc)
+    if (patch.bcc !== undefined) setBcc(patch.bcc)
+  }
+
   async function handleSend(event: React.FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault()
-    if (sending || sent || !to.trim()) return
+    // The Enter key submits the form even with the Send button disabled, so
+    // the receipt test lives here, not only on the button.
+    if (sending || sent || !hasRecipient({ to, cc, bcc })) return
 
     setSending(true)
     setSendError(null)
@@ -71,6 +87,8 @@ function DraftForm({
           await window.api.sendDraft({
             draftId,
             to,
+            cc,
+            bcc,
             subject,
             body,
             threadId: detail.threadId || undefined,
@@ -84,7 +102,7 @@ function DraftForm({
           // No draft ID (shouldn't happen for rows from the Drafts folder):
           // send as a new message but do NOT report sent — the unknown draft
           // is still in Gmail, and dropping the row would hide that fact.
-          await window.api.sendEmail({ to, subject, body })
+          await window.api.sendEmail({ to, cc, bcc, subject, body })
           setNotice(
             'Sent as a new message; the original draft entry was left in place (unknown draft ID).'
           )
@@ -106,10 +124,7 @@ function DraftForm({
     <form className="composer composer-fill" onSubmit={handleSend}>
       <h2 id="draft-editor-title">Draft</h2>
 
-      <label className="composerField">
-        <span>To</span>
-        <input required value={to} onChange={(event) => setTo(event.target.value)} />
-      </label>
+      <RecipientFields to={to} cc={cc} bcc={bcc} onChange={handleRecipientChange} />
 
       <label className="composerField">
         <span>Subject</span>
@@ -131,7 +146,7 @@ function DraftForm({
         {/* Once sent, the draft no longer exists server-side (a second send
             would surface a confusing drafts.update 404, not a new mail), so
             the button retires instead of re-arming. */}
-        <button type="submit" disabled={sending || sent || !to.trim()}>
+        <button type="submit" disabled={sending || sent || !hasRecipient({ to, cc, bcc })}>
           {sending ? 'Sending...' : sent ? 'Sent' : 'Send'}
         </button>
       </div>
