@@ -1,6 +1,7 @@
 import { getAccountEmail, getGmailClient } from '../auth'
 import type { EmailDetail, EmailThread } from '../../shared/types'
 import { toEmailDetail } from './message'
+import { noteHistoryId } from './sync'
 import { DETAIL_CONCURRENCY, mapWithConcurrency, withQuotaRetry } from './resilience'
 
 export async function fetchMessage(id: string): Promise<EmailDetail> {
@@ -21,6 +22,7 @@ export async function fetchThread(threadId: string): Promise<EmailThread> {
       format: 'full'
     })
   )
+  noteHistoryId(thread.data.historyId)
   // getAccountEmail rides along concurrently so the thread open is not
   // serialized behind a profile call, and its failure degrades to an empty
   // exclusion set (reply-all excludes nothing) rather than failing the open:

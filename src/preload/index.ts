@@ -11,6 +11,7 @@ import type {
   SendEmailRequest,
   ThreadPage
 } from '../shared/types'
+import type { SyncReason, SyncResult } from '../shared/sync'
 
 const api = {
   signIn: (): Promise<void> => ipcRenderer.invoke('auth:sign-in'),
@@ -18,6 +19,21 @@ const api = {
   signOut: (): Promise<void> => ipcRenderer.invoke('auth:sign-out'),
   listFolder: (options?: ListFolderOptions): Promise<ThreadPage> =>
     ipcRenderer.invoke('gmail:list', options),
+  // The canonical refresh funnel: every path — the renderer's Refresh
+  // button here, main's adaptive clock and window-focus trigger inside
+  // sync — settles through the main-process sync.
+  syncMail: (reason: SyncReason): Promise<SyncResult> => ipcRenderer.invoke('gmail:sync', reason),
+  // Pushed sweep results ('clock' and 'focus' have no awaiting caller):
+  // the subscription returns its own unsubscribe, the shape of a listener
+  // tie the renderer owns across sign-in flips.
+  onSyncResult: (listener: (result: SyncResult) => void): (() => void) => {
+    const wrapped = (_event: Electron.IpcRendererEvent, result: SyncResult): void =>
+      listener(result)
+    ipcRenderer.on('gmail:sync-result', wrapped)
+    return () => {
+      ipcRenderer.removeListener('gmail:sync-result', wrapped)
+    }
+  },
   getMessage: (id: string): Promise<EmailDetail> => ipcRenderer.invoke('gmail:get', id),
   getThread: (threadId: string): Promise<EmailThread> =>
     ipcRenderer.invoke('gmail:thread', threadId),

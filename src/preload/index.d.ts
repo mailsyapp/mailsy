@@ -11,6 +11,8 @@ declare global {
   type SaveDraftRequest = import('../shared/types').SaveDraftRequest
   type ModifyLabelsRequest = import('../shared/types').ModifyLabelsRequest
   type MailLabel = import('../shared/types').MailLabel
+  type SyncReason = import('../shared/sync').SyncReason
+  type SyncResult = import('../shared/sync').SyncResult
 
   interface Window {
     electron: ElectronAPI
@@ -19,6 +21,8 @@ declare global {
       isSignedIn(): Promise<boolean>
       signOut(): Promise<void>
       listFolder(options?: ListFolderOptions): Promise<MailPage>
+      syncMail(reason: SyncReason): Promise<SyncResult>
+      onSyncResult(listener: (result: SyncResult) => void): () => void
       getMessage(id: string): Promise<EmailDetail>
       getThread(threadId: string): Promise<EmailThread>
       sendEmail(request: SendEmailRequest): Promise<void>
