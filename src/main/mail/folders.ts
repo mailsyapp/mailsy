@@ -134,7 +134,7 @@ async function fetchSnoozed(
   // fetches, so a thread parked by both sides lists once. The emulated leg
   // marks the rows so their unsnooze takes the restore-pair path; v1 lists
   // only its first page (follow-up: a union pagination token).
-  const emulatedQuery = [userQuery, 'in:snoozed'].filter((part) => part).join(' ')
+  const nativeQuery = [userQuery, 'in:snoozed'].filter((part) => part).join(' ')
   const mailSnoozeLabelId = await resolveSnoozeLabelId(gmail, false)
   const [native, emulated] = await Promise.all([
     withQuotaRetry(() =>
@@ -142,7 +142,7 @@ async function fetchSnoozed(
         userId: 'me',
         maxResults,
         ...(options.pageToken ? { pageToken: options.pageToken } : {}),
-        ...(emulatedQuery ? { q: emulatedQuery } : {})
+        ...(nativeQuery ? { q: nativeQuery } : {})
       })
     ),
     // The label leg only ever has its first page (no union token in v1), so
