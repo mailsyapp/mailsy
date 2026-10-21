@@ -426,6 +426,28 @@ button {
   border: 1px solid rgba(0, 0, 0, 0.25);
 }
 
+/* The detail snooze affordance: the alarm glyph the rail's Snoozed entry
+   carries, inline with the row's text actions, so the park verb reads as
+   a first-class action row member like archive and delete. */
+.snooze-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  vertical-align: middle;
+}
+
+/* The preset choices open boxed like the Labels menu, one per row. */
+.snooze-menu-list {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+}
+
 /* The label view heading, mirroring Gmail's label-name heading above the
    list, with the label's delete affordance at its right. */
 .user-label-heading {
