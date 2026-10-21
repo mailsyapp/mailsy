@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useId, useState } from 'react'
 import type { RecipientLines } from '../lib/recipients'
 
 type RecipientFieldsProps = {
@@ -22,12 +22,19 @@ export function RecipientFields({
 }: RecipientFieldsProps): React.JSX.Element {
   const [showCc, setShowCc] = useState(Boolean(cc))
   const [showBcc, setShowBcc] = useState(Boolean(bcc))
+  // The To row is a grid div (the reveal links live beside the input), so
+  // the span is a real label by htmlFor, not by wrapping.
+  const toId = useId()
 
   return (
     <>
       <div className="composerField composerField-reveal">
-        <span>To</span>
-        <input value={to} onChange={(event) => onChange({ to: event.target.value })} />
+        <label htmlFor={toId}>To</label>
+        <input
+          id={toId}
+          value={to}
+          onChange={(event) => onChange({ to: event.target.value })}
+        />
         {(!showCc || !showBcc) && (
           <span className="composerReveal">
             {!showCc && (
