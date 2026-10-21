@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { EmailDetail as EmailDetailData, ThreadSummary } from '../../../shared/types'
+import { hasRecipient, type RecipientState } from '../../../shared/types'
 import { RecipientFields } from './RecipientFields'
-import { hasRecipient, type RecipientLines } from '../lib/recipients'
 import { useDraftAutosave } from './useDraftAutosave'
 
 type DraftEditorProps = {
@@ -26,11 +26,16 @@ function DraftForm({
   messageId: string
   onSent: (id: string) => void
 }): React.JSX.Element {
-  const [to, setTo] = useState(detail.to || '')
-  // Gmail drafts carry their own Cc/Bcc headers, so a draft saved with
-  // carbon lists reopens with them (and opens the matching field).
-  const [cc, setCc] = useState(detail.cc || '')
-  const [bcc, setBcc] = useState(detail.bcc || '')
+  // One recipients block, not three loose lines: a recipient edit is one
+  // spread, a Gmail draft's stored headers map straight onto it, and the
+  // send/autosave payloads reuse the object as-is. Gmail drafts carry their
+  // own Cc/Bcc headers, so a draft saved with carbon lists reopens with them
+  // (and opens the matching field).
+  const [recipients, setRecipients] = useState<RecipientState>({
+    to: detail.to || '',
+    cc: detail.cc || '',
+    bcc: detail.bcc || ''
+  })
   const [subject, setSubject] = useState(detail.subject || '')
   const [body, setBody] = useState(detail.bodyText || detail.snippet || '')
   const [sending, setSending] = useState(false)
@@ -44,9 +49,7 @@ function DraftForm({
   // they send fresh and cannot be updated anyway.
   const autosave = useDraftAutosave(
     {
-      to,
-      cc,
-      bcc,
+      ...recipients,
       subject,
       body,
       threadId: detail.threadId || undefined,
@@ -60,17 +63,11 @@ function DraftForm({
     draftId !== undefined
   )
 
-  function handleRecipientChange(patch: RecipientLines): void {
-    if (patch.to !== undefined) setTo(patch.to)
-    if (patch.cc !== undefined) setCc(patch.cc)
-    if (patch.bcc !== undefined) setBcc(patch.bcc)
-  }
-
   async function handleSend(event: React.FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault()
     // The Enter key submits the form even with the Send button disabled, so
     // the receipt test lives here, not only on the button.
-    if (sending || sent || !hasRecipient({ to, cc, bcc })) return
+    if (sending || sent || !hasRecipient(recipients)) return
 
     setSending(true)
     setSendError(null)
@@ -86,9 +83,7 @@ function DraftForm({
           // error) in place to retry — never a silently lingering draft.
           await window.api.sendDraft({
             draftId,
-            to,
-            cc,
-            bcc,
+            ...recipients,
             subject,
             body,
             threadId: detail.threadId || undefined,
@@ -102,7 +97,7 @@ function DraftForm({
           // No draft ID (shouldn't happen for rows from the Drafts folder):
           // send as a new message but do NOT report sent — the unknown draft
           // is still in Gmail, and dropping the row would hide that fact.
-          await window.api.sendEmail({ to, cc, bcc, subject, body })
+          await window.api.sendEmail({ ...recipients, subject, body })
           setNotice(
             'Sent as a new message; the original draft entry was left in place (unknown draft ID).'
           )
@@ -124,7 +119,12 @@ function DraftForm({
     <form className="composer composer-fill" onSubmit={handleSend}>
       <h2 id="draft-editor-title">Draft</h2>
 
-      <RecipientFields to={to} cc={cc} bcc={bcc} onChange={handleRecipientChange} />
+      <RecipientFields
+        to={recipients.to}
+        cc={recipients.cc}
+        bcc={recipients.bcc}
+        onChange={(patch) => setRecipients({ ...recipients, ...patch })}
+      />
 
       <label className="composerField">
         <span>Subject</span>
@@ -146,7 +146,7 @@ function DraftForm({
         {/* Once sent, the draft no longer exists server-side (a second send
             would surface a confusing drafts.update 404, not a new mail), so
             the button retires instead of re-arming. */}
-        <button type="submit" disabled={sending || sent || !hasRecipient({ to, cc, bcc })}>
+        <button type="submit" disabled={sending || sent || !hasRecipient(recipients)}>
           {sending ? 'Sending...' : sent ? 'Sent' : 'Send'}
         </button>
       </div>

@@ -35,20 +35,9 @@ function recipientsOf(headerValue: string): string[] {
   return entries
 }
 
-// The composer's three address lines. Omission is "not this field" for the
-// patch handler and "never typed" for the receipt test.
-export interface RecipientLines {
-  to?: string
-  cc?: string
-  bcc?: string
-}
-
-// A composer may send when one of its three address lists survives: Cc-only
-// and Bcc-only sends are legal, so To is not the whole receipt test.
-export function hasRecipient({ to, cc, bcc }: RecipientLines): boolean {
-  return Boolean(to?.trim() || cc?.trim() || bcc?.trim())
-}
-
+// The composer's three address lines live in shared/types (one shape for
+// composer state, autosave payload, and send); the receipt rule rides with
+// them. This module owns only the reply-all split derived from a message.
 // Gmail's reply-all rule split across the two visible fields:
 // - To keeps the author (Reply-To overriding From) plus the previous To
 //   recipients.

@@ -10,7 +10,8 @@ import type {
   MailFolder
 } from '../../../shared/types'
 import { senderNameOf } from '../lib/format'
-import { replyAllRecipients, hasRecipient } from '../lib/recipients'
+import { replyAllRecipients } from '../lib/recipients'
+import { hasRecipient } from '../../../shared/types'
 import { SNOOZE_PRESETS } from '../lib/snooze'
 import { RecipientFields } from './RecipientFields'
 
