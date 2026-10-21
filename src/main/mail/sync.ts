@@ -82,6 +82,9 @@ async function sweepChangedThreads(gmail: GmailClient): Promise<string[]> {
   if (start === null) return []
 
   const changed = new Set<string>()
+  const note = (threadId: string | null | undefined): void => {
+    if (threadId) changed.add(threadId)
+  }
   for (let pageToken: string | undefined; ;) {
     const page = await withQuotaRetry(() =>
       gmail.users.history.list({
@@ -93,9 +96,6 @@ async function sweepChangedThreads(gmail: GmailClient): Promise<string[]> {
       })
     )
     for (const record of page.data.history ?? []) {
-      const note = (threadId: string | null | undefined): void => {
-        if (threadId) changed.add(threadId)
-      }
       // An autosave's messageAdded carries only its DRAFT label; real
       // new mail arrives with INBOX and friends riding along with it.
       for (const entry of record.messagesAdded ?? []) {

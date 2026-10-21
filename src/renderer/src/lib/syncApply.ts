@@ -103,8 +103,9 @@ export function applyMailDelta(
   }
   if (!view.isSearchActive) {
     // History pages arrive oldest first; the fresh rows enter newest
-    // first, the position new mail reads from.
-    const entering = delta.threads
+    // first, the position new mail reads from. The push's array is not
+    // the renderer's to mutate, so the order flip copies.
+    const entering = [...delta.threads]
       .reverse()
       .filter(
         (row) =>
