@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import Fuse from 'fuse.js'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { StarIcon } from '@hugeicons/core-free-icons'
 import type {
@@ -12,6 +11,8 @@ import type {
 import { EmailDetail } from './components/EmailDetail'
 import { senderNameOf } from './lib/format'
 import { applyMailDelta, mergeIncoming, viewLabelOf } from './lib/syncApply'
+import { hasGmailOperator, previewMatches, rerankByFuse } from './lib/search'
+import { FOLDER_CONFIG } from './lib/folderViews'
 import type { SyncResult } from '../../shared/sync'
 import { DraftEditor } from './components/DraftEditor'
 import { ComposeEditor } from './components/ComposeEditor'
@@ -30,60 +31,12 @@ const DRAFT_PRUNE_DELAY_MS = 2000
 // the next due moment, and the startup catch-up absorbs closed-window gaps.
 const SNOOZE_TICK_MS = 30_000
 
-const FOLDER_CONFIG: Record<
-  MailFolder,
-  { label: string; empty: string; fallbackToLocal: boolean }
-> = {
-  // fallbackToLocal: the folder's last unfiltered page may back the local
-  // Fuse fallback when the server returns nothing. Inbox only, by design:
-  // other folders must not surface messages from another folder's cache.
-  inbox: { label: 'Inbox', empty: 'You’re all caught up', fallbackToLocal: true },
-  drafts: { label: 'Drafts', empty: 'No drafts yet', fallbackToLocal: false },
-  sent: { label: 'Sent', empty: 'No sent mail yet', fallbackToLocal: false },
-  trash: { label: 'Trash', empty: 'Trash is empty', fallbackToLocal: false },
-  spam: { label: 'Spam', empty: 'Spam is empty', fallbackToLocal: false },
-  snoozed: { label: 'Snoozed', empty: 'No snoozed mail', fallbackToLocal: false },
-  // The user-label view: the heading and landmark read the open label's
-  // name (activeLabel), so this row only fixes the config contract.
-  label: { label: 'Labels', empty: 'No mail with this label', fallbackToLocal: false },
-  starred: { label: 'Starred', empty: 'No starred mail yet', fallbackToLocal: false },
-  important: { label: 'Important', empty: 'No important mail yet', fallbackToLocal: false },
-  social: { label: 'Social', empty: 'No social mail yet', fallbackToLocal: false },
-  promotions: { label: 'Promotions', empty: 'No promotions yet', fallbackToLocal: false },
-  updates: { label: 'Updates', empty: 'No updates yet', fallbackToLocal: false },
-  forums: { label: 'Forums', empty: 'No forum mail yet', fallbackToLocal: false },
-  all: { label: 'All Mail', empty: 'No mail yet', fallbackToLocal: false }
-}
-
-const FUSE_KEYS = [
-  { name: 'subject', weight: 0.6 },
-  { name: 'participants', weight: 0.3 },
-  { name: 'snippet', weight: 0.1 }
-]
-function hasGmailOperator(query: string): boolean {
-  return /[a-zA-Z]+:/.test(query)
-}
-
 function formatFetchError(e: unknown): string {
   const message = e instanceof Error ? e.message : String(e)
   if (/quota|rate.?limit|429|userRateLimitExceeded/i.test(message)) {
     return 'Gmail rate limit hit — wait about a minute, then press Enter to retry your search.'
   }
   return message
-}
-
-function rerankWithFuse(threads: ThreadSummary[], query: string): ThreadSummary[] {
-  if (threads.length === 0 || !query || hasGmailOperator(query)) return threads
-  const fuse = new Fuse(threads, {
-    keys: FUSE_KEYS,
-    threshold: 0.4,
-    ignoreLocation: true,
-    includeScore: true
-  })
-  const results = fuse.search(query)
-  if (results.length === 0) return threads
-  const scoreById = new Map(results.map((r) => [r.item.id, r.score ?? 1]))
-  return [...threads].sort((a, b) => (scoreById.get(a.id) ?? 2) - (scoreById.get(b.id) ?? 2))
 }
 
 // First-page loads share one fetch pipeline. 'load' is a folder switch or
@@ -240,27 +193,16 @@ function App(): React.JSX.Element {
       for (const e of canFallbackLocally ? [...threads, ...fallbackPool] : threads) {
         if (!seen.has(e.id)) seen.set(e.id, e)
       }
-      const preview = new Fuse([...seen.values()], {
-        keys: FUSE_KEYS,
-        threshold: 0.4,
-        ignoreLocation: true
-      })
-        .search(pending)
-        .map((r) => r.item)
+      const preview = previewMatches([...seen.values()], pending)
       if (preview.length > 0) return preview
     }
     if (!isSearchActive) return threads
-    if (threads.length > 0) return rerankWithFuse(threads, committedQuery)
+    if (threads.length > 0) return rerankByFuse(threads, committedQuery)
     // Server returned nothing: fuzzy-search the folder's cached unfiltered
     // page so a typo can still surface locally-loaded mail instead of a
     // dead end (only where the folder config allows it).
     if (canFallbackLocally && fallbackPool.length > 0 && !hasGmailOperator(committedQuery)) {
-      const fuse = new Fuse(fallbackPool, {
-        keys: FUSE_KEYS,
-        threshold: 0.4,
-        ignoreLocation: true
-      })
-      const fallback = fuse.search(committedQuery).map((r) => r.item)
+      const fallback = previewMatches(fallbackPool, committedQuery)
       if (fallback.length > 0) return fallback
     }
     return threads
@@ -688,8 +630,13 @@ function App(): React.JSX.Element {
   // function declaration, so the render body can pin the latest copy to
   // the ref the subscription reads.
   const syncResultHandlerRef = useRef<(result: SyncResult) => void>(() => {})
+  const signedInRef = useRef<boolean | null>(null)
 
   function handleSyncResult(result: SyncResult): void {
+    // A sweep resolving after sign-out has a cleared list behind it; its
+    // rows would repaint the signed-out screen. The same guard keeps a
+    // reset fold from refetching against a dead session.
+    if (signedInRef.current !== true) return
     if (result.kind === 'reset') {
       loadFirstPage('sync')
       return
@@ -712,10 +659,11 @@ function App(): React.JSX.Element {
     )
   }
   // Pinned every render (effects are fine with refs; render bodies are
-  // not): the subscription reads the latest handler while staying
-  // mounted across the render-scoped list inputs it closes over.
+  // not): the subscription reads the latest handler, and the guard in it
+  // reads the latest signed-in state.
   useEffect(() => {
     syncResultHandlerRef.current = handleSyncResult
+    signedInRef.current = signedIn
   })
 
   useEffect(() => {
