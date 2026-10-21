@@ -9,6 +9,8 @@ import type {
   SendEmailRequest,
   MailFolder
 } from '../../../shared/types'
+import { HugeiconsIcon } from '@hugeicons/react'
+import { AlarmClockIcon } from '@hugeicons/core-free-icons'
 import { senderNameOf } from '../lib/format'
 import { replyAllRecipients } from '../lib/recipients'
 import { hasRecipient } from '../../../shared/types'
@@ -21,10 +23,24 @@ import { RecipientFields } from './RecipientFields'
 const REPORT_SPAM_FOLDERS: MailFolder[] = ['inbox', 'all', 'starred', 'label']
 
 // Snoozing makes exactly where parking leaves Inbox ownership in question:
-// the mail-ownership views, not sent/draft/trash/spam or the parked set
-// itself. No custom datetime picker in v1: the presets are the whole
-// snooze surface (follow-up: a picker).
-const SNOOZE_FOLDERS: MailFolder[] = ['inbox', 'all', 'starred']
+// the mail-ownership views — the Inbox stack (categories included: their
+// mail is INBOX mail with a category label), the ownership-free All Mail,
+// and the label views, which mail can reach from any folder. Not the
+// write-only folders (sent/draft/spam/trash) or the parked set itself,
+// where unsnooze is the verb. No custom datetime picker: the presets are
+// the whole snooze surface, and the wake store schedules any future
+// moment, so a picker is unbacked follow-up, not a v1 gap.
+const SNOOZE_FOLDERS: MailFolder[] = [
+  'inbox',
+  'all',
+  'starred',
+  'label',
+  'important',
+  'social',
+  'promotions',
+  'updates',
+  'forums'
+]
 
 type EmailDetailProps = {
   // The row identity: subject, participant summary, and thread-level label
@@ -735,20 +751,29 @@ export function EmailDetail({
       {SNOOZE_FOLDERS.includes(folder) && (
         <>
           <button
+            className="snooze-toggle"
             onClick={() => setPickingSnooze(!pickingSnooze)}
             disabled={changingSnooze}
             aria-expanded={pickingSnooze}
+            title="Snooze"
           >
+            {/* The park affordance carries the alarm icon the rail's
+                Snoozed entry does, so looking for snooze and looking for
+                parked mail is the same glyph both places. */}
+            <HugeiconsIcon icon={AlarmClockIcon} size={15} strokeWidth={2} />
             snooze
           </button>
-          {/* Presets sit open next to the affordance, the plain-button
-              idiom of every action above; a menu popup is a v2 surface. */}
-          {pickingSnooze &&
-            SNOOZE_PRESETS.map((preset) => (
-              <button key={preset.key} onClick={() => void handleSnooze(preset.at())}>
-                {preset.label}
-              </button>
-            ))}
+          {/* Presets sit in the boxed idiom of the Labels menu above, open
+              under the affordance and collapsing on pick or failure. */}
+          {pickingSnooze && (
+            <div className="snooze-menu-list" role="group" aria-label="Snooze until">
+              {SNOOZE_PRESETS.map((preset) => (
+                <button key={preset.key} onClick={() => void handleSnooze(preset.at())}>
+                  {preset.label}
+                </button>
+              ))}
+            </div>
+          )}
         </>
       )}
       {folder === 'snoozed' && (
