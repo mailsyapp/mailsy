@@ -148,12 +148,12 @@ function DraftForm({
       {autosave.status === 'saved' && <p role="status">Draft saved.</p>}
 
       <div className="composerActions">
-        {/* Once sent, the draft no longer exists server-side (a second send
-            would surface a confusing drafts.update 404, not a new mail), so
-            the button retires instead of re-arming. */}
         <button type="button" onClick={onDraftDiscard} disabled={sending || sent}>
           delete draft
         </button>
+        {/* Once sent, the draft no longer exists server-side (a second send
+            would surface a confusing drafts.update 404, not a new mail), so
+            the button retires instead of re-arming. */}
         <button type="submit" disabled={sending || sent || !hasRecipient(recipients)}>
           {sending ? 'Sending...' : sent ? 'Sent' : 'Send'}
         </button>
