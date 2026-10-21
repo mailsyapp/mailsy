@@ -8,6 +8,7 @@ import {
   withQuotaRetry
 } from './resilience'
 import { resolveSnoozeLabelId } from './snooze'
+import { noteHistoryId } from './sync'
 import { threadToSummary, toEmailSummary } from './message'
 
 // Snoozed and All Mail are the two views whose native listing shape differs
@@ -178,6 +179,9 @@ async function fetchSnoozed(
           metadataHeaders: ['From', 'Subject', 'Date']
         })
       )
+      // Every thread fetch records the mailbox's newest history id it
+      // observed, so the sweep cursor advances with each unpaid fetch.
+      noteHistoryId(thread.data.historyId)
       return threadToSummary(thread.data, mailSnoozeLabelId ?? undefined)
     }
   )
@@ -233,6 +237,7 @@ export async function fetchFolder(options: ListFolderOptions = {}): Promise<Thre
           metadataHeaders: ['From', 'Subject', 'Date']
         })
       )
+      noteHistoryId(thread.data.historyId)
       return threadToSummary(thread.data)
     }
   )
