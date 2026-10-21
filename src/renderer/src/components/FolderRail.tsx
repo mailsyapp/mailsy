@@ -36,6 +36,11 @@ const FOLDERS: Array<{ id: MailFolder; label: string; icon: typeof InboxIcon }> 
   { id: 'all', label: 'All Mail', icon: Mail02Icon }
 ]
 
+// The Labels section stays out of the default sidebar view; only the
+// expanded-sidebar feature shows it. TASKS.md carries the note for the
+// future sidebar agent.
+const SIDEBAR_SHOW_LABELS = false
+
 // One chip per user label, held together by the count it opens: the body
 // carries the label's Gmail background color and text color, the count the
 // thread total, and the corner holds the delete affordance. Selecting and
@@ -134,58 +139,62 @@ export function FolderRail({
           </button>
         )
       })}
-      {labels.length > 0 && (
-        <div className="user-label-chips" aria-label="User labels">
-          {labels.map((label) => (
-            <UserLabelChip
-              key={label.id}
-              label={label}
-              isActive={label.id === activeLabelId}
-              onSelect={onSelectLabel}
-              onDelete={onDeleteLabel}
-            />
-          ))}
-        </div>
-      )}
-      {draftOpen && (
-        <form
-          className="user-label-create-form"
-          onSubmit={(e) => {
-            e.preventDefault()
-            commitDraft()
-          }}
-        >
-          <input
-            ref={draftRef}
-            className="user-label-create-input"
-            aria-label="Label name"
-            placeholder="New label"
-            value={draftName}
-            autoFocus
-            onChange={(e) => setDraftName(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Escape') {
-                setDraftName('')
-                setDraftOpen(false)
-              }
+      {SIDEBAR_SHOW_LABELS && (
+        <>
+          {labels.length > 0 && (
+            <div className="user-label-chips" aria-label="User labels">
+              {labels.map((label) => (
+                <UserLabelChip
+                  key={label.id}
+                  label={label}
+                  isActive={label.id === activeLabelId}
+                  onSelect={onSelectLabel}
+                  onDelete={onDeleteLabel}
+                />
+              ))}
+            </div>
+          )}
+          {draftOpen && (
+            <form
+              className="user-label-create-form"
+              onSubmit={(e) => {
+                e.preventDefault()
+                commitDraft()
+              }}
+            >
+              <input
+                ref={draftRef}
+                className="user-label-create-input"
+                aria-label="Label name"
+                placeholder="New label"
+                value={draftName}
+                autoFocus
+                onChange={(e) => setDraftName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') {
+                    setDraftName('')
+                    setDraftOpen(false)
+                  }
+                }}
+              />
+            </form>
+          )}
+          <button
+            type="button"
+            className="user-label-create"
+            aria-label="New label"
+            title="New label"
+            onClick={() => {
+              setDraftOpen(true)
+              // autofocus fires on mount, but an already-visited draft may
+              // not re-run it; focus explicitly too.
+              requestAnimationFrame(() => draftRef.current?.focus())
             }}
-          />
-        </form>
+          >
+            <HugeiconsIcon icon={AddIcon} size={18} strokeWidth={2.2} />
+          </button>
+        </>
       )}
-      <button
-        type="button"
-        className="user-label-create"
-        aria-label="New label"
-        title="New label"
-        onClick={() => {
-          setDraftOpen(true)
-          // autofocus fires on mount, but an already-visited draft may
-          // not re-run it; focus explicitly too.
-          requestAnimationFrame(() => draftRef.current?.focus())
-        }}
-      >
-        <HugeiconsIcon icon={AddIcon} size={18} strokeWidth={2.2} />
-      </button>
     </nav>
   )
 }
