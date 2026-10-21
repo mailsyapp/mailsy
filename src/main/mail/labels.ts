@@ -39,46 +39,69 @@ export async function listLabels(): Promise<MailLabel[]> {
   )
 }
 
+// labels.list answers system and user labels alike; user-label readers are
+// the only writers of mailbox state, so listing filters to the user set
+// (an undefined type name is a user label, per Gmail's schema default).
+async function listUserLabels(gmail: GmailClient): Promise<gmail_v1.Schema$Label[]> {
+  const list = await withQuotaRetry(() => gmail.users.labels.list({ userId: 'me' }))
+  return (list.data.labels ?? []).filter((label) => (label.type ?? 'user') !== 'system')
+}
+
+// The canonical find-by-name: names are unique case-insensitively the way
+// Gmail treats duplicate names, so a label differing only in case is the
+// same label. Answers null when absent.
+export async function findUserLabelByName(
+  gmail: GmailClient,
+  name: string
+): Promise<gmail_v1.Schema$Label | null> {
+  const found = (await listUserLabels(gmail)).find(
+    (label) => (label.name ?? '').toLowerCase() === name.toLowerCase()
+  )
+  return found ?? null
+}
+
+// The canonical create: the raw labels.create write behind the quota retry,
+// answering Gmail's whole label so callers decide how to read it. The flat
+// write only — nesting and guards live in createUserLabel.
+export async function createUserLabelByName(
+  gmail: GmailClient,
+  name: string
+): Promise<gmail_v1.Schema$Label> {
+  const created = await withQuotaRetry(() =>
+    gmail.users.labels.create({ userId: 'me', requestBody: { name } })
+  )
+  return created.data
+}
+
 // Gmail's nesting has no API tree: a "Work/Deep" label is the flat name
 // "Work/Deep", and the web UI nests it under a "Work" label shown alongside.
-// The parent chain is created when missing, case-insensitively the way Gmail
-// treats duplicate names, so the web UI's tree shows both levels.
+// The parent chain is created when missing, so the web UI's tree shows both
+// levels. An already-existing label is returned from the first find instead
+// of a 409.
 export async function createUserLabel(name: string): Promise<MailLabel> {
   const gmail: GmailClient = getGmailClient()
   const labelName = name.trim()
   if (!labelName) throw new Error('Label name is required')
-
-  const list = await withQuotaRetry(() => gmail.users.labels.list({ userId: 'me' }))
-  const userLabels = (list.data.labels ?? []).filter((label) => (label.type ?? 'user') !== 'system')
-  const known = new Set(userLabels.map((label) => (label.name ?? '').toLowerCase()))
 
   const segments = labelName.split('/')
   if (segments.some((segment) => !segment.trim())) {
     throw new Error('Label name has an empty segment')
   }
 
-  const byName = (name: string): gmail_v1.Schema$Label | undefined =>
-    userLabels.find((label) => (label.name ?? '').toLowerCase() === name.toLowerCase())
-
-  // An already-existing label (or one differing only in case) is returned
-  // from the first listing, mirroring Gmail's "names are unique" behavior
-  // instead of a 409.
-  const existing = byName(labelName)
+  const existing = await findUserLabelByName(gmail, labelName)
   if (existing) return toLabel(existing)
 
+  const userLabels = await listUserLabels(gmail)
+  const known = new Set(userLabels.map((label) => (label.name ?? '').toLowerCase()))
   for (let i = 1; i < segments.length; i++) {
     const ancestor = segments.slice(0, i).join('/')
     if (known.has(ancestor.toLowerCase())) continue
-    await withQuotaRetry(() =>
-      gmail.users.labels.create({ userId: 'me', requestBody: { name: ancestor } })
-    )
+    await createUserLabelByName(gmail, ancestor)
     known.add(ancestor.toLowerCase())
   }
 
-  const created = await withQuotaRetry(() =>
-    gmail.users.labels.create({ userId: 'me', requestBody: { name: labelName } })
-  )
-  return toLabel(created.data)
+  const created = await createUserLabelByName(gmail, labelName)
+  return toLabel(created)
 }
 
 // labels.get runs first as the boundary's own guard: a system label id 404s
