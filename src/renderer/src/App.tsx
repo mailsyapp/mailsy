@@ -560,11 +560,7 @@ function App(): React.JSX.Element {
     lastFetchedRef.current = null
   }
 
-  function handleCreateLabel(): void {
-    const entered = window.prompt('New label name (use / to nest):')
-    if (entered === null) return
-    const name = entered.trim()
-    if (!name) return
+  function handleCreateLabel(name: string): void {
     window.api
       .createUserLabel(name)
       .then(() => {
