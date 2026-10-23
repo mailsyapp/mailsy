@@ -61,32 +61,37 @@ function DraftForm({
     setNotice(null)
     try {
       await autosave.flushPending()
-      if (draftId) {
-        // Atomic send: drafts.send removes the draft server-side in the same
-        // operation. Sending succeeds => the row is guaranteed to be pruned
-        // by App; a failure here leaves the draft and this form (with its
-        // error) in place to retry — never a silently lingering draft.
-        await window.api.sendDraft({
-          draftId,
-          to,
-          subject,
-          body,
-          threadId: detail.threadId || undefined,
-          // The draft's own In-Reply-To header is the message it was a reply
-          // to. detail.messageId is the draft's unsent Message-ID and would
-          // be bogus to send.
-          inReplyTo: detail.inReplyTo || undefined,
-          references: detail.references || undefined
-        })
-      } else {
-        // No draft ID (shouldn't happen for rows from the Drafts folder):
-        // send as a new message but do NOT report sent — the unknown draft
-        // is still in Gmail, and dropping the row would hide that fact.
-        await window.api.sendEmail({ to, subject, body })
-        setNotice(
-          'Sent as a new message; the original draft entry was left in place (unknown draft ID).'
-        )
-        return
+      autosave.suspend()
+      try {
+        if (draftId) {
+          // Atomic send: drafts.send removes the draft server-side in the same
+          // operation. Sending succeeds => the row is guaranteed to be pruned
+          // by App; a failure here leaves the draft and this form (with its
+          // error) in place to retry — never a silently lingering draft.
+          await window.api.sendDraft({
+            draftId,
+            to,
+            subject,
+            body,
+            threadId: detail.threadId || undefined,
+            // The draft's own In-Reply-To header is the message it was a reply
+            // to. detail.messageId is the draft's unsent Message-ID and would
+            // be bogus to send.
+            inReplyTo: detail.inReplyTo || undefined,
+            references: detail.references || undefined
+          })
+        } else {
+          // No draft ID (shouldn't happen for rows from the Drafts folder):
+          // send as a new message but do NOT report sent — the unknown draft
+          // is still in Gmail, and dropping the row would hide that fact.
+          await window.api.sendEmail({ to, subject, body })
+          setNotice(
+            'Sent as a new message; the original draft entry was left in place (unknown draft ID).'
+          )
+          return
+        }
+      } finally {
+        autosave.resume()
       }
       autosave.stop()
       setSent(true)

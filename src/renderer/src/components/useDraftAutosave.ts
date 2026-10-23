@@ -15,6 +15,12 @@ export interface DraftAutosave {
   // out any write already on the bridge, so send can never race a
   // straggling update into the draft it is about to consume.
   flushPending: () => Promise<void>
+  // Send wraps its bridge call with these: suspended dispatches no new
+  // write, so content typed under a sending send can never interleave the
+  // atomic update+send pair in the main process. A failed send resumes so
+  // the retry attempt still autosaves.
+  suspend: () => void
+  resume: () => void
   // Freezes autosave after a terminal action (send consumed the draft,
   // Cancel discarded it): the pending timer and the unmount flush stand
   // down instead of writing to a retired draft id.
@@ -45,9 +51,15 @@ export function useDraftAutosave(
   const lastSavedRef = useRef(JSON.stringify(fields))
   const enabledRef = useRef(enabled)
   const retiredRef = useRef(false)
-  // The latest write on the bridge; flushPending awaits it. The unmount
-  // flush may start a second write before the first resolves, so runs
-  // supersede by identity rather than assuming a single in-flight write.
+  // Send-in-progress gate: dispatch holds while a send occupies the draft,
+  // resumed on a failed send so the retry still autosaves.
+  const suspendedRef = useRef(false)
+  // One write at a time, in dispatch order. Every save chains onto the
+  // previous run, so when the unmount dispatches the second write needed
+  // after an in-flight create in flight, that create has already resolved
+  // and the second write is an update carrying the created draft id.
+  // WITHOUT this, two concurrent creates with no draft id between them
+  // could land two server drafts from one composer.
   const pendingSaveRef = useRef<Promise<void> | null>(null)
   const timerRef = useRef<number | null>(null)
   // Serialized per render: the debounce key is the content, so unrelated
@@ -58,24 +70,32 @@ export function useDraftAutosave(
   // Resolves whether the write failed or not: flushPending is a
   // synchronization point for send, not a retry surface.
   const save = useCallback((): Promise<void> => {
-    const run = window.api
-      .saveDraft({
-        ...fieldsRef.current,
-        ...(draftIdRef.current ? { draftId: draftIdRef.current } : {})
-      })
-      .then((draftId) => {
-        draftIdRef.current = draftId
-        lastSavedRef.current = JSON.stringify(fieldsRef.current)
-        setStatus('saved')
-        setError(null)
+    const prior = pendingSaveRef.current ?? Promise.resolve()
+    const run = prior
+      .then(() => {
+        // Retired (send consumed the draft, Cancel discarded it) or
+        // suspended (a send holds the bridge) means the queued write folds
+        // into whatever the terminal action decided.
+        if (retiredRef.current || suspendedRef.current) return
+        if (JSON.stringify(fieldsRef.current) === lastSavedRef.current) return
+        return window.api
+          .saveDraft({
+            ...fieldsRef.current,
+            ...(draftIdRef.current ? { draftId: draftIdRef.current } : {})
+          })
+          .then((draftId) => {
+            draftIdRef.current = draftId
+            lastSavedRef.current = JSON.stringify(fieldsRef.current)
+            setStatus('saved')
+            setError(null)
+          })
       })
       .catch((e: unknown) => {
         setStatus('idle')
         setError(e instanceof Error ? e.message : String(e))
       })
       .finally(() => {
-        // A newer save may have superseded this run: only the latest write
-        // owns the flushPending handle.
+        // A newer save owns the flushPending handle from here.
         if (pendingSaveRef.current === run) pendingSaveRef.current = null
       })
     pendingSaveRef.current = run
@@ -116,9 +136,9 @@ export function useDraftAutosave(
       }
       if (!enabledRef.current || retiredRef.current) return
       if (JSON.stringify(fieldsRef.current) === lastSavedRef.current) return
-      // A save may already be in flight from the debounce; this fires a
-      // second one for fields typed after it dispatched. Sequential IPC
-      // delivery makes the newer write the last drafts.update applied.
+      // A save may already sit in flight or queued from the debounce; this
+      // chain-dispatches behind it, so a create that has not resolved yet
+      // resolves first and this write is an update, never a second create.
       void save()
     }
   }, [save])
@@ -141,10 +161,20 @@ export function useDraftAutosave(
         timerRef.current = null
       }
     },
+    suspend: (): void => {
+      if (timerRef.current) {
+        window.clearTimeout(timerRef.current)
+        timerRef.current = null
+      }
+      suspendedRef.current = true
+    },
+    resume: (): void => {
+      suspendedRef.current = false
+    },
     currentDraftId: (): string | undefined =>
       // Retired after send or Cancel: the draft was consumed or discarded,
       // so it no longer exists for any later write to target.
-      (retiredRef.current ? undefined : draftIdRef.current),
+      retiredRef.current ? undefined : draftIdRef.current,
     status,
     error
   }
