@@ -10,11 +10,29 @@ function addressOf(entry: string): string {
   return (angle ? angle[1] : entry).trim().toLowerCase()
 }
 
+// Header values may quote a display name with embedded commas
+// ("Doe, Jane" <jane@example.com>), so a bare split(',') mangles the To
+// line. A comma only separates entries when no quote or bracket is open.
 function recipientsOf(headerValue: string): string[] {
-  return headerValue
-    .split(',')
-    .map((entry) => entry.trim())
-    .filter(Boolean)
+  const entries: string[] = []
+  let quoted = false
+  let brackets = 0
+  let entry = ''
+  for (const char of headerValue) {
+    if (char === '"') quoted = !quoted
+    else if (!quoted && char === '<') brackets += 1
+    else if (!quoted && char === '>') brackets = Math.max(0, brackets - 1)
+    if (char === ',' && !quoted && brackets === 0) {
+      const trimmed = entry.trim()
+      if (trimmed) entries.push(trimmed)
+      entry = ''
+    } else {
+      entry += char
+    }
+  }
+  const last = entry.trim()
+  if (last) entries.push(last)
+  return entries
 }
 
 // Gmail's reply-all model: the author (Reply-To overriding From) plus every

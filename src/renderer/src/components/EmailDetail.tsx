@@ -204,6 +204,9 @@ export function EmailDetail({
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
 
   const [draft, setDraft] = useState<SendEmailRequest | null>(null)
+  // Set only when a reply-all opened without the account address; the
+  // arrival effect clears it after its at-most-once rewrite.
+  const pendingReplyRef = useRef<{ target: EmailDetailData; toLine: string } | null>(null)
   const [quotedContent, setQuotedContent] = useState<{ text: string; html: string } | null>(null)
   const [sending, setSending] = useState(false)
   const [sendError, setSendError] = useState<string | null>(null)
@@ -299,6 +302,20 @@ export function EmailDetail({
     void loadThread(thread.id)
   }, [thread.id])
 
+  const accountEmail = threadData?.userEmail
+  useEffect(() => {
+    const pending = pendingReplyRef.current
+    if (!accountEmail || !pending) return
+    pendingReplyRef.current = null
+    // Only the exact prefill the unknown address produced is rewritten; an
+    // edited To line means the user already took the list from here.
+    setDraft((prev) =>
+      prev && prev.to === pending.toLine
+        ? { ...prev, to: replyAllTargets(pending.target, accountEmail) }
+        : prev
+    )
+  }, [accountEmail])
+
   const messages: EmailDetailData[] = threadData?.messages ?? []
 
   const latestMessage: EmailDetailData | null = messages[messages.length - 1] ?? null
@@ -340,7 +357,12 @@ export function EmailDetail({
   function replyAllToEmail(): void {
     const target = latestMessage
     if (!target) return
-    openReplyComposer(target, replyAllTargets(target, threadData?.userEmail ?? ''))
+    const userEmail = threadData?.userEmail ?? ''
+    const toLine = replyAllTargets(target, userEmail)
+    openReplyComposer(target, toLine)
+    // A reply-all opened before the account address landed prefilters
+    // nothing: when it arrives, an untouched To line gets one rewrite.
+    pendingReplyRef.current = userEmail ? null : { target, toLine }
   }
 
   function forwardEmail(): void {
