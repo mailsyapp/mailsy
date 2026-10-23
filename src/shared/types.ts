@@ -45,6 +45,10 @@ export interface ThreadSummary {
   unreadCount: number
   starred: boolean
   draftId?: string
+  // Set when any message in the thread carries DRAFT. Folder views that
+  // exclude drafts never read it; All Mail uses it to route a click into
+  // the draft editor instead of the read-only detail.
+  hasDraft?: boolean
 }
 
 export interface ListFolderOptions {
