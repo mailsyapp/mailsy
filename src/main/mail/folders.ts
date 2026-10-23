@@ -121,7 +121,10 @@ async function fetchSnoozed(
         ...(emulatedQuery ? { q: emulatedQuery } : {})
       })
     ),
-    mailSnoozeLabelId
+    // The label leg only ever has its first page (no union token in v1), so
+    // it runs on first-page fetches only: re-running it under a page token
+    // would re-read and re-merge the same rows into every deeper page.
+    mailSnoozeLabelId && !options.pageToken
       ? withQuotaRetry(() =>
           gmail.users.threads.list({
             userId: 'me',
