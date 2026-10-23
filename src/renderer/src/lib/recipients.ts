@@ -35,25 +35,41 @@ function recipientsOf(headerValue: string): string[] {
   return entries
 }
 
-// Gmail's reply-all model: the author (Reply-To overriding From) plus every
-// To and Cc recipient, own addresses dropped, duplicate addresses collapsed.
-// Order follows the headers so the composer shows the mail's own sequence.
-// Returns the To line; an empty string means no recipient survives.
-export function replyAllTargets(
+// The composer's three address lines live in shared/types (one shape for
+// composer state, autosave payload, and send); the receipt rule rides with
+// them. This module owns only the reply-all split derived from a message.
+// Gmail's reply-all rule split across the two visible fields:
+// - To keeps the author (Reply-To overriding From) plus the previous To
+//   recipients.
+// - Cc keeps the previous Cc recipients, skipping addresses already in To,
+//   so no participant receives two copies.
+// Both fields drop the user's own address first, so it never appears
+// anywhere. Bcc is strictly what the user types; a reply always auto-fills
+// nothing there. The lines keep the mail's own header order, and an empty
+// string means no recipient survives in that field.
+export function replyAllRecipients(
   message: Pick<EmailDetail, 'from' | 'to' | 'cc' | 'replyTo'>,
   userEmail: string
-): string {
+): { to: string; cc: string } {
   const own = addressOf(userEmail)
-  const targets: string[] = []
-  const seen = new Set<string>()
-  const candidateLists = [message.replyTo || message.from, message.to, message.cc]
-  for (const list of candidateLists) {
-    for (const entry of recipientsOf(list)) {
+
+  // One address key carries both uniqueness and the own-address exclusion:
+  // an address seen in a kept field is claimed, so a later list (Cc) never
+  // re-fires it.
+  function dedupe(list: string[], seen: Set<string>): string[] {
+    return list.filter((entry) => {
       const address = addressOf(entry)
-      if (!address || seen.has(address) || address === own) continue
+      if (!address || address === own || seen.has(address)) return false
       seen.add(address)
-      targets.push(entry)
-    }
+      return true
+    })
   }
-  return targets.join(', ')
+
+  const claimed = new Set<string>()
+  const to = dedupe(
+    [...recipientsOf(message.replyTo || message.from), ...recipientsOf(message.to)],
+    claimed
+  )
+  const cc = dedupe(recipientsOf(message.cc), claimed)
+  return { to: to.join(', '), cc: cc.join(', ') }
 }

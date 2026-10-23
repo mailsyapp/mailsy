@@ -10,8 +10,10 @@ import type {
   MailFolder
 } from '../../../shared/types'
 import { senderNameOf } from '../lib/format'
-import { replyAllTargets } from '../lib/recipients'
+import { replyAllRecipients } from '../lib/recipients'
+import { hasRecipient } from '../../../shared/types'
 import { SNOOZE_PRESETS } from '../lib/snooze'
+import { RecipientFields } from './RecipientFields'
 
 // Folders where report spam makes sense: drafts and sent (mail you own),
 // spam itself, and Trash are the excluded rest. A user-label view behaves
@@ -226,7 +228,7 @@ export function EmailDetail({
   const [draft, setDraft] = useState<SendEmailRequest | null>(null)
   // Set only when a reply-all opened without the account address; the
   // arrival effect clears it after its at-most-once rewrite.
-  const pendingReplyRef = useRef<{ target: EmailDetailData; toLine: string } | null>(null)
+  const pendingReplyRef = useRef<{ target: EmailDetailData; prefilledTo: string } | null>(null)
   const [quotedContent, setQuotedContent] = useState<{ text: string; html: string } | null>(null)
   const [sending, setSending] = useState(false)
   const [sendError, setSendError] = useState<string | null>(null)
@@ -375,18 +377,18 @@ export function EmailDetail({
     pendingReplyRef.current = null
     // Only the exact prefill the unknown address produced is rewritten; an
     // edited To line means the user already took the list from here.
-    setDraft((prev) =>
-      prev && prev.to === pending.toLine
-        ? { ...prev, to: replyAllTargets(pending.target, accountEmail) }
-        : prev
-    )
+    setDraft((prev) => {
+      if (!prev || prev.to !== pending.prefilledTo) return prev
+      const targets = replyAllRecipients(pending.target, accountEmail)
+      return { ...prev, to: targets.to, cc: targets.cc }
+    })
   }, [accountEmail])
 
   const messages: EmailDetailData[] = threadData?.messages ?? []
 
   const latestMessage: EmailDetailData | null = messages[messages.length - 1] ?? null
 
-  function openReplyComposer(target: EmailDetailData, toLine: string): void {
+  function openReplyComposer(target: EmailDetailData, toLine: string, ccLine = ''): void {
     setSendError(null)
     setSent(false)
     const originalText = target.bodyText || target.snippet || thread.snippet
@@ -403,6 +405,9 @@ export function EmailDetail({
     setQuotedContent({ text: quotedText, html: quotedHtml })
     setDraft({
       to: toLine,
+      // An empty carbon line stays unset: an absent field is the payload's
+      // "no carbon recipients", never an empty header.
+      ...(ccLine ? { cc: ccLine } : {}),
       subject: /^re:/i.test(target.subject) ? target.subject : `Re: ${target.subject}`,
       body: `\n\n${quotedText}`,
       threadId: target.threadId || undefined,
@@ -424,11 +429,11 @@ export function EmailDetail({
     const target = latestMessage
     if (!target) return
     const userEmail = threadData?.userEmail ?? ''
-    const toLine = replyAllTargets(target, userEmail)
-    openReplyComposer(target, toLine)
+    const { to, cc } = replyAllRecipients(target, userEmail)
+    openReplyComposer(target, to, cc)
     // A reply-all opened before the account address landed prefilters
     // nothing: when it arrives, an untouched To line gets one rewrite.
-    pendingReplyRef.current = userEmail ? null : { target, toLine }
+    pendingReplyRef.current = userEmail ? null : { target, prefilledTo: to }
   }
 
   function forwardEmail(): void {
@@ -477,7 +482,9 @@ export function EmailDetail({
 
   async function handleSend(event: React.FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault()
-    if (!draft || sending) return
+    // The Enter key submits the form even with the Send button disabled, so
+    // the receipt test lives here, not only on the button.
+    if (!draft || sending || !hasRecipient(draft)) return
 
     setSending(true)
     setSendError(null)
@@ -760,14 +767,12 @@ export function EmailDetail({
         <form className="composer" onSubmit={handleSend}>
           <h2 id="composer-title">Compose email</h2>
 
-          <label className="composerField">
-            <span>To</span>
-            <input
-              required
-              value={draft.to}
-              onChange={(event) => setDraft({ ...draft, to: event.target.value })}
-            />
-          </label>
+          <RecipientFields
+            to={draft.to}
+            cc={draft.cc ?? ''}
+            bcc={draft.bcc ?? ''}
+            onChange={(patch) => setDraft({ ...draft, ...patch })}
+          />
 
           <label className="composerField">
             <span>Subject</span>
@@ -798,7 +803,7 @@ export function EmailDetail({
             >
               Cancel
             </button>
-            <button type="submit" disabled={sending || !draft.to.trim()}>
+            <button type="submit" disabled={sending || !hasRecipient(draft)}>
               {sending ? 'Sending...' : 'Send'}
             </button>
           </div>

@@ -223,6 +223,28 @@ button {
   min-width: 0;
 }
 
+/* The To row carries the Cc/Bcc reveal links at its end, like Gmail's
+   composer; a link hides once its field is open, so the row settles. */
+.composerField-reveal {
+  grid-template-columns: 56px minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.composerReveal {
+  display: flex;
+  gap: 8px;
+}
+
+.composerReveal button {
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-weight: 500;
+  color: #1a73e8;
+  cursor: pointer;
+}
+
 .composer input,
 .composer textarea {
   display: block;

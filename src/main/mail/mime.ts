@@ -70,7 +70,7 @@ export function collectBodies(part: gmail_v1.Schema$MessagePart, out: MessageBod
 
 type RawMessageFields = Pick<
   SendEmailRequest,
-  'to' | 'subject' | 'body' | 'bodyHtml' | 'inReplyTo' | 'references'
+  'to' | 'cc' | 'bcc' | 'subject' | 'body' | 'bodyHtml' | 'inReplyTo' | 'references'
 >
 
 export async function buildRawMessage(from: string, request: RawMessageFields): Promise<string> {
@@ -81,6 +81,10 @@ export async function buildRawMessage(from: string, request: RawMessageFields): 
   const message = await transport.sendMail({
     from,
     to: request.to,
+    // Carbon lists are plain header fields; the stream transport keeps the
+    // Bcc header in the raw output and Gmail strips it before delivery.
+    ...(request.cc ? { cc: request.cc } : {}),
+    ...(request.bcc ? { bcc: request.bcc } : {}),
     subject: request.subject,
     text: request.body,
     ...(request.bodyHtml !== undefined ? { html: request.bodyHtml } : {}),
