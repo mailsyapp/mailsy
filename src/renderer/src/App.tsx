@@ -6,7 +6,8 @@ import type {
   ThreadSummary,
   EmailDetail as EmailDetailData,
   ThreadPage,
-  MailFolder
+  MailFolder,
+  MailLabel
 } from '../../shared/types'
 import { EmailDetail } from './components/EmailDetail'
 import { senderNameOf } from './lib/format'
@@ -43,6 +44,9 @@ const FOLDER_CONFIG: Record<
   trash: { label: 'Trash', empty: 'Trash is empty', fallbackToLocal: false },
   spam: { label: 'Spam', empty: 'Spam is empty', fallbackToLocal: false },
   snoozed: { label: 'Snoozed', empty: 'No snoozed mail', fallbackToLocal: false },
+  // The user-label view: the heading and landmark read the open label's
+  // name (activeLabel), so this row only fixes the config contract.
+  label: { label: 'Labels', empty: 'No mail with this label', fallbackToLocal: false },
   starred: { label: 'Starred', empty: 'No starred mail yet', fallbackToLocal: false },
   important: { label: 'Important', empty: 'No important mail yet', fallbackToLocal: false },
   social: { label: 'Social', empty: 'No social mail yet', fallbackToLocal: false },
@@ -150,6 +154,12 @@ function App(): React.JSX.Element {
   const [searchInput, setSearchInput] = useState('')
   const [committedQuery, setCommittedQuery] = useState('')
   const [activeFolder, setActiveFolder] = useState<MailFolder>('inbox')
+  // The open user-label view, mutually exclusive with the folder rail
+  // selection (switching either side clears the other).
+  const [activeLabel, setActiveLabel] = useState<MailLabel | null>(null)
+  // The user labels the rail chips and the detail Labels menu share; totals
+  // re-read after every create/delete and every thread apply/remove.
+  const [labels, setLabels] = useState<MailLabel[]>([])
   // The content pane is mutually exclusive: a fresh compose vs a selected
   // email. Every exit (sign-out, folder switch, selecting a row) runs
   // closeEmail below, which clears this together with the selection.
@@ -160,13 +170,16 @@ function App(): React.JSX.Element {
   const sidebarRef = useRef<HTMLElement | null>(null)
   const requestIdRef = useRef(0)
   // Last list actually on screen, so re-renders and the initial mount can't
-  // double-fire the same request. Keyed by folder+query fields, not a string.
-  const lastFetchedRef = useRef<{ folder: MailFolder; q: string } | null>(null)
-  // Server search first-pages per folder: retyping/backspacing to a previous
-  // query in the same folder reuses it instead of spending quota again.
-  // Unfiltered ('') lists are never cached here so clearing the search
-  // always refreshes.
-  const searchPageCacheRef = useRef(new Map<MailFolder, Map<string, ThreadPage>>())
+  // double-fire the same request. Keyed by folder+label+query, never a
+  // prejoined string, so a label view and its folder never collide.
+  const lastFetchedRef = useRef<{ folder: MailFolder; labelId: string | null; q: string } | null>(
+    null
+  )
+  // Server search first-pages per view: label views key as 'label:<id>'.
+  // Retyping/backspacing to a previous query in the same view reuses it
+  // instead of spending quota again. Unfiltered ('') lists are never
+  // cached here so clearing the search always refreshes.
+  const searchPageCacheRef = useRef(new Map<string, Map<string, ThreadPage>>())
   // Last unfiltered page per folder, used by folder search fallbacks
   // (see FOLDER_CONFIG.fallbackToLocal).
   const [unfilteredByFolder, setUnfilteredByFolder] = useState(
@@ -203,19 +216,26 @@ function App(): React.JSX.Element {
     searchingRef.current = active
   }
 
-  // A fresh page's rows land wherever the folder keeps list truth:
+  // A view identifier: the folder, or the label view its label opens. Every
+  // per-view cache and the last-fetched guard key through this.
+  const viewKey = activeLabel ? `label:${activeLabel.id}` : activeFolder
+
+  // A fresh page's rows land wherever the view keeps list truth:
   // unfiltered pages back the Fuse fallback pool, search pages go into the
-  // per-query cache with the oldest evicted past 20.
-  function storeFirstPage(page: ThreadPage, folder: MailFolder, query: string): void {
-    lastFetchedRef.current = { folder, q: query }
+  // per-view cache with the oldest evicted past 20.
+  function storeFirstPage(page: ThreadPage, query: string): void {
+    lastFetchedRef.current = { folder: activeFolder, labelId: activeLabel?.id ?? null, q: query }
     if (!query) {
-      setUnfilteredByFolder((prev) => new Map(prev).set(folder, page.threads))
+      // Label views have no local search fallback, so only folder pages
+      // back the pool; two label views must not clobber one key.
+      if (!activeLabel)
+        setUnfilteredByFolder((prev) => new Map(prev).set(activeFolder, page.threads))
       return
     }
-    const folderCache = searchPageCacheRef.current.get(folder) ?? new Map<string, ThreadPage>()
-    searchPageCacheRef.current.set(folder, folderCache)
-    folderCache.set(query, page)
-    if (folderCache.size > 20) folderCache.delete(folderCache.keys().next().value!)
+    const viewCache = searchPageCacheRef.current.get(viewKey) ?? new Map<string, ThreadPage>()
+    searchPageCacheRef.current.set(viewKey, viewCache)
+    viewCache.set(query, page)
+    if (viewCache.size > 20) viewCache.delete(viewCache.keys().next().value!)
   }
 
   const hasMore = nextPageToken !== null
@@ -358,6 +378,8 @@ function App(): React.JSX.Element {
     setSearchInput('')
     closeEmail()
     setThreads([])
+    setActiveLabel(null)
+    setLabels([])
     // No per-folder mail content may survive: nothing typed or cached.
     searchPageCacheRef.current.clear()
     // Prune timers are canceled, not just dropped: their callbacks could
@@ -499,9 +521,93 @@ function App(): React.JSX.Element {
       .catch((e: unknown) => recordError(e))
   }
 
+  // A labels.list read wrapped for the places a mutation makes the rail's
+  // totals stale: create, delete, and every thread-level apply/remove.
+  // recordError is render-scoped like the neighbouring handlers; nothing it
+  // closes over changes this callback's behavior.
+  const refreshLabels = useCallback((): void => {
+    window.api
+      .listLabels()
+      .then((labelList) =>
+        // The rail and the detail menu are the user-label surfaces; system
+        // labels are Gmail's own views and stay out of both.
+        setLabels(labelList.filter((label) => label.type === 'user'))
+      )
+      .catch((e: unknown) => recordError(e))
+    // recordError is render-scoped; nothing it closes over changes this
+    // callback's behavior.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  useEffect(() => {
+    if (signedIn !== true) return
+    refreshLabels()
+  }, [signedIn, refreshLabels])
+
+  // Switching to a label sets the view pair: activeFolder carries the
+  // label-view plumbing and activeLabel the id, together the whole view.
+  function handleLabelSelect(label: MailLabel): void {
+    if (activeLabel?.id === label.id) return
+    setActiveLabel(label)
+    setActiveFolder('label')
+    setSearchInput('')
+    setCommittedQuery('')
+    closeEmail()
+    setError(null)
+    setThreads([])
+    setPageToken(undefined)
+    setActiveSearching(false)
+    lastFetchedRef.current = null
+  }
+
+  function handleCreateLabel(name: string): void {
+    window.api
+      .createUserLabel(name)
+      .then(() => {
+        setError(null)
+        refreshLabels()
+      })
+      .catch((e: unknown) => recordError(e))
+  }
+
+  function handleDeleteLabel(label: MailLabel): void {
+    const confirmed = window.confirm(
+      `Delete label “${label.name}”? Mail keeps every other label; the label is removed from every thread.`
+    )
+    if (!confirmed) return
+    window.api
+      .deleteUserLabel(label.id)
+      .then(() => {
+        setError(null)
+        // The deleted view's search cache has no live label behind it; a
+        // future label may reuse the id family, so the stale pages go with
+        // the label.
+        searchPageCacheRef.current.delete(`label:${label.id}`)
+        refreshLabels()
+        // The open view was exactly this label: its threads got unlabeled
+        // server-side, so the view itself is gone and the Inbox takes the
+        // screen back. A label view is the only place activeLabel tracks a
+        // still-existing label, so handleFolderSelect('inbox') is the full
+        // reset.
+        if (activeLabel?.id === label.id) handleFolderSelect('inbox')
+      })
+      .catch((e: unknown) => recordError(e))
+  }
+
+  // Apply/remove on the open thread: one labels.list read refreshes the
+  // rail's totals, and when the mutation drops the thread from the label
+  // view on screen, the row leaves the list the way archive leaves Inbox.
+  function handleThreadLabelChanged(threadId: string, labelId: string, applied: boolean): void {
+    refreshLabels()
+    if (activeLabel && !applied && activeLabel.id === labelId) {
+      setThreads((prev) => prev.filter((row) => row.id !== threadId))
+    }
+  }
+
   function handleFolderSelect(folder: MailFolder): void {
-    if (folder === activeFolder) return
+    if (folder === activeFolder && activeLabel === null) return
     setActiveFolder(folder)
+    setActiveLabel(null)
     setSearchInput('')
     setCommittedQuery('')
     closeEmail()
@@ -529,6 +635,7 @@ function App(): React.JSX.Element {
         maxResults: committedQuery ? SEARCH_PAGE_SIZE : LIST_PAGE_SIZE,
         pageToken: nextPageTokenRef.current ?? undefined,
         folder: activeFolder,
+        ...(activeLabel ? { userLabelId: activeLabel.id } : {}),
         ...(committedQuery ? { q: committedQuery } : {})
       })
       .then((page) => {
@@ -549,7 +656,7 @@ function App(): React.JSX.Element {
     // recordError is render-scoped like the neighbouring handlers it calls;
     // nothing it closes over changes this callback's behavior.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [committedQuery, activeFolder])
+  }, [committedQuery, activeFolder, activeLabel])
 
   // First-page loads share one fetch pipeline; the mode decides the rest
   // of the behavior.
@@ -571,6 +678,7 @@ function App(): React.JSX.Element {
         .listFolder({
           maxResults: committedQuery ? SEARCH_PAGE_SIZE : LIST_PAGE_SIZE,
           folder: activeFolder,
+          ...(activeLabel ? { userLabelId: activeLabel.id } : {}),
           ...(committedQuery ? { q: committedQuery } : {})
         })
         .then((page) => {
@@ -587,7 +695,7 @@ function App(): React.JSX.Element {
           if (mode === 'load' || nextPageTokenRef.current === undefined) {
             setPageToken(page.nextPageToken)
           }
-          storeFirstPage(page, activeFolder, committedQuery)
+          storeFirstPage(page, committedQuery)
         })
         .catch((e: unknown) => {
           if (requestIdRef.current !== requestId) return
@@ -610,7 +718,7 @@ function App(): React.JSX.Element {
     // neighbouring handlers; nothing they close over changes this callback's
     // behavior.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [committedQuery, activeFolder]
+    [committedQuery, activeFolder, activeLabel]
   )
 
   // The interval resets whenever loadFirstPage's identity flips with the
@@ -679,18 +787,23 @@ function App(): React.JSX.Element {
     if (
       lastFetchedRef.current &&
       lastFetchedRef.current.folder === activeFolder &&
+      lastFetchedRef.current.labelId === (activeLabel?.id ?? null) &&
       lastFetchedRef.current.q === committedQuery &&
       threads.length > 0
     ) {
       return
     }
     const cached = committedQuery
-      ? searchPageCacheRef.current.get(activeFolder)?.get(committedQuery)
+      ? searchPageCacheRef.current.get(viewKey)?.get(committedQuery)
       : undefined
     if (cached) {
       setThreads(cached.threads)
       setPageToken(cached.nextPageToken)
-      lastFetchedRef.current = { folder: activeFolder, q: committedQuery }
+      lastFetchedRef.current = {
+        folder: activeFolder,
+        labelId: activeLabel?.id ?? null,
+        q: committedQuery
+      }
       return
     }
     loadFirstPage('load')
@@ -698,7 +811,7 @@ function App(): React.JSX.Element {
     // it would refetch after every result arrives. loadFirstPage's identity
     // flips with the same two inputs, so listing it would change nothing.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [committedQuery, signedIn, activeFolder])
+  }, [committedQuery, signedIn, activeFolder, activeLabel])
 
   useEffect(() => {
     let cancelled = false
@@ -750,12 +863,32 @@ function App(): React.JSX.Element {
       {error && <p className="error">{error}</p>}
 
       <main className="mail-layout">
-        <FolderRail activeFolder={activeFolder} onSelect={handleFolderSelect} />
+        <FolderRail
+          activeFolder={activeFolder}
+          activeLabelId={activeLabel?.id ?? null}
+          labels={labels}
+          onSelect={handleFolderSelect}
+          onSelectLabel={handleLabelSelect}
+          onCreateLabel={handleCreateLabel}
+          onDeleteLabel={handleDeleteLabel}
+        />
         <aside
           className="email-sidebar"
-          aria-label={FOLDER_CONFIG[activeFolder].label}
+          aria-label={activeLabel ? activeLabel.name : FOLDER_CONFIG[activeFolder].label}
           ref={sidebarRef}
         >
+          {activeLabel && (
+            <div className="user-label-heading">
+              <h2>{activeLabel.name}</h2>
+              <button
+                type="button"
+                aria-label={`Delete ${activeLabel.name}`}
+                onClick={() => handleDeleteLabel(activeLabel)}
+              >
+                delete label
+              </button>
+            </div>
+          )}
           <form
             className="search-bar"
             role="search"
@@ -887,9 +1020,11 @@ function App(): React.JSX.Element {
                 key={selectedThread.id}
                 thread={selectedThread}
                 folder={activeFolder}
+                labels={labels}
                 onThreadRemoved={handleThreadRemoved}
                 onThreadReadChanged={handleThreadReadChanged}
                 onThreadStarChanged={handleThreadStarChanged}
+                onThreadLabelChanged={handleThreadLabelChanged}
               />
             )
           ) : (

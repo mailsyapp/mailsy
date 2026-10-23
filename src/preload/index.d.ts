@@ -10,6 +10,7 @@ declare global {
   type SendDraftRequest = import('../shared/types').SendDraftRequest
   type SaveDraftRequest = import('../shared/types').SaveDraftRequest
   type ModifyLabelsRequest = import('../shared/types').ModifyLabelsRequest
+  type MailLabel = import('../shared/types').MailLabel
 
   interface Window {
     electron: ElectronAPI
@@ -28,6 +29,9 @@ declare global {
       snoozeThread(threadId: string, restoreAt: number): Promise<void>
       restoreThread(threadId: string): Promise<void>
       snoozeTick(): Promise<number>
+      listLabels(): Promise<MailLabel[]>
+      createUserLabel(name: string): Promise<MailLabel>
+      deleteUserLabel(id: string): Promise<void>
     }
   }
 }

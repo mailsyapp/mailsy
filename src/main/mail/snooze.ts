@@ -3,8 +3,9 @@ import { join } from 'path'
 import { readFileSync, renameSync, writeFileSync } from 'fs'
 import type { GmailClient } from '../auth'
 import { getGmailClient } from '../auth'
+import { createUserLabelByName, findUserLabelByName } from './labels'
 import { modifyLabels } from './modify'
-import { isNotFoundError, withQuotaRetry } from './resilience'
+import { isNotFoundError } from './resilience'
 
 // Gmail's REST API cannot write its own SNOOZED state (400 "Invalid label"),
 // so Mailsy's snooze is the mover pattern every real client converges on:
@@ -59,10 +60,10 @@ function persist(next: SnoozeSchedule): void {
   }
 }
 
-// The parking state is a user label, so its id is resolved through the labels
-// API (ids are not assumed to be the name). createIfMissing is the write path
-// only: reads never create mailbox state, and a read resolving to nothing
-// answers null.
+// The parking state is a user label, so its id is resolved through the
+// labels module (ids are not assumed to be the name). createIfMissing is
+// the write path only: reads never create mailbox state, and a read
+// resolving to nothing answers null.
 export async function resolveSnoozeLabelId(
   gmail: GmailClient,
   createIfMissing: true
@@ -75,17 +76,12 @@ export async function resolveSnoozeLabelId(
   gmail: GmailClient,
   createIfMissing: boolean
 ): Promise<string | null> {
-  const list = await withQuotaRetry(() => gmail.users.labels.list({ userId: 'me' }))
-  const existing = (list.data.labels ?? []).find(
-    (label) => label.type === 'user' && label.name === SNOOZE_LABEL_NAME
-  )
+  const existing = await findUserLabelByName(gmail, SNOOZE_LABEL_NAME)
   if (existing?.id) return existing.id
   if (!createIfMissing) return null
-  const created = await withQuotaRetry(() =>
-    gmail.users.labels.create({ userId: 'me', requestBody: { name: SNOOZE_LABEL_NAME } })
-  )
-  if (!created.data.id) throw new Error('Gmail did not return an id for the snooze label')
-  return created.data.id
+  const created = await createUserLabelByName(gmail, SNOOZE_LABEL_NAME)
+  if (!created.id) throw new Error('Gmail did not return an id for the snooze label')
+  return created.id
 }
 
 // Charges the soonest due record to a timeout so a parked thread returns

@@ -5,6 +5,7 @@ import type {
   ThreadSummary,
   EmailDetail as EmailDetailData,
   EmailThread,
+  MailLabel,
   SendEmailRequest,
   MailFolder
 } from '../../../shared/types'
@@ -13,8 +14,9 @@ import { replyAllTargets } from '../lib/recipients'
 import { SNOOZE_PRESETS } from '../lib/snooze'
 
 // Folders where report spam makes sense: drafts and sent (mail you own),
-// spam itself, and Trash are the excluded rest.
-const REPORT_SPAM_FOLDERS: MailFolder[] = ['inbox', 'all', 'starred']
+// spam itself, and Trash are the excluded rest. A user-label view behaves
+// like All Mail: spam reporting is a valid action there.
+const REPORT_SPAM_FOLDERS: MailFolder[] = ['inbox', 'all', 'starred', 'label']
 
 // Snoozing makes exactly where parking leaves Inbox ownership in question:
 // the mail-ownership views, not sent/draft/trash/spam or the parked set
@@ -27,6 +29,8 @@ type EmailDetailProps = {
   // state the list already displays. Mutations target its id (thread id).
   thread: ThreadSummary
   folder: MailFolder
+  // The user labels the open-thread Labels menu lists.
+  labels: MailLabel[]
   // Reports the thread's ID once a list-clearing action (archive, delete)
   // succeeded. List removal is owned by App because the list is one row per
   // thread.
@@ -36,6 +40,9 @@ type EmailDetailProps = {
   onThreadReadChanged: (threadId: string, unread: boolean) => void
   // Reports a thread star flip so App can restyle or drop list rows.
   onThreadStarChanged: (threadId: string, starred: boolean) => void
+  // Reports a user-label apply/remove on the open thread so App can refresh
+  // the rail's totals and drop a row the active label view lost.
+  onThreadLabelChanged: (threadId: string, labelId: string, applied: boolean) => void
 }
 
 function escapeHtml(value: string): string {
@@ -205,9 +212,11 @@ function ThreadMessage({
 export function EmailDetail({
   thread,
   folder,
+  labels,
   onThreadRemoved,
   onThreadReadChanged,
-  onThreadStarChanged
+  onThreadStarChanged,
+  onThreadLabelChanged
 }: EmailDetailProps): React.JSX.Element {
   const [threadData, setThreadData] = useState<EmailThread | null>(null)
   const [threadLoading, setThreadLoading] = useState(false)
@@ -243,6 +252,10 @@ export function EmailDetail({
 
   const [togglingStar, setTogglingStar] = useState(false)
   const [starError, setStarError] = useState<string | null>(null)
+
+  const [labelsMenuOpen, setLabelsMenuOpen] = useState(false)
+  const [togglingLabel, setTogglingLabel] = useState<string | null>(null)
+  const [labelError, setLabelError] = useState<string | null>(null)
 
   // One auto-read attempt per opened email: the ref records the thread id so
   // re-renders don't re-fire the labels.modify call. A failed attempt stays
@@ -293,6 +306,39 @@ export function EmailDetail({
       setStarError(error instanceof Error ? error.message : String(error))
     } finally {
       setTogglingStar(false)
+    }
+  }
+
+  // Labels are thread mutations like read and star above, so threads.modify
+  // with the label id applies or removes it across the thread's messages.
+  async function handleLabelToggle(label: MailLabel): Promise<void> {
+    if (togglingLabel) return
+    setTogglingLabel(label.id)
+    setLabelError(null)
+    const applied = (threadData?.labelIds ?? []).includes(label.id)
+    try {
+      await window.api.modifyLabels({
+        kind: 'thread',
+        id: thread.id,
+        ...(applied ? { removeLabelIds: [label.id] } : { addLabelIds: [label.id] })
+      })
+      // The menu's checked state is the thread's own label list; both sides
+      // of the toggle flip it in place, so reopening is cheap and honest.
+      setThreadData((prev) =>
+        prev
+          ? {
+              ...prev,
+              labelIds: applied
+                ? prev.labelIds.filter((id) => id !== label.id)
+                : [...prev.labelIds, label.id]
+            }
+          : prev
+      )
+      onThreadLabelChanged(thread.id, label.id, !applied)
+    } catch (error) {
+      setLabelError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setTogglingLabel(null)
     }
   }
 
@@ -610,6 +656,47 @@ export function EmailDetail({
         <div className="snippet">{thread.snippet}</div>
       )}
 
+      {/* Gmail's Labels menu: the open thread's apply/remove affordance, one
+          checkbox per user label, checked from the thread's own label set. */}
+      <div className="labels-menu">
+        <button
+          type="button"
+          onClick={() => setLabelsMenuOpen(!labelsMenuOpen)}
+          disabled={threadLoading || Boolean(threadError)}
+          aria-expanded={labelsMenuOpen}
+        >
+          Labels
+        </button>
+        {labelsMenuOpen &&
+          (threadData ? (
+            <div className="labels-menu-list" role="group" aria-label="Apply labels">
+              {labels.length === 0 && <p className="snippet">No user labels yet.</p>}
+              {labels.map((label) => (
+                <label key={label.id} className="labels-menu-item">
+                  <input
+                    type="checkbox"
+                    checked={threadData.labelIds.includes(label.id)}
+                    disabled={threadLoading || Boolean(threadError) || togglingLabel === label.id}
+                    onChange={() => handleLabelToggle(label)}
+                  />
+                  {/* The label's color reads as the chip next to the name,
+                    the same signal the rail carries. */}
+                  <span
+                    className="labels-menu-dot"
+                    style={{ background: label.color?.background ?? '#d9d9d9' }}
+                  />
+                  {label.name}
+                </label>
+              ))}
+            </div>
+          ) : (
+            <p className="snippet" role="status">
+              Loading labels...
+            </p>
+          ))}
+      </div>
+      {labelError && <p role="alert">{labelError}</p>}
+
       <button onClick={replyToEmail}>reply</button>
       <button onClick={replyAllToEmail}>reply all</button>
       <button onClick={forwardEmail}>forward</button>
@@ -669,7 +756,6 @@ export function EmailDetail({
       {snoozeError && <p role="alert">{snoozeError}</p>}
       {readError && <p role="alert">{readError}</p>}
       {starError && <p role="alert">{starError}</p>}
-
       {draft && (
         <form className="composer" onSubmit={handleSend}>
           <h2 id="composer-title">Compose email</h2>

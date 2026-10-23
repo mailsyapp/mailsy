@@ -5,9 +5,12 @@ import icon from '../../resources/icon.png?asset'
 import { signIn, signOut, isSignedIn } from './auth'
 import {
   discardDraft,
+  createUserLabel,
+  deleteUserLabel,
   fetchFolder,
   fetchMessage,
   fetchThread,
+  listLabels,
   modifyLabels,
   restoreThread,
   saveDraft,
@@ -71,6 +74,9 @@ app.whenReady().then(() => {
   ipcMain.handle('gmail:save-draft', (_event, request: SaveDraftRequest) => saveDraft(request))
   ipcMain.handle('gmail:discard-draft', (_event, draftId: string) => discardDraft(draftId))
   ipcMain.handle('gmail:modify', (_event, request: ModifyLabelsRequest) => modifyLabels(request))
+  ipcMain.handle('gmail:list-labels', () => listLabels())
+  ipcMain.handle('gmail:create-label', (_event, name: string) => createUserLabel(name))
+  ipcMain.handle('gmail:delete-label', (_event, id: string) => deleteUserLabel(id))
   ipcMain.handle('gmail:snooze', (_event, threadId: string, restoreAt: number) =>
     snoozeThread(threadId, restoreAt)
   )

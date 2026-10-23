@@ -251,3 +251,149 @@ button {
   border-top: 1px solid #eee;
   background: #fff;
 }
+
+/* User-label rail section: one chip per label in the Gmail label color,
+   the body carrying the count that opens the view. */
+.user-label-chips {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.user-label-chip {
+  position: relative;
+  width: 32px;
+  height: 32px;
+}
+
+.user-label-chip.active {
+  outline: 2px solid #000;
+  outline-offset: 1px;
+  border-radius: 8px;
+}
+
+.user-label-chip-open {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 1px solid #000;
+  border-radius: 8px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.user-label-chip-remove {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: 1px solid #999;
+  border-radius: 50%;
+  background: #fff;
+  color: #555;
+}
+
+.user-label-chip-remove:hover {
+  color: #b00020;
+  border-color: #b00020;
+}
+
+.user-label-create {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+}
+
+.user-label-create:hover {
+  background: #f0f0f0;
+}
+
+/* The inline name entry for New label: Electron has no window.prompt,
+   so create takes its name from this one-line rail form instead. */
+.user-label-create-form {
+  margin: 2px 0;
+}
+
+.user-label-create-input {
+  width: 100%;
+  min-width: 0;
+  padding: 4px 6px;
+  border: 1px solid #d0d0d0;
+  border-radius: 6px;
+  background: #fff;
+  color: #202124;
+  font-size: 11px;
+}
+
+.user-label-create-input:focus {
+  outline: none;
+  border-color: #1a73e8;
+}
+
+/* The open thread's Labels menu: the apply/remove affordance. */
+.labels-menu {
+  margin: 12px 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.labels-menu-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  max-width: 420px;
+}
+
+.labels-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.labels-menu-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  flex: none;
+  border: 1px solid rgba(0, 0, 0, 0.25);
+}
+
+/* The label view heading, mirroring Gmail's label-name heading above the
+   list, with the label's delete affordance at its right. */
+.user-label-heading {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 8px 0 0;
+}
+
+.user-label-heading h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.user-label-heading button {
+  padding: 2px 8px;
+  font-size: 12px;
+}

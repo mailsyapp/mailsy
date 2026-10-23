@@ -35,6 +35,10 @@ interface FolderListing {
 }
 
 const FOLDER_LISTING: Record<Exclude<MailFolder, 'drafts'>, FolderListing> = {
+  // The user-label view lists through ListFolderOptions.userLabelId, so its
+  // folder slot carries no labelIds of its own; fetchFolder supplies the
+  // id (and refuses the view without one).
+  label: { labelIds: [] },
   // No label filter: Gmail's All Mail is every thread the account holds,
   // archived mail included. Spam and Trash are excluded by the API default
   // and have folder views of their own.
@@ -130,7 +134,7 @@ async function fetchSnoozed(
   // fetches, so a thread parked by both sides lists once. The emulated leg
   // marks the rows so their unsnooze takes the restore-pair path; v1 lists
   // only its first page (follow-up: a union pagination token).
-  const emulatedQuery = [userQuery, 'in:snoozed'].filter((part) => part).join(' ')
+  const nativeQuery = [userQuery, 'in:snoozed'].filter((part) => part).join(' ')
   const mailSnoozeLabelId = await resolveSnoozeLabelId(gmail, false)
   const [native, emulated] = await Promise.all([
     withQuotaRetry(() =>
@@ -138,7 +142,7 @@ async function fetchSnoozed(
         userId: 'me',
         maxResults,
         ...(options.pageToken ? { pageToken: options.pageToken } : {}),
-        ...(emulatedQuery ? { q: emulatedQuery } : {})
+        ...(nativeQuery ? { q: nativeQuery } : {})
       })
     ),
     // The label leg only ever has its first page (no union token in v1), so
@@ -190,7 +194,15 @@ export async function fetchFolder(options: ListFolderOptions = {}): Promise<Thre
   if (folder === 'drafts') return fetchDrafts(gmail, options, maxResults, userQuery)
   if (folder === 'snoozed') return fetchSnoozed(gmail, options, maxResults, userQuery)
 
-  const { labelIds, fragment } = FOLDER_LISTING[folder]
+  // A user-label view substitutes the chosen label for the folder's
+  // system-label filter; the search fragment stays a folder property,
+  // which every label view lacks.
+  const userLabelId = folder === 'label' ? options.userLabelId : undefined
+  if (folder === 'label' && !userLabelId) throw new Error('A user label view needs a label id')
+
+  const { labelIds, fragment } = userLabelId
+    ? { labelIds: [userLabelId], fragment: undefined }
+    : FOLDER_LISTING[folder]
 
   // A fragment appends to the user's query instead of a separate call, so
   // the view's condition and a search narrow one Gmail search.
