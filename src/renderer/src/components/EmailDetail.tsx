@@ -11,8 +11,8 @@ import type {
 import { senderNameOf } from '../lib/format'
 import { replyAllTargets } from '../lib/recipients'
 
-// Folders where report spam makes sense: your own sent or draft mail,
-// Trash, and Spam itself are the excluded rest.
+// Folders where report spam makes sense: drafts and sent (mail you own),
+// spam itself, and Trash are the excluded rest.
 const REPORT_SPAM_FOLDERS: MailFolder[] = ['inbox', 'all', 'starred']
 
 type EmailDetailProps = {
