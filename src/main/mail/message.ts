@@ -118,6 +118,7 @@ export function threadToSummary(thread: gmail_v1.Schema$Thread): ThreadSummary {
     date: headerOf(headersOf(last), 'Date'),
     messageIds: ids,
     unreadCount: messages.filter((m) => (m.labelIds ?? []).includes('UNREAD')).length,
-    starred: messages.some((m) => (m.labelIds ?? []).includes('STARRED'))
+    starred: messages.some((m) => (m.labelIds ?? []).includes('STARRED')),
+    hasDraft: messages.some((m) => (m.labelIds ?? []).includes('DRAFT'))
   }
 }
