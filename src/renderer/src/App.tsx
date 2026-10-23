@@ -345,9 +345,15 @@ function App(): React.JSX.Element {
   // both flip.
   function recordError(e: unknown): void {
     setError(formatFetchError(e))
-    if (e instanceof Error && /session has expired|not signed in yet/i.test(e.message)) {
+    if (isDeadGrantError(e)) {
       exitToSignedOut()
     }
+  }
+
+  // A dead grant means the stored token is worthless, so the only useful
+  // act is ending the session wherever the failure surfaced.
+  function isDeadGrantError(e: unknown): boolean {
+    return e instanceof Error && /session has expired|not signed in yet/i.test(e.message)
   }
 
   function handleSearchSubmit(): void {
@@ -494,7 +500,7 @@ function App(): React.JSX.Element {
       } else {
         setActiveSearching(true)
       }
-      setError(null)
+      if (mode !== 'poll') setError(null)
       if (mode === 'load') closeEmail()
       window.api
         .listFolder({
@@ -509,11 +515,24 @@ function App(): React.JSX.Element {
               ? page.threads
               : mergeIncoming(prev, page.threads, mode === 'poll', selectionRef.current)
           )
-          setPageToken(page.nextPageToken)
+          // A deeper token survives a poll or manual fold: string when more
+          // pages remain, null when exhausted. Resetting it to the fresh
+          // first page would re-walk pages the user already loaded on the
+          // next Load more.
+          if (mode === 'load' || nextPageTokenRef.current === undefined) {
+            setPageToken(page.nextPageToken)
+          }
           storeFirstPage(page, activeFolder, committedQuery)
         })
         .catch((e: unknown) => {
           if (requestIdRef.current !== requestId) return
+          if (mode === 'poll') {
+            // A background poll never paints the banner and never wipes a
+            // message the user is reading: only a dead grant acts. Transient
+            // poll failures surface on the next user-driven fetch.
+            if (isDeadGrantError(e)) exitToSignedOut()
+            return
+          }
           recordError(e)
         })
         .finally(() => {
