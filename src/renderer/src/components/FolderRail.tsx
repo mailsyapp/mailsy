@@ -1,5 +1,6 @@
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
+  Clock01Icon,
   Delete02Icon,
   InboxIcon,
   Mail01Icon,
@@ -13,6 +14,7 @@ import type { MailFolder } from '../../../shared/types'
 const FOLDERS: Array<{ id: MailFolder; label: string; icon: typeof InboxIcon }> = [
   { id: 'inbox', label: 'Inbox', icon: InboxIcon },
   { id: 'starred', label: 'Starred', icon: StarIcon },
+  { id: 'snoozed', label: 'Snoozed', icon: Clock01Icon },
   { id: 'drafts', label: 'Drafts', icon: MailEdit01Icon },
   { id: 'sent', label: 'Sent', icon: SentIcon },
   { id: 'spam', label: 'Spam', icon: SpamIcon },

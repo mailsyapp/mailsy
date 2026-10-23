@@ -33,7 +33,8 @@ export interface EmailThread {
   userEmail: string
 }
 
-export type MailFolder = 'all' | 'drafts' | 'inbox' | 'sent' | 'spam' | 'starred' | 'trash'
+export type MailFolder =
+  'all' | 'drafts' | 'inbox' | 'sent' | 'snoozed' | 'spam' | 'starred' | 'trash'
 
 // One list row per Gmail conversation. Row actions are thread-level, so the
 // row carries the thread id and aggregate label state; message ids stay on
@@ -53,6 +54,10 @@ export interface ThreadSummary {
   // exclude drafts never read it; All Mail uses it to route a click into
   // the draft editor instead of the read-only detail.
   hasDraft?: boolean
+  // The thread carries Mailsy's parking label ('Snoozed by Mailsy'), so its
+  // unsnooze is the full restore pair (INBOX add plus label removal and a
+  // schedule-record clear). Native-parked threads keep the plain INBOX add.
+  snoozedByMailsy?: boolean
 }
 
 export interface ListFolderOptions {

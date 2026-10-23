@@ -7,8 +7,19 @@ import {
   mapWithConcurrency,
   withQuotaRetry
 } from './resilience'
+import { resolveSnoozeLabelId } from './snooze'
 import { threadToSummary, toEmailSummary } from './message'
 
+// Snoozed and All Mail are the two views whose native listing cannot use
+// labelIds. All Mail's no-label default excludes only SPAM and TRASH, so
+// parked mail (which carries no label) stays listed there, like Gmail's All
+// Mail label view. The Snoozed view reads the native parking state through
+// the search operator instead: SNOOZED is a Gmail pseudo-label outside
+// labels.list, and threads.list(labelIds:['SNOOZED']) is rejected with 400
+// "Invalid label: SNOOZED" just like writes are, while q:'in:snoozed' is
+// the query path the API answers (Google feature request 109952618). Mail
+// snoozed by Mailsy itself carries a user label, whose listing CAN use
+// labelIds, so the view unions both sets.
 const FOLDER_LABEL_IDS: Record<Exclude<MailFolder, 'drafts'>, string[]> = {
   // No label filter: Gmail's All Mail is every thread the account holds,
   // archived mail included. Spam and Trash are excluded by the API default
@@ -23,7 +34,10 @@ const FOLDER_LABEL_IDS: Record<Exclude<MailFolder, 'drafts'>, string[]> = {
   spam: ['SPAM'],
   // STARRED alone (no folder constraint): Gmail's Starred view spans every
   // mail that carries the label, wherever it is.
-  starred: ['STARRED']
+  starred: ['STARRED'],
+  // Empty filter: the Snoozed view is the union in fetchSnoozed above (the
+  // native q operator plus the Mailsy parking label), not a labelIds filter.
+  snoozed: []
 }
 
 async function fetchDrafts(
@@ -84,13 +98,77 @@ async function fetchDrafts(
   return { threads, nextPageToken: list.data.nextPageToken ?? null }
 }
 
+async function fetchSnoozed(
+  gmail: GmailClient,
+  options: ListFolderOptions,
+  maxResults: number,
+  userQuery: string | undefined
+): Promise<ThreadPage> {
+  // One rail entry is one concept: the native parked set (the only path the
+  // API answers for SNOOZED) and the emulated set (threads carrying
+  // 'Snoozed by Mailsy') merge at the id level before the per-thread
+  // fetches, so a thread parked by both sides lists once. The emulated leg
+  // marks the rows so their unsnooze takes the restore-pair path; v1 lists
+  // only its first page (follow-up: a union pagination token).
+  const emulatedQuery = [userQuery, 'in:snoozed'].filter((part) => part).join(' ')
+  const mailSnoozeLabelId = await resolveSnoozeLabelId(gmail, false)
+  const [native, emulated] = await Promise.all([
+    withQuotaRetry(() =>
+      gmail.users.threads.list({
+        userId: 'me',
+        maxResults,
+        ...(options.pageToken ? { pageToken: options.pageToken } : {}),
+        ...(emulatedQuery ? { q: emulatedQuery } : {})
+      })
+    ),
+    // The label leg only ever has its first page (no union token in v1), so
+    // it runs on first-page fetches only: re-running it under a page token
+    // would re-read and re-merge the same rows into every deeper page.
+    mailSnoozeLabelId && !options.pageToken
+      ? withQuotaRetry(() =>
+          gmail.users.threads.list({
+            userId: 'me',
+            maxResults,
+            labelIds: [mailSnoozeLabelId],
+            ...(userQuery ? { q: userQuery } : {})
+          })
+        )
+      : Promise.resolve(null)
+  ])
+
+  const idSets = [
+    (native.data.threads ?? []).map((thread) => thread.id ?? '').filter((id) => id.trim()),
+    (emulated?.data.threads ?? []).map((thread) => thread.id ?? '').filter((id) => id.trim())
+  ]
+  const ids = [...new Set(idSets[0].concat(idSets[1]))]
+
+  const threads = await mapWithConcurrency(
+    ids,
+    DETAIL_CONCURRENCY,
+    async (id): Promise<ThreadSummary> => {
+      const thread = await withQuotaRetry(() =>
+        gmail.users.threads.get({
+          userId: 'me',
+          id,
+          format: 'metadata',
+          metadataHeaders: ['From', 'Subject', 'Date']
+        })
+      )
+      return threadToSummary(thread.data, mailSnoozeLabelId ?? undefined)
+    }
+  )
+
+  return { threads, nextPageToken: native.data.nextPageToken ?? null }
+}
+
 export async function fetchFolder(options: ListFolderOptions = {}): Promise<ThreadPage> {
   const gmail = getGmailClient()
   const maxResults = Math.min(Math.max(options.maxResults ?? 30, 1), 100)
-  const q = options.q?.trim() || undefined
+  const userQuery = options.q?.trim() || undefined
   const folder = options.folder ?? 'inbox'
 
-  if (folder === 'drafts') return fetchDrafts(gmail, options, maxResults, q)
+  if (folder === 'drafts') return fetchDrafts(gmail, options, maxResults, userQuery)
+  if (folder === 'snoozed') return fetchSnoozed(gmail, options, maxResults, userQuery)
 
   const labelIds = FOLDER_LABEL_IDS[folder]
 
@@ -99,7 +177,7 @@ export async function fetchFolder(options: ListFolderOptions = {}): Promise<Thre
       userId: 'me',
       maxResults,
       ...(options.pageToken ? { pageToken: options.pageToken } : {}),
-      ...(q ? { q } : {}),
+      ...(userQuery ? { q: userQuery } : {}),
       // All Mail carries an empty filter, which must arrive as no labelIds
       // parameter at all rather than an empty list.
       ...(labelIds.length > 0 ? { labelIds } : {})

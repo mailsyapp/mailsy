@@ -25,6 +25,9 @@ declare global {
       saveDraft(request: SaveDraftRequest): Promise<string>
       discardDraft(draftId: string): Promise<void>
       modifyLabels(request: ModifyLabelsRequest): Promise<void>
+      snoozeThread(threadId: string, restoreAt: number): Promise<void>
+      restoreThread(threadId: string): Promise<void>
+      snoozeTick(): Promise<number>
     }
   }
 }
