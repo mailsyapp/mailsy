@@ -13,7 +13,6 @@ import {
   fetchThread,
   listLabels,
   modifyLabels,
-  resetSyncCursor,
   restoreThread,
   saveDraft,
   sendDraft,
@@ -76,15 +75,13 @@ app.whenReady().then(() => {
 
   ipcMain.handle('auth:sign-in', () => signIn())
   ipcMain.handle('auth:is-signed-in', () => isSignedIn())
-  // Signing out drops the history cursor with the token file: the next
-  // sign-in may be a different account, and that cursor would name a
-  // position in the wrong mailbox. Sign-in needs no reset — the renderer
-  // only reaches it through a signed-out session, whose cursor the
-  // sign-out above already dropped (and a launch starts at null anyway).
-  ipcMain.handle('auth:sign-out', () => {
-    resetSyncCursor()
-    return signOut()
-  })
+  // Signing out ends the mailbox session: the stored grant's teardown
+  // (invalidateStoredGrant) fires the per-account state teardown
+  // registered in mail/sync.ts, so the history cursor can never survive
+  // into the next sign-in and sweep a different account from a random
+  // offset. A dead grant goes through the same teardown, so both paths
+  // out of a session land there.
+  ipcMain.handle('auth:sign-out', () => signOut())
   ipcMain.handle('gmail:list', (_event, options?: ListFolderOptions) => fetchFolder(options))
   ipcMain.handle('gmail:get', (_event, id: string) => fetchMessage(id))
   ipcMain.handle('gmail:thread', (_event, threadId: string) => fetchThread(threadId))

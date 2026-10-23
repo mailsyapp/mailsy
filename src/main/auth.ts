@@ -118,12 +118,24 @@ export function signOut(): void {
   }
 }
 
+type SessionEndedListener = () => void
+const sessionEndedListeners: SessionEndedListener[] = []
+
+export function onSessionEnded(listener: SessionEndedListener): void {
+  sessionEndedListeners.push(listener)
+}
+
 // A refresh token rejected with invalid_grant is dead: Google expired or
 // revoked it, and no retry reactivates it. Only a fresh consent round
 // restores mail access, so keeping the file would make isSignedIn() report
 // signed-in forever and leave every launch in the same dead end.
 export function invalidateStoredGrant(): void {
   if (fs.existsSync(tokenPath())) fs.unlinkSync(tokenPath())
+  // Every teardown of the stored grant ends the mailbox session the sync
+  // cursor is positioned for: a live sign-out and a dead grant alike land
+  // here. Listeners registered at boot tear down per-account state, so the
+  // next sign-in starts from a clean position in its own mailbox.
+  for (const listener of sessionEndedListeners) listener()
 }
 
 export function isSignedIn(): boolean {

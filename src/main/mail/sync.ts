@@ -1,5 +1,5 @@
 import { BrowserWindow } from 'electron'
-import { getGmailClient } from '../auth'
+import { getGmailClient, isSignedIn, onSessionEnded } from '../auth'
 import type { GmailClient } from '../auth'
 import { type SyncReason, type SyncResult, type ThreadSynced } from '../../shared/sync'
 import type { gmail_v1 } from 'googleapis'
@@ -33,11 +33,15 @@ import { threadToSummary } from './message'
 // The cursor is in-session state: a fresh launch starts from the first
 // view load, whose fold re-earns the cursor from its fetched threads.
 
-// Main's position in the mailbox's change stream. Fetches record it
-// (folders and thread opens note the id off every thread response),
-// sweeps advance it, and a null cursor means the next sweep asks for a
-// full first-page fold instead of a delta.
+// Main's position in the mailbox's change stream. A null cursor means the
+// next sweep asks for a full first-page fold instead of a delta; fetches
+// seed it after such a fold and sweeps advance it once a run fully
+// completed.
 let cursor: string | null = null
+// Seed the pending fold left behind while the cursor was null: rows in a
+// fold carry stream ids in no order, so the seed tracks the max until the
+// next sweep commits it.
+let pendingSeed: string | null = null
 
 // History ids are unsigned decimal strings that outgrow double precision
 // long before any user mailbox does; length-then-lex keeps the
@@ -46,24 +50,27 @@ function isLaterId(a: string, b: string): boolean {
   return a.length > b.length || (a.length === b.length && a > b)
 }
 
-// Only a strictly greater id may move the cursor forward: page-2 fetches
-// and thread opens legitimately observe older ids than the last sweep,
-// and moving backward would replay already-consumed history forever.
-// A sweep replaying covered ground is harmless (rows idempotently
-// overwrite); a lost id never is.
+// Fetches seed the cursor but never move a live one: observed thread ids
+// can lag the real change stream, so advancing on them could permanently
+// skip records earlier in the stream than the max one fetch happened to
+// observe. Sweeps advance the cursor themselves, after a run fully
+// completed (see runSync).
 export function noteHistoryId(id: string | number | undefined | null): void {
-  if (id == null || id === '') return
+  if (cursor !== null || id == null || id === '') return
   const next = String(id)
-  if (cursor === null || isLaterId(next, cursor)) cursor = next
+  if (pendingSeed === null || isLaterId(next, pendingSeed)) pendingSeed = next
 }
 
-// The cursor is mailbox-identity-bound: a fresh sign-in may be a
-// different account, and keeping it across sign-out sweeps the next
-// account from a random position in the wrong mailbox.
-export function resetSyncCursor(): void {
+// Per-account session state: a fresh sign-in may be a different account, and
+// carrying the position across would sweep the next account from a random
+// offset in the wrong mailbox. The stored grant's teardown fires this
+// whether it happened through a live sign-out or a dead grant, so every
+// path out of a session lands here.
+onSessionEnded(() => {
   cursor = null
+  pendingSeed = null
   errorStreak = 0
-}
+})
 
 // Draft churn is the stream's loudest noise: every autosave writes and
 // rewrites one message's DRAFT label. The Drafts view is fold-refreshed
@@ -77,14 +84,20 @@ function isDraftChurn(labelIds: string[] | null | undefined): boolean {
 // Message deletion is not a special case: threads.get below either
 // answers with the surviving messages or 404s, so a whole-thread expunge
 // and a one-message exhale apply alike.
-async function sweepChangedThreads(gmail: GmailClient): Promise<string[]> {
+async function sweepChangedThreads(
+  gmail: GmailClient
+): Promise<{ changed: string[]; readThrough: string | null }> {
   const start = cursor
-  if (start === null) return []
+  if (start === null) return { changed: [], readThrough: null }
 
   const changed = new Set<string>()
   const note = (threadId: string | null | undefined): void => {
     if (threadId) changed.add(threadId)
   }
+  // The position the whole pagination read through, as the largest
+  // response id seen. It commits to the cursor only when the whole run
+  // (pagination plus every changed-thread read) completed, in runSync.
+  let readThrough: string | null = null
   for (let pageToken: string | undefined; ;) {
     const page = await withQuotaRetry(() =>
       gmail.users.history.list({
@@ -115,9 +128,10 @@ async function sweepChangedThreads(gmail: GmailClient): Promise<string[]> {
     // The response's historyId is the position read through, not the
     // sweep's stale starting value, so it is what the next sweep starts
     // from (the API's own guidance when no updates are returned).
-    noteHistoryId(page.data.historyId)
+    const id = page.data.historyId == null ? null : String(page.data.historyId)
+    if (id && (readThrough === null || isLaterId(id, readThrough))) readThrough = id
     pageToken = page.data.nextPageToken ?? undefined
-    if (!pageToken) return [...changed]
+    if (!pageToken) return { changed: [...changed], readThrough }
   }
 }
 
@@ -168,11 +182,20 @@ function toSyncedRow(thread: gmail_v1.Schema$Thread): ThreadSynced {
 async function runSync(): Promise<SyncResult> {
   const gmail = getGmailClient()
   const start = cursor
-  if (start === null) return { kind: 'reset' }
+  if (start === null) {
+    // The full fold the renderer just ran seeded a position; commit it so
+    // the next sweep pages a delta from there instead of resetting again.
+    if (pendingSeed !== null) cursor = pendingSeed
+    pendingSeed = null
+    return { kind: 'reset' }
+  }
 
   let changed: string[]
+  let readThrough: string | null = null
   try {
-    changed = await sweepChangedThreads(gmail)
+    const sweep = await sweepChangedThreads(gmail)
+    changed = sweep.changed
+    readThrough = sweep.readThrough
   } catch (e) {
     // An out-of-date startHistoryId comes back as HTTP 404 once Google
     // has expired the cursor (a week-scale horizon); the API's answer to
@@ -185,11 +208,26 @@ async function runSync(): Promise<SyncResult> {
     throw e
   }
   if (changed.length === 0) {
+    // Every record in the range was draft churn, so the whole range is
+    // still read: the position commits now just like a run that had rows.
+    commitReadThrough(readThrough)
     return { kind: 'delta', historyId: cursor ?? start, threads: [], deletedThreadIds: [] }
   }
 
   const { threads, deletedThreadIds } = await readChangedThreads(gmail, changed)
+  // The position advances only after both the pagination and every
+  // changed-thread read completed: a failure leaves the range unconsumed,
+  // so the next sweep covers it again instead of losing it. Rows arriving
+  // before the commit would land twice, idempotently.
+  commitReadThrough(readThrough)
   return { kind: 'delta', historyId: cursor ?? start, threads, deletedThreadIds }
+}
+
+// The position a full run read through. Never moves backward: a replay
+// that observed an older response id keeps the cursor where it was.
+function commitReadThrough(id: string | null): void {
+  if (id === null) return
+  if (cursor === null || isLaterId(id, cursor)) cursor = id
 }
 
 // Consecutive failed sweeps back the next one off, so a dead network or
@@ -238,6 +276,12 @@ function pushResult(result: SyncResult): void {
 let inFlight: Promise<SyncResult> | null = null
 
 export function syncMail(reason: SyncReason): Promise<SyncResult> {
+  // Pre-sign-in there is no mailbox to sweep; a signed-in session asks for
+  // the reset that re-earns the cursor. A clean no-op answer keeps the
+  // focus and clock triggers from feeding the failure backoff (or its
+  // error counter) before any session exists.
+  if (!isSignedIn()) return Promise.resolve({ kind: 'reset' })
+
   // In-flight coalescing: a click or tick colliding with a running sweep
   // joins its promise, so no refresh queues a second call and none is
   // silently swallowed — every caller observes the sweep's true outcome.
