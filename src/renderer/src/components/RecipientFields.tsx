@@ -20,8 +20,16 @@ export function RecipientFields({
   bcc,
   onChange
 }: RecipientFieldsProps): React.JSX.Element {
-  const [showCc, setShowCc] = useState(Boolean(cc))
-  const [showBcc, setShowBcc] = useState(Boolean(bcc))
+  const [ccOpen, setCcOpen] = useState(Boolean(cc))
+  const [bccOpen, setBccOpen] = useState(Boolean(bcc))
+  // Reveal is one-way from a link click, but a replaced in-place draft can
+  // carry carbon lists into a field that is still hidden: the reply blocks
+  // render above an open inline composer, so reply-all after a plain reply
+  // swaps the component's props without remounting. Content present makes
+  // its field visible, no effect needed; the mirror direction (emptied
+  // while opened by a click) stays open, which a link can never undo.
+  const showCc = ccOpen || cc.trim() !== ''
+  const showBcc = bccOpen || bcc.trim() !== ''
   // The To row is a grid div (the reveal links live beside the input), so
   // the span is a real label by htmlFor, not by wrapping.
   const toId = useId()
@@ -34,12 +42,12 @@ export function RecipientFields({
         {(!showCc || !showBcc) && (
           <span className="composerReveal">
             {!showCc && (
-              <button type="button" onClick={() => setShowCc(true)}>
+              <button type="button" onClick={() => setCcOpen(true)}>
                 Cc
               </button>
             )}
             {!showBcc && (
-              <button type="button" onClick={() => setShowBcc(true)}>
+              <button type="button" onClick={() => setBccOpen(true)}>
                 Bcc
               </button>
             )}
