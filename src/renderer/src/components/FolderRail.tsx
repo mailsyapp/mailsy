@@ -5,6 +5,7 @@ import {
   Mail01Icon,
   MailEdit01Icon,
   SentIcon,
+  SpamIcon,
   StarIcon
 } from '@hugeicons/core-free-icons'
 import type { MailFolder } from '../../../shared/types'
@@ -14,6 +15,7 @@ const FOLDERS: Array<{ id: MailFolder; label: string; icon: typeof InboxIcon }> 
   { id: 'starred', label: 'Starred', icon: StarIcon },
   { id: 'drafts', label: 'Drafts', icon: MailEdit01Icon },
   { id: 'sent', label: 'Sent', icon: SentIcon },
+  { id: 'spam', label: 'Spam', icon: SpamIcon },
   { id: 'trash', label: 'Trash', icon: Delete02Icon },
   { id: 'all', label: 'All Mail', icon: Mail01Icon }
 ]
