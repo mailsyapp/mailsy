@@ -37,7 +37,8 @@ const FOLDER_CONFIG: Record<
   drafts: { label: 'Drafts', empty: 'No drafts yet', fallbackToLocal: false },
   sent: { label: 'Sent', empty: 'No sent mail yet', fallbackToLocal: false },
   trash: { label: 'Trash', empty: 'Trash is empty', fallbackToLocal: false },
-  starred: { label: 'Starred', empty: 'No starred mail yet', fallbackToLocal: false }
+  starred: { label: 'Starred', empty: 'No starred mail yet', fallbackToLocal: false },
+  all: { label: 'All Mail', empty: 'No mail yet', fallbackToLocal: false }
 }
 
 const FUSE_KEYS = [
@@ -84,6 +85,7 @@ function rowsEqual(a: ThreadSummary, b: ThreadSummary): boolean {
     a.unreadCount === b.unreadCount &&
     a.starred === b.starred &&
     (a.draftId ?? null) === (b.draftId ?? null) &&
+    a.hasDraft === b.hasDraft &&
     a.participants.join('\n') === b.participants.join('\n') &&
     a.messageIds.join('\n') === b.messageIds.join('\n')
   )
@@ -130,6 +132,9 @@ function App(): React.JSX.Element {
   // one draft's body, while conversation rows render from getThread alone.
   const [draftDetail, setDraftDetail] = useState<EmailDetailData | null>(null)
   const [draftDetailLoading, setDraftDetailLoading] = useState(false)
+  // True when the selected thread is a draft, wherever the row was listed:
+  // the drafts folder always, and All Mail through the row's hasDraft.
+  const [selectedIsDraft, setSelectedIsDraft] = useState(false)
   const [signedIn, setSignedIn] = useState<boolean | null>(null)
   const [searchInput, setSearchInput] = useState('')
   const [committedQuery, setCommittedQuery] = useState('')
@@ -224,6 +229,7 @@ function App(): React.JSX.Element {
     setSelectedId(null)
     setDraftDetail(null)
     setComposing(false)
+    setSelectedIsDraft(false)
   }
 
   const displayedThreads = useMemo(() => {
@@ -286,9 +292,14 @@ function App(): React.JSX.Element {
     closeEmail()
     openEmail(row.id)
     setError(null)
-    // Conversation rows render from getThread inside EmailDetail; only the
-    // drafts branch needs a message body fetch.
-    if (activeFolder !== 'drafts') return
+    // Drafts open the editor, not the conversation pane. In All Mail the
+    // carrying row's hasDraft decides; in the drafts folder every row is
+    // one. Conversation rows render from getThread inside EmailDetail; only
+    // the draft branch needs a message body fetch.
+    const draftsFolder = activeFolder === 'drafts'
+    const draftHere = draftsFolder || (activeFolder === 'all' && row.hasDraft === true)
+    setSelectedIsDraft(draftHere)
+    if (!draftHere) return
     setDraftDetailLoading(true)
     window.api
       .getMessage(row.messageIds[row.messageIds.length - 1])
@@ -792,7 +803,7 @@ function App(): React.JSX.Element {
           {composing ? (
             <ComposeEditor onClose={closeEmail} />
           ) : selectedThread ? (
-            activeFolder === 'drafts' ? (
+            selectedIsDraft ? (
               <DraftEditor
                 key={selectedThread.id}
                 row={selectedThread}

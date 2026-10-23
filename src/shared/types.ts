@@ -29,7 +29,7 @@ export interface EmailThread {
   messages: EmailDetail[]
 }
 
-export type MailFolder = 'inbox' | 'drafts' | 'sent' | 'trash' | 'starred'
+export type MailFolder = 'all' | 'drafts' | 'inbox' | 'sent' | 'starred' | 'trash'
 
 // One list row per Gmail conversation. Row actions are thread-level, so the
 // row carries the thread id and aggregate label state; message ids stay on
@@ -45,6 +45,10 @@ export interface ThreadSummary {
   unreadCount: number
   starred: boolean
   draftId?: string
+  // Set when any message in the thread carries DRAFT. Folder views that
+  // exclude drafts never read it; All Mail uses it to route a click into
+  // the draft editor instead of the read-only detail.
+  hasDraft?: boolean
 }
 
 export interface ListFolderOptions {
