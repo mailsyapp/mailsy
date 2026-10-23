@@ -63,14 +63,39 @@ export async function findUserLabelByName(
 // The canonical create: the raw labels.create write behind the quota retry,
 // answering Gmail's whole label so callers decide how to read it. The flat
 // write only — nesting and guards live in createUserLabel.
-export async function createUserLabelByName(
+//
+// Single-flight per name: two racing creates for the same name both find
+// nothing and both write, and Gmail rejects the loser with a 409 duplicate.
+// The pending map hands the runner-up the winner's in-flight write, so both
+// callers receive one label. Shared ancestors of nested names ride the same
+// map, so two nested creates racing on a missing parent create it once.
+const pendingCreates = new Map<string, Promise<gmail_v1.Schema$Label>>()
+
+export function createUserLabelByName(
   gmail: GmailClient,
   name: string
 ): Promise<gmail_v1.Schema$Label> {
-  const created = await withQuotaRetry(() =>
-    gmail.users.labels.create({ userId: 'me', requestBody: { name } })
-  )
-  return created.data
+  const key = name.toLowerCase()
+  const pending = pendingCreates.get(key)
+  if (pending) return pending
+  const run = (async (): Promise<gmail_v1.Schema$Label> => {
+    const created = await withQuotaRetry(() =>
+      gmail.users.labels.create({ userId: 'me', requestBody: { name } })
+    )
+    // A create without an id is unusable downstream (the chip, the view
+    // route, and the delete guard all key on it): fail loudly instead of
+    // inventing a '' id label.
+    if (!created.data.id) throw new Error('Gmail did not return an id for the created label')
+    return created.data
+  })()
+  pendingCreates.set(key, run)
+  void run.catch(() => {})
+  void run.finally(() => {
+    // Only the registered run evicts: a joiner that finished after a newer
+    // attempt must not clear it.
+    if (pendingCreates.get(key) === run) pendingCreates.delete(key)
+  })
+  return run
 }
 
 // Gmail's nesting has no API tree: a "Work/Deep" label is the flat name
