@@ -126,6 +126,15 @@ export async function snoozeThread(threadId: string, restoreAt: number): Promise
   }
   const gmail = getGmailClient()
   const labelId = await resolveSnoozeLabelId(gmail, true)
+  // The schedule record persists BEFORE the park: a crash after the park but
+  // before the record would strand a parked thread with no wake at all
+  // (invisible to every sweep, stuck in the Snoozed view forever). The
+  // record-first shape instead tolerates the reverse crash — a record for a
+  // thread the park never landed on — because the restore pair degrades to
+  // no-ops on an unparked thread (INBOX add plus label removal on mail that
+  // has neither) and the record clears.
+  setSnoozed(threadId, restoreAt)
+  armNextWake()
   // ONE threads.modify parks the thread: INBOX moves out and the parking
   // label moves in, which is the whole emulated snooze write.
   await modifyLabels({
@@ -134,7 +143,6 @@ export async function snoozeThread(threadId: string, restoreAt: number): Promise
     addLabelIds: [labelId],
     removeLabelIds: ['INBOX']
   })
-  setSnoozed(threadId, restoreAt)
 }
 
 // The restore is the park's reverse pair, and the record leaves the
