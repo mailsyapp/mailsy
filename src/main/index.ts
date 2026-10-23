@@ -5,6 +5,7 @@ import icon from '../../resources/icon.png?asset'
 import { signIn, signOut, isSignedIn } from './auth'
 import {
   discardDraft,
+  armSyncClock,
   createUserLabel,
   deleteUserLabel,
   fetchFolder,
@@ -17,6 +18,7 @@ import {
   sendDraft,
   sendEmail,
   snoozeThread,
+  syncMail,
   sweepDueSnoozed
 } from './mail'
 import type {
@@ -26,6 +28,7 @@ import type {
   SendEmailRequest,
   SendDraftRequest
 } from '../shared/types'
+import type { SyncReason } from '../shared/sync'
 
 function createWindow(): void {
   const mainWindow = new BrowserWindow({
@@ -42,6 +45,13 @@ function createWindow(): void {
 
   mainWindow.on('ready-to-show', () => {
     mainWindow.show()
+  })
+
+  // Window focus is one of the sync triggers: mail that arrived while the
+  // app sat in the background appears at the regain, not at the next
+  // sweep tick. Failures count toward the clock's own backoff.
+  mainWindow.on('focus', () => {
+    void syncMail('focus').catch(() => {})
   })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
@@ -65,10 +75,20 @@ app.whenReady().then(() => {
 
   ipcMain.handle('auth:sign-in', () => signIn())
   ipcMain.handle('auth:is-signed-in', () => isSignedIn())
+  // Signing out ends the mailbox session: the stored grant's teardown
+  // (invalidateStoredGrant) fires the per-account state teardown
+  // registered in mail/sync.ts, so the history cursor can never survive
+  // into the next sign-in and sweep a different account from a random
+  // offset. A dead grant goes through the same teardown, so both paths
+  // out of a session land there.
   ipcMain.handle('auth:sign-out', () => signOut())
   ipcMain.handle('gmail:list', (_event, options?: ListFolderOptions) => fetchFolder(options))
   ipcMain.handle('gmail:get', (_event, id: string) => fetchMessage(id))
   ipcMain.handle('gmail:thread', (_event, threadId: string) => fetchThread(threadId))
+  // The canonical refresh: the renderer's Refresh button is the only
+  // renderer-invoked path; the adaptive clock and window focus fire
+  // inside main.
+  ipcMain.handle('gmail:sync', (_event, reason: SyncReason) => syncMail(reason))
   ipcMain.handle('gmail:send', (_event, request: SendEmailRequest) => sendEmail(request))
   ipcMain.handle('gmail:send-draft', (_event, request: SendDraftRequest) => sendDraft(request))
   ipcMain.handle('gmail:save-draft', (_event, request: SaveDraftRequest) => saveDraft(request))
@@ -89,6 +109,8 @@ app.whenReady().then(() => {
   void sweepDueSnoozed().catch((e: unknown) => {
     console.warn('startup snooze catch-up skipped:', e)
   })
+
+  armSyncClock()
 
   createWindow()
 
