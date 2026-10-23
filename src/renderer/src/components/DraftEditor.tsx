@@ -13,18 +13,30 @@ type DraftEditorProps = {
   // owned by App (2s delay so the "Message sent." proof stays on screen,
   // exactly-once by construction because App never unmounts).
   onSent: (id: string) => void
+  // Asks App to delete this draft. App owns the confirm, the bridge call
+  // and the row prune; the editor only retires when App re-renders it away.
+  onDraftDiscard: () => void
+  // The failed delete for this row, if the attempt just ended that way. The
+  // editor shows it because App's global banner is not what the open form
+  // displays: the form says "Draft saved." and means it, while the delete
+  // it requested never landed.
+  discardError: string | null
 }
 
 function DraftForm({
   detail,
   draftId,
   messageId,
-  onSent
+  onSent,
+  onDraftDiscard,
+  discardError
 }: {
   detail: EmailDetailData
   draftId?: string
   messageId: string
   onSent: (id: string) => void
+  onDraftDiscard: () => void
+  discardError: string | null
 }): React.JSX.Element {
   // One recipients block, not three loose lines: a recipient edit is one
   // spread, a Gmail draft's stored headers map straight onto it, and the
@@ -141,8 +153,12 @@ function DraftForm({
       {autosave.error && <p role="alert">Draft not saved: {autosave.error}</p>}
       {autosave.status === 'saving' && <p role="status">Saving draft...</p>}
       {autosave.status === 'saved' && <p role="status">Draft saved.</p>}
+      {discardError && <p role="alert">Delete failed: {discardError}</p>}
 
       <div className="composerActions">
+        <button type="button" onClick={onDraftDiscard} disabled={sending || sent}>
+          delete draft
+        </button>
         {/* Once sent, the draft no longer exists server-side (a second send
             would surface a confusing drafts.update 404, not a new mail), so
             the button retires instead of re-arming. */}
@@ -159,7 +175,9 @@ export function DraftEditor({
   row,
   detail,
   detailLoading,
-  onSent
+  onSent,
+  onDraftDiscard,
+  discardError
 }: DraftEditorProps): React.JSX.Element {
   // Mount the form only once the draft content arrives so fields initialize
   // from it directly. Remounting via key={row.id} in App resets per draft,
@@ -179,6 +197,8 @@ export function DraftEditor({
       draftId={row.draftId}
       messageId={row.id}
       onSent={onSent}
+      onDraftDiscard={onDraftDiscard}
+      discardError={discardError}
     />
   )
 }

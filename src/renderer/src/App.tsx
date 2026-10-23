@@ -1,6 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { HugeiconsIcon } from '@hugeicons/react'
-import { StarIcon } from '@hugeicons/core-free-icons'
 import type {
   ThreadSummary,
   EmailDetail as EmailDetailData,
@@ -9,7 +7,6 @@ import type {
   MailLabel
 } from '../../shared/types'
 import { EmailDetail } from './components/EmailDetail'
-import { senderNameOf } from './lib/format'
 import { applyMailDelta, mergeIncoming, viewLabelOf } from './lib/syncApply'
 import { hasGmailOperator, previewMatches, rerankByFuse } from './lib/search'
 import { FOLDER_CONFIG } from './lib/folderViews'
@@ -17,6 +14,7 @@ import type { SyncResult } from '../../shared/sync'
 import { DraftEditor } from './components/DraftEditor'
 import { ComposeEditor } from './components/ComposeEditor'
 import { FolderRail } from './components/FolderRail'
+import { MailListRow } from './components/MailListRow'
 
 const LIST_PAGE_SIZE = 30
 // Smaller pages for server search: each result costs a messages.get call,
@@ -76,6 +74,12 @@ function App(): React.JSX.Element {
   // email. Every exit (sign-out, folder switch, selecting a row) runs
   // closeEmail below, which clears this together with the selection.
   const [composing, setComposing] = useState(false)
+  // The failed delete the open editor renders: keyed by the row the
+  // attempt targeted, so a failed row-level delete never shows in an
+  // unrelated editor open at the same time.
+  const [draftDiscard, setDraftDiscard] = useState<{ rowId: string; error: string | null } | null>(
+    null
+  )
 
   const selectionRef = useRef<string | null>(null)
   const sentinelRef = useRef<HTMLDivElement | null>(null)
@@ -173,6 +177,7 @@ function App(): React.JSX.Element {
     setDraftDetail(null)
     setComposing(false)
     setSelectedIsDraft(false)
+    setDraftDiscard(null)
   }
 
   const displayedThreads = useMemo(() => {
@@ -340,11 +345,43 @@ function App(): React.JSX.Element {
     )
   }
 
+  // One collect point for both delete affordances: a Drafts row and the
+  // open draft editor call into this handler, so the confirm (the
+  // label-delete idiom), the bridge verb, and the list prune are written
+  // once. The editor of the deleted draft stays mounted for the bridge
+  // round trip; that is safe by convergence — its autosave only ever
+  // updates this same draft id, so a straggling save (in flight, or the
+  // unmount flush the close below fires) either lands before the delete
+  // or resolves a 404 after it. The draft ends deleted either way, and the
+  // unmounted hook's save-error state dies with the component.
+  function handleDraftDiscard(row: ThreadSummary): void {
+    const confirmed = window.confirm(
+      `Delete draft “${row.subject || '(no subject)'}”? This permanently discards it; not even Trash keeps a copy.`
+    )
+    if (!confirmed) return
+    // A Drafts-folder row always carries its server draft id (fetchDrafts
+    // builds every row from drafts.get); without one no delete has a target.
+    if (!row.draftId) return
+    setDraftDiscard({ rowId: row.id, error: null })
+    window.api
+      .discardDraft(row.draftId)
+      .then(() => {
+        setDraftDiscard(null)
+        handleThreadRemoved(row.id)
+      })
+      .catch((e: unknown) => {
+        setDraftDiscard({ rowId: row.id, error: e instanceof Error ? e.message : String(e) })
+        recordError(e)
+      })
+  }
+
   // Archive and delete remove the thread: the row id is the thread id now,
   // so one row disappears per mutation instead of every matching message.
+  // Only the pane showing the removed thread folds along: deleting row B
+  // must not slam a compose or an unrelated open conversation.
   function handleThreadRemoved(threadId: string): void {
     setThreads((prev) => prev.filter((e) => e.id !== threadId))
-    closeEmail()
+    if (selectionRef.current === threadId) closeEmail()
   }
 
   // Read/unread is thread-level: Gmail marks whole conversations, and
@@ -889,62 +926,17 @@ function App(): React.JSX.Element {
           )}
           <ul className="emails">
             {displayedThreads.map((row) => (
-              <li key={row.id} className={row.unreadCount > 0 ? 'unread' : undefined}>
-                <button
-                  type="button"
-                  onClick={() => handleSelect(row)}
-                  style={{ all: 'unset', display: 'block', cursor: 'pointer', width: '100%' }}
-                >
-                  {/* Bold is the unread affordance, so the row owns the
-                      weight through li.unread; the subject itself is plain
-                      markup. */}
-                  <span className="email-text">
-                    {row.subject}
-                    {row.unreadCount > 1 ? ` (${row.unreadCount})` : ''}
-                  </span>
-                  {/* Sender names for the whole conversation, like Gmail's
-                      participant summary on thread rows. */}
-                  <div className="from email-text">
-                    {row.participants.map(senderNameOf).join(', ')}
-                  </div>
-                  <div className="snippet email-text">{row.snippet}</div>
-                </button>
-                {activeFolder === 'spam' && (
-                  <button type="button" onClick={() => handleRowNotSpam(row)}>
-                    not spam
-                  </button>
-                )}
-                {activeFolder === 'snoozed' && (
-                  <button type="button" onClick={() => handleRowUnsnooze(row)}>
-                    unsnooze
-                  </button>
-                )}
-                {activeFolder !== 'drafts' && (
-                  <>
-                    <button type="button" onClick={() => handleRowReadToggle(row)}>
-                      {row.unreadCount > 0 ? 'mark read' : 'mark unread'}
-                    </button>
-                    <button
-                      type="button"
-                      className={`star-toggle${row.starred ? ' starred' : ''}`}
-                      onClick={() => handleRowStarToggle(row)}
-                      title={row.starred ? 'Unstar' : 'Star'}
-                      aria-label={row.starred ? 'Unstar' : 'Star'}
-                      aria-pressed={row.starred}
-                    >
-                      {/* The star glyph is a closed contour drawn unfilled by
-                          the icon set; filling it with the row's gold when
-                          starred is the whole state read. */}
-                      <HugeiconsIcon
-                        icon={StarIcon}
-                        size={18}
-                        strokeWidth={1.8}
-                        fill={row.starred ? 'currentColor' : 'none'}
-                      />
-                    </button>
-                  </>
-                )}
-              </li>
+              <MailListRow
+                key={row.id}
+                row={row}
+                folder={activeFolder}
+                onOpen={handleSelect}
+                onReadToggle={handleRowReadToggle}
+                onStarToggle={handleRowStarToggle}
+                onNotSpam={handleRowNotSpam}
+                onUnsnooze={handleRowUnsnooze}
+                onDeleteDraft={handleDraftDiscard}
+              />
             ))}
           </ul>
           {hasMore ? (
@@ -981,6 +973,12 @@ function App(): React.JSX.Element {
                 detail={draftDetail}
                 detailLoading={draftDetailLoading}
                 onSent={handleDraftSent}
+                onDraftDiscard={() => handleDraftDiscard(selectedThread)}
+                discardError={
+                  draftDiscard && draftDiscard.rowId === selectedThread.id
+                    ? draftDiscard.error
+                    : null
+                }
               />
             ) : (
               <EmailDetail
