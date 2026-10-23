@@ -44,6 +44,11 @@ const FOLDER_CONFIG: Record<
   spam: { label: 'Spam', empty: 'Spam is empty', fallbackToLocal: false },
   snoozed: { label: 'Snoozed', empty: 'No snoozed mail', fallbackToLocal: false },
   starred: { label: 'Starred', empty: 'No starred mail yet', fallbackToLocal: false },
+  important: { label: 'Important', empty: 'No important mail yet', fallbackToLocal: false },
+  social: { label: 'Social', empty: 'No social mail yet', fallbackToLocal: false },
+  promotions: { label: 'Promotions', empty: 'No promotions yet', fallbackToLocal: false },
+  updates: { label: 'Updates', empty: 'No updates yet', fallbackToLocal: false },
+  forums: { label: 'Forums', empty: 'No forum mail yet', fallbackToLocal: false },
   all: { label: 'All Mail', empty: 'No mail yet', fallbackToLocal: false }
 }
 
