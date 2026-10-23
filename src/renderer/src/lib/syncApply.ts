@@ -18,6 +18,7 @@ export function rowsEqual(a: ThreadSummary, b: ThreadSummary): boolean {
     a.unreadCount === b.unreadCount &&
     a.starred === b.starred &&
     (a.draftId ?? null) === (b.draftId ?? null) &&
+    a.hasDraft === b.hasDraft &&
     a.participants.join('\n') === b.participants.join('\n') &&
     a.messageIds.join('\n') === b.messageIds.join('\n')
   )
