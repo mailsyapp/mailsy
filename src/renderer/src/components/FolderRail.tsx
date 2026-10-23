@@ -15,6 +15,7 @@ import {
   SentIcon,
   SpamIcon,
   StarIcon,
+  Tag01Icon,
   User02Icon
 } from '@hugeicons/core-free-icons'
 import type { MailFolder, MailLabel } from '../../../shared/types'
@@ -35,11 +36,6 @@ const FOLDERS: Array<{ id: MailFolder; label: string; icon: typeof InboxIcon }> 
   { id: 'trash', label: 'Trash', icon: Delete02Icon },
   { id: 'all', label: 'All Mail', icon: Mail02Icon }
 ]
-
-// The Labels section stays out of the default sidebar view; only the
-// expanded-sidebar feature shows it. TASKS.md carries the note for the
-// future sidebar agent.
-const SIDEBAR_SHOW_LABELS = false
 
 // One chip per user label, held together by the count it opens: the body
 // carries the label's Gmail background color and text color, the count the
@@ -112,6 +108,11 @@ export function FolderRail({
   const [draftOpen, setDraftOpen] = useState(false)
   const [draftName, setDraftName] = useState('')
   const draftRef = useRef<HTMLInputElement | null>(null)
+  // The rail collapses to the folder icons by default; the Labels toggle
+  // expands it for the label chips, their inline create form, and the
+  // delete affordances. Collapse-on-toggle keeps the 56px column at its
+  // familiar width, so expanding never reflows the rest of the layout.
+  const [labelsShown, setLabelsShown] = useState(false)
 
   function commitDraft(): void {
     const name = draftName.trim()
@@ -139,7 +140,17 @@ export function FolderRail({
           </button>
         )
       })}
-      {SIDEBAR_SHOW_LABELS && (
+      <button
+        type="button"
+        className={`folder-rail-button${activeLabelId !== null && !labelsShown && labels.length > 0 ? ' active' : ''}`}
+        title={labelsShown ? 'Hide labels' : 'Labels'}
+        aria-label={labelsShown ? 'Hide labels' : 'Labels'}
+        aria-expanded={labelsShown}
+        onClick={() => setLabelsShown((shown) => !shown)}
+      >
+        <HugeiconsIcon icon={Tag01Icon} size={22} strokeWidth={1.8} />
+      </button>
+      {labelsShown && (
         <>
           {labels.length > 0 && (
             <div className="user-label-chips" aria-label="User labels">
