@@ -109,6 +109,7 @@ export function getGmailClient(): GmailClient {
 // them staying present.
 export function signOut(): void {
   const refreshToken = loadRefreshToken()
+  accountEmailPromise = null
   invalidateStoredGrant()
   if (refreshToken) {
     new OAuth2Client()
@@ -127,4 +128,28 @@ export function invalidateStoredGrant(): void {
 
 export function isSignedIn(): boolean {
   return loadRefreshToken() !== null
+}
+
+// The signed-in account's address, cached because send and thread fetches
+// both need it and a profile call per send is quota for nothing. A failed
+// lookup is not cached, so the next call retries; sign-out drops the cache
+// because a new session is a different account.
+let accountEmailPromise: Promise<string> | null = null
+
+export function getAccountEmail(): Promise<string> {
+  if (!accountEmailPromise) {
+    accountEmailPromise = (async () => {
+      try {
+        const gmail = getGmailClient()
+        const profile = await gmail.users.getProfile({ userId: 'me' })
+        const email = profile.data.emailAddress
+        if (!email) throw new Error('Could not determine the signed-in Gmail address')
+        return email
+      } catch (e) {
+        accountEmailPromise = null
+        throw e
+      }
+    })()
+  }
+  return accountEmailPromise
 }

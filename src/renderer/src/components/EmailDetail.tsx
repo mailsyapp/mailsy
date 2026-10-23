@@ -9,6 +9,7 @@ import type {
   MailFolder
 } from '../../../shared/types'
 import { senderNameOf } from '../lib/format'
+import { replyAllTargets } from '../lib/recipients'
 
 type EmailDetailProps = {
   // The row identity: subject, participant summary, and thread-level label
@@ -203,6 +204,9 @@ export function EmailDetail({
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
 
   const [draft, setDraft] = useState<SendEmailRequest | null>(null)
+  // Set only when a reply-all opened without the account address; the
+  // arrival effect clears it after its at-most-once rewrite.
+  const pendingReplyRef = useRef<{ target: EmailDetailData; toLine: string } | null>(null)
   const [quotedContent, setQuotedContent] = useState<{ text: string; html: string } | null>(null)
   const [sending, setSending] = useState(false)
   const [sendError, setSendError] = useState<string | null>(null)
@@ -298,14 +302,25 @@ export function EmailDetail({
     void loadThread(thread.id)
   }, [thread.id])
 
+  const accountEmail = threadData?.userEmail
+  useEffect(() => {
+    const pending = pendingReplyRef.current
+    if (!accountEmail || !pending) return
+    pendingReplyRef.current = null
+    // Only the exact prefill the unknown address produced is rewritten; an
+    // edited To line means the user already took the list from here.
+    setDraft((prev) =>
+      prev && prev.to === pending.toLine
+        ? { ...prev, to: replyAllTargets(pending.target, accountEmail) }
+        : prev
+    )
+  }, [accountEmail])
+
   const messages: EmailDetailData[] = threadData?.messages ?? []
 
   const latestMessage: EmailDetailData | null = messages[messages.length - 1] ?? null
 
-  function replyToEmail(): void {
-    const target = latestMessage
-    if (!target) return
-
+  function openReplyComposer(target: EmailDetailData, toLine: string): void {
     setSendError(null)
     setSent(false)
     const originalText = target.bodyText || target.snippet || thread.snippet
@@ -321,13 +336,33 @@ export function EmailDetail({
 
     setQuotedContent({ text: quotedText, html: quotedHtml })
     setDraft({
-      to: target.replyTo.trim() || target.from.trim() || thread.participants[0] || '',
+      to: toLine,
       subject: /^re:/i.test(target.subject) ? target.subject : `Re: ${target.subject}`,
       body: `\n\n${quotedText}`,
       threadId: target.threadId || undefined,
       inReplyTo: target.messageId || undefined,
       references: [target.references, target.messageId].filter(Boolean).join(' ') || undefined
     })
+  }
+
+  function replyToEmail(): void {
+    const target = latestMessage
+    if (!target) return
+    openReplyComposer(
+      target,
+      target.replyTo.trim() || target.from.trim() || thread.participants[0] || ''
+    )
+  }
+
+  function replyAllToEmail(): void {
+    const target = latestMessage
+    if (!target) return
+    const userEmail = threadData?.userEmail ?? ''
+    const toLine = replyAllTargets(target, userEmail)
+    openReplyComposer(target, toLine)
+    // A reply-all opened before the account address landed prefilters
+    // nothing: when it arrives, an untouched To line gets one rewrite.
+    pendingReplyRef.current = userEmail ? null : { target, toLine }
   }
 
   function forwardEmail(): void {
@@ -489,6 +524,7 @@ export function EmailDetail({
       )}
 
       <button onClick={replyToEmail}>reply</button>
+      <button onClick={replyAllToEmail}>reply all</button>
       <button onClick={forwardEmail}>forward</button>
       <button onClick={handleToggleRead} disabled={togglingRead}>
         {thread.unreadCount > 0 ? 'mark as read' : 'mark as unread'}
