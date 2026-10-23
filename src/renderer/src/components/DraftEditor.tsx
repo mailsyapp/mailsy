@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { EmailDetail as EmailDetailData, ThreadSummary } from '../../../shared/types'
+import { useDraftAutosave } from './useDraftAutosave'
 
 type DraftEditorProps = {
   // The draft row: subject plus the draftId/messageIds the send path needs.
@@ -30,6 +31,26 @@ function DraftForm({
   const [sendError, setSendError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [sent, setSent] = useState(false)
+  // Editing an existing draft autosaves through drafts.update, so a
+  // dismissed edit (row click, folder switch, reset) is not lost either.
+  // Threading rides along like the send below, so the stored draft keeps
+  // its linkage. Rows without a draft id keep today's no-autosave shape:
+  // they send fresh and cannot be updated anyway.
+  const autosave = useDraftAutosave(
+    {
+      to,
+      subject,
+      body,
+      threadId: detail.threadId || undefined,
+      // Same header set the atomic send writes: drafts.update replaces the
+      // whole stored message, so an autosave without the draft's reply
+      // headers would strip its linkage to the parent thread.
+      inReplyTo: detail.inReplyTo || undefined,
+      references: detail.references || undefined
+    },
+    draftId,
+    draftId !== undefined
+  )
 
   async function handleSend(event: React.FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault()
@@ -39,33 +60,40 @@ function DraftForm({
     setSendError(null)
     setNotice(null)
     try {
-      if (draftId) {
-        // Atomic send: drafts.send removes the draft server-side in the same
-        // operation. Sending succeeds => the row is guaranteed to be pruned
-        // by App; a failure here leaves the draft and this form (with its
-        // error) in place to retry — never a silently lingering draft.
-        await window.api.sendDraft({
-          draftId,
-          to,
-          subject,
-          body,
-          threadId: detail.threadId || undefined,
-          // The draft's own In-Reply-To header is the message it was a reply
-          // to. detail.messageId is the draft's unsent Message-ID and would
-          // be bogus to send.
-          inReplyTo: detail.inReplyTo || undefined,
-          references: detail.references || undefined
-        })
-      } else {
-        // No draft ID (shouldn't happen for rows from the Drafts folder):
-        // send as a new message but do NOT report sent — the unknown draft
-        // is still in Gmail, and dropping the row would hide that fact.
-        await window.api.sendEmail({ to, subject, body })
-        setNotice(
-          'Sent as a new message; the original draft entry was left in place (unknown draft ID).'
-        )
-        return
+      await autosave.flushPending()
+      autosave.suspend()
+      try {
+        if (draftId) {
+          // Atomic send: drafts.send removes the draft server-side in the same
+          // operation. Sending succeeds => the row is guaranteed to be pruned
+          // by App; a failure here leaves the draft and this form (with its
+          // error) in place to retry — never a silently lingering draft.
+          await window.api.sendDraft({
+            draftId,
+            to,
+            subject,
+            body,
+            threadId: detail.threadId || undefined,
+            // The draft's own In-Reply-To header is the message it was a reply
+            // to. detail.messageId is the draft's unsent Message-ID and would
+            // be bogus to send.
+            inReplyTo: detail.inReplyTo || undefined,
+            references: detail.references || undefined
+          })
+        } else {
+          // No draft ID (shouldn't happen for rows from the Drafts folder):
+          // send as a new message but do NOT report sent — the unknown draft
+          // is still in Gmail, and dropping the row would hide that fact.
+          await window.api.sendEmail({ to, subject, body })
+          setNotice(
+            'Sent as a new message; the original draft entry was left in place (unknown draft ID).'
+          )
+          return
+        }
+      } finally {
+        autosave.resume()
       }
+      autosave.stop()
       setSent(true)
       onSent(messageId)
     } catch (error) {
@@ -74,7 +102,6 @@ function DraftForm({
       setSending(false)
     }
   }
-
   return (
     <form className="composer composer-fill" onSubmit={handleSend}>
       <h2 id="draft-editor-title">Draft</h2>
@@ -96,6 +123,9 @@ function DraftForm({
 
       {sendError && <p role="alert">{sendError}</p>}
       {notice && <p role="status">{notice}</p>}
+      {autosave.error && <p role="alert">Draft not saved: {autosave.error}</p>}
+      {autosave.status === 'saving' && <p role="status">Saving draft...</p>}
+      {autosave.status === 'saved' && <p role="status">Draft saved.</p>}
 
       <div className="composerActions">
         {/* Once sent, the draft no longer exists server-side (a second send

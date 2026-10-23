@@ -3,10 +3,20 @@ import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { signIn, signOut, isSignedIn } from './auth'
-import { fetchFolder, fetchMessage, fetchThread, modifyLabels, sendEmail, sendDraft } from './mail'
+import {
+  discardDraft,
+  fetchFolder,
+  fetchMessage,
+  fetchThread,
+  modifyLabels,
+  saveDraft,
+  sendDraft,
+  sendEmail
+} from './mail'
 import type {
   ListFolderOptions,
   ModifyLabelsRequest,
+  SaveDraftRequest,
   SendEmailRequest,
   SendDraftRequest
 } from '../shared/types'
@@ -55,6 +65,8 @@ app.whenReady().then(() => {
   ipcMain.handle('gmail:thread', (_event, threadId: string) => fetchThread(threadId))
   ipcMain.handle('gmail:send', (_event, request: SendEmailRequest) => sendEmail(request))
   ipcMain.handle('gmail:send-draft', (_event, request: SendDraftRequest) => sendDraft(request))
+  ipcMain.handle('gmail:save-draft', (_event, request: SaveDraftRequest) => saveDraft(request))
+  ipcMain.handle('gmail:discard-draft', (_event, draftId: string) => discardDraft(draftId))
   ipcMain.handle('gmail:modify', (_event, request: ModifyLabelsRequest) => modifyLabels(request))
 
   createWindow()
