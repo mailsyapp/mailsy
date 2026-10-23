@@ -27,10 +27,13 @@ export function ComposeEditor({ onClose }: ComposeEditorProps): React.JSX.Elemen
   const autosave = useDraftAutosave({ to, subject, body }, undefined, true)
 
   async function handleCancel(): Promise<void> {
-    // Cancel is today's discard action: stop autosave (this unmount must
-    // not flush), then delete the draft the autosave created, if any. A
-    // delete failure leaves the draft in the Drafts folder — visible
-    // there, never silently lost.
+    // Cancel is today's discard action: let any in-flight or queued write
+    // settle first (a create that has not resolved yet has no draft id to
+    // discard), then stop autosave (this unmount must not flush), delete
+    // the draft the autosave created, if any, and close. A delete failure
+    // leaves the draft in the Drafts folder — visible there, never
+    // silently lost.
+    await autosave.flushPending()
     const draftId = autosave.currentDraftId()
     autosave.stop()
     onClose()
@@ -52,10 +55,15 @@ export function ComposeEditor({ onClose }: ComposeEditorProps): React.JSX.Elemen
       // fresh send.
       await autosave.flushPending()
       const draftId = autosave.currentDraftId()
-      if (draftId) {
-        await window.api.sendDraft({ draftId, to, subject, body })
-      } else {
-        await window.api.sendEmail({ to, subject, body })
+      autosave.suspend()
+      try {
+        if (draftId) {
+          await window.api.sendDraft({ draftId, to, subject, body })
+        } else {
+          await window.api.sendEmail({ to, subject, body })
+        }
+      } finally {
+        autosave.resume()
       }
       autosave.stop()
       setSent(true)
