@@ -74,6 +74,12 @@ function App(): React.JSX.Element {
   // email. Every exit (sign-out, folder switch, selecting a row) runs
   // closeEmail below, which clears this together with the selection.
   const [composing, setComposing] = useState(false)
+  // The failed delete the open editor renders: keyed by the row the
+  // attempt targeted, so a failed row-level delete never shows in an
+  // unrelated editor open at the same time.
+  const [draftDiscard, setDraftDiscard] = useState<{ rowId: string; error: string | null } | null>(
+    null
+  )
 
   const selectionRef = useRef<string | null>(null)
   const sentinelRef = useRef<HTMLDivElement | null>(null)
@@ -171,6 +177,7 @@ function App(): React.JSX.Element {
     setDraftDetail(null)
     setComposing(false)
     setSelectedIsDraft(false)
+    setDraftDiscard(null)
   }
 
   const displayedThreads = useMemo(() => {
@@ -355,17 +362,26 @@ function App(): React.JSX.Element {
     // A Drafts-folder row always carries its server draft id (fetchDrafts
     // builds every row from drafts.get); without one no delete has a target.
     if (!row.draftId) return
+    setDraftDiscard({ rowId: row.id, error: null })
     window.api
       .discardDraft(row.draftId)
-      .then(() => handleThreadRemoved(row.id))
-      .catch((e: unknown) => recordError(e))
+      .then(() => {
+        setDraftDiscard(null)
+        handleThreadRemoved(row.id)
+      })
+      .catch((e: unknown) => {
+        setDraftDiscard({ rowId: row.id, error: e instanceof Error ? e.message : String(e) })
+        recordError(e)
+      })
   }
 
   // Archive and delete remove the thread: the row id is the thread id now,
   // so one row disappears per mutation instead of every matching message.
+  // Only the pane showing the removed thread folds along: deleting row B
+  // must not slam a compose or an unrelated open conversation.
   function handleThreadRemoved(threadId: string): void {
     setThreads((prev) => prev.filter((e) => e.id !== threadId))
-    closeEmail()
+    if (selectionRef.current === threadId) closeEmail()
   }
 
   // Read/unread is thread-level: Gmail marks whole conversations, and
@@ -958,6 +974,11 @@ function App(): React.JSX.Element {
                 detailLoading={draftDetailLoading}
                 onSent={handleDraftSent}
                 onDraftDiscard={() => handleDraftDiscard(selectedThread)}
+                discardError={
+                  draftDiscard && draftDiscard.rowId === selectedThread.id
+                    ? draftDiscard.error
+                    : null
+                }
               />
             ) : (
               <EmailDetail
