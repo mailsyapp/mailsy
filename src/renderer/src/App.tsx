@@ -573,7 +573,7 @@ function App(): React.JSX.Element {
       } else {
         setActiveSearching(true)
       }
-      if (mode !== 'poll') setError(null)
+      if (mode !== 'sync') setError(null)
       if (mode === 'load') closeEmail()
       window.api
         .listFolder({
@@ -589,10 +589,10 @@ function App(): React.JSX.Element {
               ? page.threads
               : mergeIncoming(prev, page.threads, mode === 'sync', selectionRef.current)
           )
-          // A deeper token survives a poll or manual fold: string when more
-          // pages remain, null when exhausted. Resetting it to the fresh
-          // first page would re-walk pages the user already loaded on the
-          // next Load more.
+          // A deeper token survives a pushed fold or manual refresh: string
+          // when more pages remain, null when exhausted. Resetting it to the
+          // fresh first page would re-walk pages the user already loaded on
+          // the next Load more.
           if (mode === 'load' || nextPageTokenRef.current === undefined) {
             setPageToken(page.nextPageToken)
           }
@@ -600,10 +600,10 @@ function App(): React.JSX.Element {
         })
         .catch((e: unknown) => {
           if (requestIdRef.current !== requestId) return
-          if (mode === 'poll') {
-            // A background poll never paints the banner and never wipes a
+          if (mode === 'sync') {
+            // A pushed fold never paints the banner and never wipes a
             // message the user is reading: only a dead grant acts. Transient
-            // poll failures surface on the next user-driven fetch.
+            // sync failures surface on the next user-driven fetch.
             if (isDeadGrantError(e)) exitToSignedOut()
             return
           }
