@@ -1,4 +1,7 @@
+export { listLabels, createUserLabel, deleteUserLabel } from './labels'
 export { modifyLabels } from './modify'
 export { fetchFolder } from './folders'
 export { fetchMessage, fetchThread } from './messages'
-export { sendEmail, sendDraft } from './send'
+export { sendEmail, sendDraft, saveDraft, discardDraft } from './send'
+export { snoozeThread, restoreThread, sweepDueSnoozed, resolveSnoozeLabelId } from './snooze'
+export { syncMail, armSyncClock } from './sync'

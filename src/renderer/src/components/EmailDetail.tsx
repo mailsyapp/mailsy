@@ -5,16 +5,50 @@ import type {
   ThreadSummary,
   EmailDetail as EmailDetailData,
   EmailThread,
+  MailLabel,
   SendEmailRequest,
   MailFolder
 } from '../../../shared/types'
+import { HugeiconsIcon } from '@hugeicons/react'
+import { AlarmClockIcon } from '@hugeicons/core-free-icons'
 import { senderNameOf } from '../lib/format'
+import { replyAllRecipients } from '../lib/recipients'
+import { hasRecipient } from '../../../shared/types'
+import { SNOOZE_PRESETS } from '../lib/snooze'
+import { RecipientFields } from './RecipientFields'
+
+// Folders where report spam makes sense: drafts and sent (mail you own),
+// spam itself, and Trash are the excluded rest. A user-label view behaves
+// like All Mail: spam reporting is a valid action there.
+const REPORT_SPAM_FOLDERS: MailFolder[] = ['inbox', 'all', 'starred', 'label']
+
+// Snoozing makes exactly where parking leaves Inbox ownership in question:
+// the mail-ownership views — the Inbox stack (categories included: their
+// mail is INBOX mail with a category label), the ownership-free All Mail,
+// and the label views, which mail can reach from any folder. Not the
+// write-only folders (sent/draft/spam/trash) or the parked set itself,
+// where unsnooze is the verb. No custom datetime picker: the presets are
+// the whole snooze surface, and the wake store schedules any future
+// moment, so a picker is unbacked follow-up, not a v1 gap.
+const SNOOZE_FOLDERS: MailFolder[] = [
+  'inbox',
+  'all',
+  'starred',
+  'label',
+  'important',
+  'social',
+  'promotions',
+  'updates',
+  'forums'
+]
 
 type EmailDetailProps = {
   // The row identity: subject, participant summary, and thread-level label
   // state the list already displays. Mutations target its id (thread id).
   thread: ThreadSummary
   folder: MailFolder
+  // The user labels the open-thread Labels menu lists.
+  labels: MailLabel[]
   // Reports the thread's ID once a list-clearing action (archive, delete)
   // succeeded. List removal is owned by App because the list is one row per
   // thread.
@@ -24,6 +58,9 @@ type EmailDetailProps = {
   onThreadReadChanged: (threadId: string, unread: boolean) => void
   // Reports a thread star flip so App can restyle or drop list rows.
   onThreadStarChanged: (threadId: string, starred: boolean) => void
+  // Reports a user-label apply/remove on the open thread so App can refresh
+  // the rail's totals and drop a row the active label view lost.
+  onThreadLabelChanged: (threadId: string, labelId: string, applied: boolean) => void
 }
 
 function escapeHtml(value: string): string {
@@ -193,9 +230,11 @@ function ThreadMessage({
 export function EmailDetail({
   thread,
   folder,
+  labels,
   onThreadRemoved,
   onThreadReadChanged,
-  onThreadStarChanged
+  onThreadStarChanged,
+  onThreadLabelChanged
 }: EmailDetailProps): React.JSX.Element {
   const [threadData, setThreadData] = useState<EmailThread | null>(null)
   const [threadLoading, setThreadLoading] = useState(false)
@@ -203,6 +242,9 @@ export function EmailDetail({
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
 
   const [draft, setDraft] = useState<SendEmailRequest | null>(null)
+  // Set only when a reply-all opened without the account address; the
+  // arrival effect clears it after its at-most-once rewrite.
+  const pendingReplyRef = useRef<{ target: EmailDetailData; prefilledTo: string } | null>(null)
   const [quotedContent, setQuotedContent] = useState<{ text: string; html: string } | null>(null)
   const [sending, setSending] = useState(false)
   const [sendError, setSendError] = useState<string | null>(null)
@@ -214,11 +256,24 @@ export function EmailDetail({
   const [deleting, setDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
 
+  const [changingSpam, setChangingSpam] = useState(false)
+  const [spamError, setSpamError] = useState<string | null>(null)
+
+  const [changingSnooze, setChangingSnooze] = useState(false)
+  const [snoozeError, setSnoozeError] = useState<string | null>(null)
+  // The snooze affordance opens into Gmail's preset choices; the presets
+  // collapse again on pick, on exit through a successful park, and on failure.
+  const [pickingSnooze, setPickingSnooze] = useState(false)
+
   const [togglingRead, setTogglingRead] = useState(false)
   const [readError, setReadError] = useState<string | null>(null)
 
   const [togglingStar, setTogglingStar] = useState(false)
   const [starError, setStarError] = useState<string | null>(null)
+
+  const [labelsMenuOpen, setLabelsMenuOpen] = useState(false)
+  const [togglingLabel, setTogglingLabel] = useState<string | null>(null)
+  const [labelError, setLabelError] = useState<string | null>(null)
 
   // One auto-read attempt per opened email: the ref records the thread id so
   // re-renders don't re-fire the labels.modify call. A failed attempt stays
@@ -272,6 +327,39 @@ export function EmailDetail({
     }
   }
 
+  // Labels are thread mutations like read and star above, so threads.modify
+  // with the label id applies or removes it across the thread's messages.
+  async function handleLabelToggle(label: MailLabel): Promise<void> {
+    if (togglingLabel) return
+    setTogglingLabel(label.id)
+    setLabelError(null)
+    const applied = (threadData?.labelIds ?? []).includes(label.id)
+    try {
+      await window.api.modifyLabels({
+        kind: 'thread',
+        id: thread.id,
+        ...(applied ? { removeLabelIds: [label.id] } : { addLabelIds: [label.id] })
+      })
+      // The menu's checked state is the thread's own label list; both sides
+      // of the toggle flip it in place, so reopening is cheap and honest.
+      setThreadData((prev) =>
+        prev
+          ? {
+              ...prev,
+              labelIds: applied
+                ? prev.labelIds.filter((id) => id !== label.id)
+                : [...prev.labelIds, label.id]
+            }
+          : prev
+      )
+      onThreadLabelChanged(thread.id, label.id, !applied)
+    } catch (error) {
+      setLabelError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setTogglingLabel(null)
+    }
+  }
+
   // Thread state is reset by remounting via key={thread.id} in App.
   async function loadThread(threadId: string, silent = false): Promise<void> {
     if (!silent) setThreadLoading(true)
@@ -298,14 +386,25 @@ export function EmailDetail({
     void loadThread(thread.id)
   }, [thread.id])
 
+  const accountEmail = threadData?.userEmail
+  useEffect(() => {
+    const pending = pendingReplyRef.current
+    if (!accountEmail || !pending) return
+    pendingReplyRef.current = null
+    // Only the exact prefill the unknown address produced is rewritten; an
+    // edited To line means the user already took the list from here.
+    setDraft((prev) => {
+      if (!prev || prev.to !== pending.prefilledTo) return prev
+      const targets = replyAllRecipients(pending.target, accountEmail)
+      return { ...prev, to: targets.to, cc: targets.cc }
+    })
+  }, [accountEmail])
+
   const messages: EmailDetailData[] = threadData?.messages ?? []
 
   const latestMessage: EmailDetailData | null = messages[messages.length - 1] ?? null
 
-  function replyToEmail(): void {
-    const target = latestMessage
-    if (!target) return
-
+  function openReplyComposer(target: EmailDetailData, toLine: string, ccLine = ''): void {
     setSendError(null)
     setSent(false)
     const originalText = target.bodyText || target.snippet || thread.snippet
@@ -321,13 +420,36 @@ export function EmailDetail({
 
     setQuotedContent({ text: quotedText, html: quotedHtml })
     setDraft({
-      to: target.replyTo.trim() || target.from.trim() || thread.participants[0] || '',
+      to: toLine,
+      // An empty carbon line stays unset: an absent field is the payload's
+      // "no carbon recipients", never an empty header.
+      ...(ccLine ? { cc: ccLine } : {}),
       subject: /^re:/i.test(target.subject) ? target.subject : `Re: ${target.subject}`,
       body: `\n\n${quotedText}`,
       threadId: target.threadId || undefined,
       inReplyTo: target.messageId || undefined,
       references: [target.references, target.messageId].filter(Boolean).join(' ') || undefined
     })
+  }
+
+  function replyToEmail(): void {
+    const target = latestMessage
+    if (!target) return
+    openReplyComposer(
+      target,
+      target.replyTo.trim() || target.from.trim() || thread.participants[0] || ''
+    )
+  }
+
+  function replyAllToEmail(): void {
+    const target = latestMessage
+    if (!target) return
+    const userEmail = threadData?.userEmail ?? ''
+    const { to, cc } = replyAllRecipients(target, userEmail)
+    openReplyComposer(target, to, cc)
+    // A reply-all opened before the account address landed prefilters
+    // nothing: when it arrives, an untouched To line gets one rewrite.
+    pendingReplyRef.current = userEmail ? null : { target, prefilledTo: to }
   }
 
   function forwardEmail(): void {
@@ -376,7 +498,9 @@ export function EmailDetail({
 
   async function handleSend(event: React.FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault()
-    if (!draft || sending) return
+    // The Enter key submits the form even with the Send button disabled, so
+    // the receipt test lives here, not only on the button.
+    if (!draft || sending || !hasRecipient(draft)) return
 
     setSending(true)
     setSendError(null)
@@ -420,9 +544,9 @@ export function EmailDetail({
   }
 
   // Trash, like archive, is a label mutation: add TRASH, remove INBOX. The
-  // draft and trash folders are excluded because trashing a draft thread
-  // leaves it in drafts.list, and an already-trashed thread has nothing to
-  // mutate.
+  // draft, trash, and spam folders are excluded because trashing a draft
+  // thread leaves it in drafts.list, an already-trashed thread has nothing
+  // to mutate, and trashed but spammed mail would still paginate from Spam.
   async function handleDelete(): Promise<void> {
     if (deleting) return
     setDeleting(true)
@@ -439,6 +563,73 @@ export function EmailDetail({
       setDeleteError(error instanceof Error ? error.message : String(error))
     } finally {
       setDeleting(false)
+    }
+  }
+
+  // Spam state is one label too: reporting adds SPAM and drops INBOX, and
+  // unreporting does the reverse and restores INBOX. Both sides clear the
+  // thread from the current list, like archive and trash above, so one
+  // handler carries the pending/error state for either direction.
+  async function handleSetSpam(isSpam: boolean): Promise<void> {
+    if (changingSpam) return
+    setChangingSpam(true)
+    setSpamError(null)
+    try {
+      await window.api.modifyLabels({
+        kind: 'thread',
+        id: thread.id,
+        addLabelIds: [isSpam ? 'SPAM' : 'INBOX'],
+        removeLabelIds: [isSpam ? 'INBOX' : 'SPAM']
+      })
+      onThreadRemoved(thread.id)
+    } catch (error) {
+      setSpamError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setChangingSpam(false)
+    }
+  }
+
+  // Unsnooze is Gmail's own "move to Inbox": the write is an INBOX add, and
+  // that alone is what ends the parking state. SNOOZED is a pseudo-label the
+  // API refuses as a label mutation (400 "Invalid label"), so there is no
+  // reverse pair to send — re-adding the mail to the Inbox is the whole
+  // unsnooze. Mail parked by Mailsy instead carries its user label, and the
+  // restore verb takes the reverse pair with it (and clears the wake
+  // schedule); the wrong verb here would leave the rail showing a
+  // half-unsnoozed thread. The thread clears from the Snoozed list either way.
+  async function handleUnsnooze(): Promise<void> {
+    if (changingSnooze) return
+    setChangingSnooze(true)
+    setSnoozeError(null)
+    try {
+      if (thread.snoozedByMailsy) {
+        await window.api.restoreThread(thread.id)
+      } else {
+        await window.api.modifyLabels({ kind: 'thread', id: thread.id, addLabelIds: ['INBOX'] })
+      }
+      onThreadRemoved(thread.id)
+    } catch (error) {
+      setSnoozeError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setChangingSnooze(false)
+    }
+  }
+
+  // Snoozing parks the thread out of the Inbox for the chosen preset: main
+  // tags it 'Snoozed by Mailsy' and persists the wake time, so the row
+  // leaves this list the way archive and delete leave theirs.
+  async function handleSnooze(restoreAt: number): Promise<void> {
+    if (changingSnooze) return
+    setChangingSnooze(true)
+    setSnoozeError(null)
+    setPickingSnooze(false)
+    try {
+      await window.api.snoozeThread(thread.id, restoreAt)
+      onThreadRemoved(thread.id)
+    } catch (error) {
+      setSnoozeError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setChangingSnooze(false)
     }
   }
 
@@ -488,7 +679,49 @@ export function EmailDetail({
         <div className="snippet">{thread.snippet}</div>
       )}
 
+      {/* Gmail's Labels menu: the open thread's apply/remove affordance, one
+          checkbox per user label, checked from the thread's own label set. */}
+      <div className="labels-menu">
+        <button
+          type="button"
+          onClick={() => setLabelsMenuOpen(!labelsMenuOpen)}
+          disabled={threadLoading || Boolean(threadError)}
+          aria-expanded={labelsMenuOpen}
+        >
+          Labels
+        </button>
+        {labelsMenuOpen &&
+          (threadData ? (
+            <div className="labels-menu-list" role="group" aria-label="Apply labels">
+              {labels.length === 0 && <p className="snippet">No user labels yet.</p>}
+              {labels.map((label) => (
+                <label key={label.id} className="labels-menu-item">
+                  <input
+                    type="checkbox"
+                    checked={threadData.labelIds.includes(label.id)}
+                    disabled={threadLoading || Boolean(threadError) || togglingLabel === label.id}
+                    onChange={() => handleLabelToggle(label)}
+                  />
+                  {/* The label's color reads as the chip next to the name,
+                    the same signal the rail carries. */}
+                  <span
+                    className="labels-menu-dot"
+                    style={{ background: label.color?.background ?? '#d9d9d9' }}
+                  />
+                  {label.name}
+                </label>
+              ))}
+            </div>
+          ) : (
+            <p className="snippet" role="status">
+              Loading labels...
+            </p>
+          ))}
+      </div>
+      {labelError && <p role="alert">{labelError}</p>}
+
       <button onClick={replyToEmail}>reply</button>
+      <button onClick={replyAllToEmail}>reply all</button>
       <button onClick={forwardEmail}>forward</button>
       <button onClick={handleToggleRead} disabled={togglingRead}>
         {thread.unreadCount > 0 ? 'mark as read' : 'mark as unread'}
@@ -498,29 +731,73 @@ export function EmailDetail({
           archive
         </button>
       )}
-      {folder !== 'trash' && folder !== 'drafts' && (
+      {/* Delete is hidden in Snoozed for the same reason it already is in
+          Spam: keeping resting mail out of collision-prone mutations. */}
+      {folder !== 'trash' && folder !== 'drafts' && folder !== 'spam' && folder !== 'snoozed' && (
         <button onClick={handleDelete} disabled={deleting}>
           delete
+        </button>
+      )}
+      {REPORT_SPAM_FOLDERS.includes(folder) && (
+        <button onClick={() => handleSetSpam(true)} disabled={changingSpam}>
+          report spam
+        </button>
+      )}
+      {folder === 'spam' && (
+        <button onClick={() => handleSetSpam(false)} disabled={changingSpam}>
+          not spam
+        </button>
+      )}
+      {SNOOZE_FOLDERS.includes(folder) && (
+        <>
+          <button
+            className="snooze-toggle"
+            onClick={() => setPickingSnooze(!pickingSnooze)}
+            disabled={changingSnooze}
+            aria-expanded={pickingSnooze}
+            title="Snooze"
+          >
+            {/* The park affordance carries the alarm icon the rail's
+                Snoozed entry does, so looking for snooze and looking for
+                parked mail is the same glyph both places. */}
+            <HugeiconsIcon icon={AlarmClockIcon} size={15} strokeWidth={2} />
+            snooze
+          </button>
+          {/* Presets sit in the boxed idiom of the Labels menu above, open
+              under the affordance and collapsing on pick or failure. */}
+          {pickingSnooze && (
+            <div className="snooze-menu-list" role="group" aria-label="Snooze until">
+              {SNOOZE_PRESETS.map((preset) => (
+                <button key={preset.key} onClick={() => void handleSnooze(preset.at())}>
+                  {preset.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+      {folder === 'snoozed' && (
+        <button onClick={handleUnsnooze} disabled={changingSnooze}>
+          unsnooze
         </button>
       )}
 
       {archiveError && <p role="alert">{archiveError}</p>}
       {deleteError && <p role="alert">{deleteError}</p>}
+      {spamError && <p role="alert">{spamError}</p>}
+      {snoozeError && <p role="alert">{snoozeError}</p>}
       {readError && <p role="alert">{readError}</p>}
       {starError && <p role="alert">{starError}</p>}
-
       {draft && (
         <form className="composer" onSubmit={handleSend}>
           <h2 id="composer-title">Compose email</h2>
 
-          <label className="composerField">
-            <span>To</span>
-            <input
-              required
-              value={draft.to}
-              onChange={(event) => setDraft({ ...draft, to: event.target.value })}
-            />
-          </label>
+          <RecipientFields
+            to={draft.to}
+            cc={draft.cc ?? ''}
+            bcc={draft.bcc ?? ''}
+            onChange={(patch) => setDraft({ ...draft, ...patch })}
+          />
 
           <label className="composerField">
             <span>Subject</span>
@@ -551,7 +828,7 @@ export function EmailDetail({
             >
               Cancel
             </button>
-            <button type="submit" disabled={sending || !draft.to.trim()}>
+            <button type="submit" disabled={sending || !hasRecipient(draft)}>
               {sending ? 'Sending...' : 'Send'}
             </button>
           </div>

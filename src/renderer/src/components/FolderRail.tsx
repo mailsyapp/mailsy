@@ -1,45 +1,269 @@
-import { HugeiconsIcon } from '@hugeicons/react'
+import { useEffect, useRef, useState } from 'react'
 import {
-  Delete02Icon,
-  InboxIcon,
-  MailEdit01Icon,
-  SentIcon,
-  StarIcon
-} from '@hugeicons/core-free-icons'
-import type { MailFolder } from '../../../shared/types'
+  AlarmClock,
+  Flag,
+  Inbox,
+  Info,
+  Mail,
+  Megaphone,
+  MessagesSquare,
+  OctagonAlert,
+  Plus,
+  Send,
+  SquarePen,
+  Star,
+  Tag,
+  Trash2,
+  Users,
+  X,
+  type LucideIcon
+} from 'lucide-react'
+import type { MailFolder, MailLabel } from '../../../shared/types'
 
-const FOLDERS: Array<{ id: MailFolder; label: string; icon: typeof InboxIcon }> = [
-  { id: 'inbox', label: 'Inbox', icon: InboxIcon },
-  { id: 'starred', label: 'Starred', icon: StarIcon },
-  { id: 'drafts', label: 'Drafts', icon: MailEdit01Icon },
-  { id: 'sent', label: 'Sent', icon: SentIcon },
-  { id: 'trash', label: 'Trash', icon: Delete02Icon }
+// The dwell before a rail tooltip shows, matching the native-tooltip
+// standard (~0.5s rest before the hint appears).
+const TOOLTIP_DWELL_MS = 500
+
+const FOLDERS: Array<{ id: MailFolder; label: string; icon: LucideIcon }> = [
+  { id: 'inbox', label: 'Inbox', icon: Inbox },
+  { id: 'starred', label: 'Starred', icon: Star },
+  { id: 'snoozed', label: 'Snoozed', icon: AlarmClock },
+  // Gmail's category stack, Important first, the four inbox tabs after it.
+  { id: 'important', label: 'Important', icon: Flag },
+  { id: 'social', label: 'Social', icon: Users },
+  { id: 'promotions', label: 'Promotions', icon: Megaphone },
+  { id: 'updates', label: 'Updates', icon: Info },
+  { id: 'forums', label: 'Forums', icon: MessagesSquare },
+  { id: 'drafts', label: 'Drafts', icon: SquarePen },
+  { id: 'sent', label: 'Sent', icon: Send },
+  { id: 'spam', label: 'Spam', icon: OctagonAlert },
+  { id: 'trash', label: 'Trash', icon: Trash2 },
+  { id: 'all', label: 'All Mail', icon: Mail }
 ]
+
+// One chip per user label, held together by the count it opens: the body
+// carries the label's Gmail background color and text color, the count the
+// thread total, and the corner holds the delete affordance. Selecting and
+// deleting must be separate elements because a click target that is also a
+// nested button is not renderable.
+function UserLabelChip({
+  label,
+  isActive,
+  onSelect,
+  onDelete
+}: {
+  label: MailLabel
+  isActive: boolean
+  onSelect: (label: MailLabel) => void
+  onDelete: (label: MailLabel) => void
+}): React.JSX.Element {
+  const color = label.color ?? { background: '#d9d9d9', text: '#000000' }
+  return (
+    <div className={`user-label-chip${isActive ? ' active' : ''}`}>
+      <button
+        type="button"
+        className="user-label-chip-open"
+        data-tip={label.name}
+        aria-label={label.name}
+        aria-current={isActive ? 'page' : undefined}
+        style={{ background: color.background, color: color.text }}
+        onClick={() => onSelect(label)}
+      >
+        {label.threadsTotal > 0 ? label.threadsTotal : ''}
+      </button>
+      <button
+        type="button"
+        className="user-label-chip-remove"
+        data-tip={`Delete label ${label.name}`}
+        aria-label={`Delete ${label.name}`}
+        onClick={() => onDelete(label)}
+      >
+        <X size={10} strokeWidth={2.5} aria-hidden="true" />
+      </button>
+    </div>
+  )
+}
 
 interface FolderRailProps {
   activeFolder: MailFolder
+  activeLabelId: string | null
+  // The user labels to browse: system labels are filtered where the list
+  // is loaded (App), so the rail renders exactly what the rail owns.
+  labels: MailLabel[]
   onSelect: (folder: MailFolder) => void
+  onSelectLabel: (label: MailLabel) => void
+  onCreateLabel: (name: string) => void
+  onDeleteLabel: (label: MailLabel) => void
 }
 
-export function FolderRail({ activeFolder, onSelect }: FolderRailProps): React.JSX.Element {
+export function FolderRail({
+  activeFolder,
+  activeLabelId,
+  labels,
+  onSelect,
+  onSelectLabel,
+  onCreateLabel,
+  onDeleteLabel
+}: FolderRailProps): React.JSX.Element {
+  // The name entry is an inline rail input, not window.prompt: Electron
+  // does not support prompt() and throws on it, while the 56px rail is
+  // wide enough for one line of text. The draft closes on commit and on
+  // Escape; blur never closes it so a stray click cannot eat the name.
+  const [draftOpen, setDraftOpen] = useState(false)
+  const [draftName, setDraftName] = useState('')
+  const draftRef = useRef<HTMLInputElement | null>(null)
+  // The rail collapses to the folder icons by default; the Labels toggle
+  // expands it for the label chips, their inline create form, and the
+  // delete affordances. Collapse-on-toggle keeps the 56px column at its
+  // familiar width, so expanding never reflows the rest of the layout.
+  const [labelsShown, setLabelsShown] = useState(false)
+  // Tooltip dwell, the wait-then-costs-nothing-again rule: the first tip
+  // shows only after the pointer rests TOOLTIP_DWELL_MS on an affordance
+  // (the CSS transition-delay carries the wait), and once one tip is up
+  // the .tips-active class ends the wait for the rest of the rail —
+  // moving down the rail must not re-charge 0.5s on every neighbor, or
+  // reading the column feels like a slot machine. Leaving the rail
+  // revokes the mode so a fresh visit pays the wait again. The class is
+  // managed by ref, never React state: hover churn would re-render the
+  // whole folder list for a purely pointer-visual change.
+  const railRef = useRef<HTMLElement | null>(null)
+  const tipTimerRef = useRef<number | null>(null)
+
+  useEffect(
+    () => () => {
+      // Unmount mid-dwell must not leave a timer that mutates a dead node.
+      if (tipTimerRef.current !== null) window.clearTimeout(tipTimerRef.current)
+    },
+    []
+  )
+
+  function handleTipHover(event: React.MouseEvent<HTMLElement>): void {
+    const rail = railRef.current
+    if (!rail) return
+    if (tipTimerRef.current !== null) {
+      window.clearTimeout(tipTimerRef.current)
+      tipTimerRef.current = null
+    }
+    // Mode is already on (neighbor switches pay nothing) or the pointer
+    // is over a tipless node (chips container, create input): nothing to
+    // charge or grant.
+    if (rail.classList.contains('tips-active')) return
+    if (!(event.target instanceof Element)) return
+    if (!event.target.closest('[data-tip]')) return
+    tipTimerRef.current = window.setTimeout(() => {
+      tipTimerRef.current = null
+      rail.classList.add('tips-active')
+    }, TOOLTIP_DWELL_MS)
+  }
+
+  function handleTipLeave(): void {
+    // A dwell that never elapsed is cancelled, not banked; leaving the
+    // rail entirely also ends the already-paid mode.
+    if (tipTimerRef.current !== null) {
+      window.clearTimeout(tipTimerRef.current)
+      tipTimerRef.current = null
+    }
+    railRef.current?.classList.remove('tips-active')
+  }
+
+  function commitDraft(): void {
+    const name = draftName.trim()
+    if (!name) return
+    onCreateLabel(name)
+    setDraftName('')
+    setDraftOpen(false)
+  }
+
   return (
-    <nav className="folder-rail" aria-label="Mail folders">
+    <nav
+      className="folder-rail"
+      aria-label="Mail folders"
+      ref={railRef}
+      onMouseOver={handleTipHover}
+      onMouseLeave={handleTipLeave}
+    >
       {FOLDERS.map((folder) => {
-        const isActive = folder.id === activeFolder
+        const isActive = folder.id === activeFolder && activeLabelId === null
         return (
           <button
             key={folder.id}
             type="button"
             className={`folder-rail-button${isActive ? ' active' : ''}`}
-            title={folder.label}
+            data-tip={folder.label}
             aria-label={folder.label}
             aria-current={isActive ? 'page' : undefined}
             onClick={() => onSelect(folder.id)}
           >
-            <HugeiconsIcon icon={folder.icon} size={22} strokeWidth={1.8} />
+            <folder.icon size={22} strokeWidth={1.8} aria-hidden="true" />
           </button>
         )
       })}
+      <button
+        type="button"
+        className={`folder-rail-button${activeLabelId !== null && !labelsShown && labels.length > 0 ? ' active' : ''}`}
+        data-tip={labelsShown ? 'Hide labels' : 'Labels'}
+        aria-label={labelsShown ? 'Hide labels' : 'Labels'}
+        aria-expanded={labelsShown}
+        onClick={() => setLabelsShown((shown) => !shown)}
+      >
+        <Tag size={22} strokeWidth={1.8} aria-hidden="true" />
+      </button>
+      {labelsShown && (
+        <>
+          {labels.length > 0 && (
+            <div className="user-label-chips" aria-label="User labels">
+              {labels.map((label) => (
+                <UserLabelChip
+                  key={label.id}
+                  label={label}
+                  isActive={label.id === activeLabelId}
+                  onSelect={onSelectLabel}
+                  onDelete={onDeleteLabel}
+                />
+              ))}
+            </div>
+          )}
+          {draftOpen && (
+            <form
+              className="user-label-create-form"
+              onSubmit={(e) => {
+                e.preventDefault()
+                commitDraft()
+              }}
+            >
+              <input
+                ref={draftRef}
+                className="user-label-create-input"
+                aria-label="Label name"
+                placeholder="New label"
+                value={draftName}
+                autoFocus
+                onChange={(e) => setDraftName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') {
+                    setDraftName('')
+                    setDraftOpen(false)
+                  }
+                }}
+              />
+            </form>
+          )}
+          <button
+            type="button"
+            className="user-label-create"
+            aria-label="New label"
+            data-tip="New label"
+            onClick={() => {
+              setDraftOpen(true)
+              // autofocus fires on mount, but an already-visited draft may
+              // not re-run it; focus explicitly too.
+              requestAnimationFrame(() => draftRef.current?.focus())
+            }}
+          >
+            <Plus size={18} strokeWidth={2.2} aria-hidden="true" />
+          </button>
+        </>
+      )}
     </nav>
   )
 }

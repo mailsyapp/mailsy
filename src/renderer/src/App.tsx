@@ -1,17 +1,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import Fuse from 'fuse.js'
-import { HugeiconsIcon } from '@hugeicons/react'
-import { StarIcon } from '@hugeicons/core-free-icons'
+import { RefreshCw } from 'lucide-react'
 import type {
   ThreadSummary,
   EmailDetail as EmailDetailData,
   ThreadPage,
-  MailFolder
+  MailFolder,
+  MailLabel
 } from '../../shared/types'
 import { EmailDetail } from './components/EmailDetail'
-import { senderNameOf } from './lib/format'
+import { applyMailDelta, mergeIncoming, viewLabelOf } from './lib/syncApply'
+import { hasGmailOperator, previewMatches, rerankByFuse } from './lib/search'
+import { FOLDER_CONFIG } from './lib/folderViews'
+import type { SyncResult } from '../../shared/sync'
 import { DraftEditor } from './components/DraftEditor'
+import { ComposeEditor } from './components/ComposeEditor'
 import { FolderRail } from './components/FolderRail'
+import { MailListRow } from './components/MailListRow'
 
 const LIST_PAGE_SIZE = 30
 // Smaller pages for server search: each result costs a messages.get call,
@@ -21,30 +25,10 @@ const SEARCH_DEBOUNCE_MS = 800
 // How long "Message sent." stays visible before the spent draft row is
 // removed from the list.
 const DRAFT_PRUNE_DELAY_MS = 2000
-
-const FOLDER_CONFIG: Record<
-  MailFolder,
-  { label: string; empty: string; fallbackToLocal: boolean }
-> = {
-  // fallbackToLocal: the folder's last unfiltered page may back the local
-  // Fuse fallback when the server returns nothing. Inbox only, by design:
-  // other folders must not surface messages from another folder's cache.
-  inbox: { label: 'Inbox', empty: 'You’re all caught up', fallbackToLocal: true },
-  drafts: { label: 'Drafts', empty: 'No drafts yet', fallbackToLocal: false },
-  sent: { label: 'Sent', empty: 'No sent mail yet', fallbackToLocal: false },
-  trash: { label: 'Trash', empty: 'Trash is empty', fallbackToLocal: false },
-  starred: { label: 'Starred', empty: 'No starred mail yet', fallbackToLocal: false }
-}
-
-const FUSE_KEYS = [
-  { name: 'subject', weight: 0.6 },
-  { name: 'participants', weight: 0.3 },
-  { name: 'snippet', weight: 0.1 }
-]
-
-function hasGmailOperator(query: string): boolean {
-  return /[a-zA-Z]+:/.test(query)
-}
+// How often the signed-in renderer asks main to sweep due snoozes. The tick
+// is the minutes-level sweep of the wake design: main also arms a timer at
+// the next due moment, and the startup catch-up absorbs closed-window gaps.
+const SNOOZE_TICK_MS = 30_000
 
 function formatFetchError(e: unknown): string {
   const message = e instanceof Error ? e.message : String(e)
@@ -54,19 +38,14 @@ function formatFetchError(e: unknown): string {
   return message
 }
 
-function rerankWithFuse(threads: ThreadSummary[], query: string): ThreadSummary[] {
-  if (threads.length === 0 || !query || hasGmailOperator(query)) return threads
-  const fuse = new Fuse(threads, {
-    keys: FUSE_KEYS,
-    threshold: 0.4,
-    ignoreLocation: true,
-    includeScore: true
-  })
-  const results = fuse.search(query)
-  if (results.length === 0) return threads
-  const scoreById = new Map(results.map((r) => [r.item.id, r.score ?? 1]))
-  return [...threads].sort((a, b) => (scoreById.get(a.id) ?? 2) - (scoreById.get(b.id) ?? 2))
-}
+// First-page loads share one fetch pipeline. 'load' is a folder switch or
+// the initial mount and replaces the list; 'manual' is the Refresh button
+// and 'sync' is a pushed reset fold, which both fold the page in through
+// mergeIncoming instead. Sync is the only mode that yields to an in-flight
+// fetch (its result is disposable) and the only one that keeps the status
+// state quiet; manual supersedes in-flight work through the shared
+// request id.
+type FirstPageMode = 'load' | 'manual' | 'sync'
 
 function App(): React.JSX.Element {
   const [threads, setThreads] = useState<ThreadSummary[]>([])
@@ -79,23 +58,45 @@ function App(): React.JSX.Element {
   // one draft's body, while conversation rows render from getThread alone.
   const [draftDetail, setDraftDetail] = useState<EmailDetailData | null>(null)
   const [draftDetailLoading, setDraftDetailLoading] = useState(false)
+  // True when the selected thread is a draft, wherever the row was listed:
+  // the drafts folder always, and All Mail through the row's hasDraft.
+  const [selectedIsDraft, setSelectedIsDraft] = useState(false)
   const [signedIn, setSignedIn] = useState<boolean | null>(null)
   const [searchInput, setSearchInput] = useState('')
   const [committedQuery, setCommittedQuery] = useState('')
   const [activeFolder, setActiveFolder] = useState<MailFolder>('inbox')
+  // The open user-label view, mutually exclusive with the folder rail
+  // selection (switching either side clears the other).
+  const [activeLabel, setActiveLabel] = useState<MailLabel | null>(null)
+  // The user labels the rail chips and the detail Labels menu share; totals
+  // re-read after every create/delete and every thread apply/remove.
+  const [labels, setLabels] = useState<MailLabel[]>([])
+  // The content pane is mutually exclusive: a fresh compose vs a selected
+  // email. Every exit (sign-out, folder switch, selecting a row) runs
+  // closeEmail below, which clears this together with the selection.
+  const [composing, setComposing] = useState(false)
+  // The failed delete the open editor renders: keyed by the row the
+  // attempt targeted, so a failed row-level delete never shows in an
+  // unrelated editor open at the same time.
+  const [draftDiscard, setDraftDiscard] = useState<{ rowId: string; error: string | null } | null>(
+    null
+  )
 
   const selectionRef = useRef<string | null>(null)
   const sentinelRef = useRef<HTMLDivElement | null>(null)
   const sidebarRef = useRef<HTMLElement | null>(null)
   const requestIdRef = useRef(0)
   // Last list actually on screen, so re-renders and the initial mount can't
-  // double-fire the same request. Keyed by folder+query fields, not a string.
-  const lastFetchedRef = useRef<{ folder: MailFolder; q: string } | null>(null)
-  // Server search first-pages per folder: retyping/backspacing to a previous
-  // query in the same folder reuses it instead of spending quota again.
-  // Unfiltered ('') lists are never cached here so clearing the search
-  // always refreshes.
-  const searchPageCacheRef = useRef(new Map<MailFolder, Map<string, ThreadPage>>())
+  // double-fire the same request. Keyed by folder+label+query, never a
+  // prejoined string, so a label view and its folder never collide.
+  const lastFetchedRef = useRef<{ folder: MailFolder; labelId: string | null; q: string } | null>(
+    null
+  )
+  // Server search first-pages per view: label views key as 'label:<id>'.
+  // Retyping/backspacing to a previous query in the same view reuses it
+  // instead of spending quota again. Unfiltered ('') lists are never
+  // cached here so clearing the search always refreshes.
+  const searchPageCacheRef = useRef(new Map<string, Map<string, ThreadPage>>())
   // Last unfiltered page per folder, used by folder search fallbacks
   // (see FOLDER_CONFIG.fallbackToLocal).
   const [unfilteredByFolder, setUnfilteredByFolder] = useState(
@@ -112,6 +113,48 @@ function App(): React.JSX.Element {
   const searchingRef = useRef(false)
   const nextPageTokenRef = useRef<string | null | undefined>(undefined)
 
+  // The sync mirrors above are read by the IntersectionObserver before any
+  // state has committed, so every write pairs the state with its ref. One
+  // setter per pair makes an unpaired write unrepresentable.
+  function setPageToken(token: string | null | undefined): void {
+    nextPageTokenRef.current = token
+    setNextPageToken(token)
+  }
+
+  function setActiveSearching(active: boolean): void {
+    searchingRef.current = active
+    setSearching(active)
+  }
+
+  // A background fold flips only the guard mirror: its fetch must not
+  // flash the status line or toggle "Load more" every sweep, so the state
+  // stays false while the ref says in-flight.
+  function setQuietSearching(active: boolean): void {
+    searchingRef.current = active
+  }
+
+  // A view identifier: the folder, or the label view its label opens. Every
+  // per-view cache and the last-fetched guard key through this.
+  const viewKey = activeLabel ? `label:${activeLabel.id}` : activeFolder
+
+  // A fresh page's rows land wherever the view keeps list truth:
+  // unfiltered pages back the Fuse fallback pool, search pages go into the
+  // per-view cache with the oldest evicted past 20.
+  function storeFirstPage(page: ThreadPage, query: string): void {
+    lastFetchedRef.current = { folder: activeFolder, labelId: activeLabel?.id ?? null, q: query }
+    if (!query) {
+      // Label views have no local search fallback, so only folder pages
+      // back the pool; two label views must not clobber one key.
+      if (!activeLabel)
+        setUnfilteredByFolder((prev) => new Map(prev).set(activeFolder, page.threads))
+      return
+    }
+    const viewCache = searchPageCacheRef.current.get(viewKey) ?? new Map<string, ThreadPage>()
+    searchPageCacheRef.current.set(viewKey, viewCache)
+    viewCache.set(query, page)
+    if (viewCache.size > 20) viewCache.delete(viewCache.keys().next().value!)
+  }
+
   const hasMore = nextPageToken !== null
   const isSearchActive = committedQuery.length > 0
   const hasPendingInput = searchInput.trim() !== committedQuery
@@ -121,10 +164,21 @@ function App(): React.JSX.Element {
     setSelectedId(id)
   }
 
+  // Both pane entries clear all pane state through closeEmail first, so a
+  // compose and an open email can never be on screen together.
+  function openCompose(): void {
+    if (composing) return
+    closeEmail()
+    setComposing(true)
+  }
+
   function closeEmail(): void {
     selectionRef.current = null
     setSelectedId(null)
     setDraftDetail(null)
+    setComposing(false)
+    setSelectedIsDraft(false)
+    setDraftDiscard(null)
   }
 
   const displayedThreads = useMemo(() => {
@@ -145,27 +199,16 @@ function App(): React.JSX.Element {
       for (const e of canFallbackLocally ? [...threads, ...fallbackPool] : threads) {
         if (!seen.has(e.id)) seen.set(e.id, e)
       }
-      const preview = new Fuse([...seen.values()], {
-        keys: FUSE_KEYS,
-        threshold: 0.4,
-        ignoreLocation: true
-      })
-        .search(pending)
-        .map((r) => r.item)
+      const preview = previewMatches([...seen.values()], pending)
       if (preview.length > 0) return preview
     }
     if (!isSearchActive) return threads
-    if (threads.length > 0) return rerankWithFuse(threads, committedQuery)
+    if (threads.length > 0) return rerankByFuse(threads, committedQuery)
     // Server returned nothing: fuzzy-search the folder's cached unfiltered
     // page so a typo can still surface locally-loaded mail instead of a
     // dead end (only where the folder config allows it).
     if (canFallbackLocally && fallbackPool.length > 0 && !hasGmailOperator(committedQuery)) {
-      const fuse = new Fuse(fallbackPool, {
-        keys: FUSE_KEYS,
-        threshold: 0.4,
-        ignoreLocation: true
-      })
-      const fallback = fuse.search(committedQuery).map((r) => r.item)
+      const fallback = previewMatches(fallbackPool, committedQuery)
       if (fallback.length > 0) return fallback
     }
     return threads
@@ -182,12 +225,19 @@ function App(): React.JSX.Element {
   const selectedThread = displayedThreads.find((e) => e.id === selectedId) ?? null
 
   function handleSelect(row: ThreadSummary): void {
+    // The pane is exclusive: a selected row replaces an open compose (and
+    // everything else the pane draws), so the exit runs through closeEmail.
+    closeEmail()
     openEmail(row.id)
-    setDraftDetail(null)
     setError(null)
-    // Conversation rows render from getThread inside EmailDetail; only the
-    // drafts branch needs a message body fetch.
-    if (activeFolder !== 'drafts') return
+    // Drafts open the editor, not the conversation pane. In All Mail the
+    // carrying row's hasDraft decides; in the drafts folder every row is
+    // one. Conversation rows render from getThread inside EmailDetail; only
+    // the draft branch needs a message body fetch.
+    const draftsFolder = activeFolder === 'drafts'
+    const draftHere = draftsFolder || (activeFolder === 'all' && row.hasDraft === true)
+    setSelectedIsDraft(draftHere)
+    if (!draftHere) return
     setDraftDetailLoading(true)
     window.api
       .getMessage(row.messageIds[row.messageIds.length - 1])
@@ -201,10 +251,20 @@ function App(): React.JSX.Element {
     window.api
       .signIn()
       .then(() => {
-        // The [committedQuery, signedIn] effect below loads the list;
-        // fetching here too would double the quota cost.
+        // The list effect below loads the list; fetching here too would
+        // double the quota cost.
         lastFetchedRef.current = null
         setSignedIn(true)
+      })
+      .catch((e: unknown) => recordError(e))
+  }
+
+  function handleSignOut(): void {
+    window.api
+      .signOut()
+      .then(() => {
+        setError(null)
+        exitToSignedOut()
       })
       .catch((e: unknown) => recordError(e))
   }
@@ -212,6 +272,36 @@ function App(): React.JSX.Element {
   function handleClearSearch(): void {
     setSearchInput('')
     if (committedQuery !== '') setCommittedQuery('')
+  }
+
+  // Shared reset for the two user-visible ways a session ends: a dead grant
+  // found by recordError, and signing out. Bumping the request id drops any
+  // in-flight list response so it can't paint mail rows onto the
+  // signed-out screen.
+  function exitToSignedOut(): void {
+    ++requestIdRef.current
+    setSignedIn(false)
+    setCommittedQuery('')
+    setSearchInput('')
+    closeEmail()
+    setThreads([])
+    setActiveLabel(null)
+    setLabels([])
+    // No per-folder mail content may survive: nothing typed or cached.
+    searchPageCacheRef.current.clear()
+    // Prune timers are canceled, not just dropped: their callbacks could
+    // otherwise outlive the flip into the next session's freshly loaded
+    // list and filter the wrong rows out of it.
+    draftPruneTimersRef.current.forEach((timer) => window.clearTimeout(timer))
+    draftPruneTimersRef.current.clear()
+    setUnfilteredByFolder(new Map<MailFolder, ThreadSummary[]>())
+    // null means pagination is exhausted, so the sentinel observer and
+    // loadMore can't refetch the folder after the flip. undefined would
+    // mean "unknown", which reopens the window: the observer fires and
+    // issues a doomed request against the signed-out session.
+    setPageToken(null)
+    setActiveSearching(false)
+    lastFetchedRef.current = null
   }
 
   // One funnel for every boundary failure. A dead Google grant (the main
@@ -222,17 +312,15 @@ function App(): React.JSX.Element {
   // both flip.
   function recordError(e: unknown): void {
     setError(formatFetchError(e))
-    if (e instanceof Error && /session has expired|not signed in yet/i.test(e.message)) {
-      setSignedIn(false)
-      setCommittedQuery('')
-      setSearchInput('')
-      closeEmail()
-      setThreads([])
-      nextPageTokenRef.current = undefined
-      setNextPageToken(undefined)
-      searchingRef.current = false
-      lastFetchedRef.current = null
+    if (isDeadGrantError(e)) {
+      exitToSignedOut()
     }
+  }
+
+  // A dead grant means the stored token is worthless, so the only useful
+  // act is ending the session wherever the failure surfaced.
+  function isDeadGrantError(e: unknown): boolean {
+    return e instanceof Error && /session has expired|not signed in yet/i.test(e.message)
   }
 
   function handleSearchSubmit(): void {
@@ -258,11 +346,43 @@ function App(): React.JSX.Element {
     )
   }
 
+  // One collect point for both delete affordances: a Drafts row and the
+  // open draft editor call into this handler, so the confirm (the
+  // label-delete idiom), the bridge verb, and the list prune are written
+  // once. The editor of the deleted draft stays mounted for the bridge
+  // round trip; that is safe by convergence — its autosave only ever
+  // updates this same draft id, so a straggling save (in flight, or the
+  // unmount flush the close below fires) either lands before the delete
+  // or resolves a 404 after it. The draft ends deleted either way, and the
+  // unmounted hook's save-error state dies with the component.
+  function handleDraftDiscard(row: ThreadSummary): void {
+    const confirmed = window.confirm(
+      `Delete draft “${row.subject || '(no subject)'}”? This permanently discards it; not even Trash keeps a copy.`
+    )
+    if (!confirmed) return
+    // A Drafts-folder row always carries its server draft id (fetchDrafts
+    // builds every row from drafts.get); without one no delete has a target.
+    if (!row.draftId) return
+    setDraftDiscard({ rowId: row.id, error: null })
+    window.api
+      .discardDraft(row.draftId)
+      .then(() => {
+        setDraftDiscard(null)
+        handleThreadRemoved(row.id)
+      })
+      .catch((e: unknown) => {
+        setDraftDiscard({ rowId: row.id, error: e instanceof Error ? e.message : String(e) })
+        recordError(e)
+      })
+  }
+
   // Archive and delete remove the thread: the row id is the thread id now,
   // so one row disappears per mutation instead of every matching message.
+  // Only the pane showing the removed thread folds along: deleting row B
+  // must not slam a compose or an unrelated open conversation.
   function handleThreadRemoved(threadId: string): void {
     setThreads((prev) => prev.filter((e) => e.id !== threadId))
-    closeEmail()
+    if (selectionRef.current === threadId) closeEmail()
   }
 
   // Read/unread is thread-level: Gmail marks whole conversations, and
@@ -290,6 +410,33 @@ function App(): React.JSX.Element {
       .catch((e: unknown) => recordError(e))
   }
 
+  // "Not spam" restores the thread to the Inbox: the removal of the SPAM
+  // label is also a list-clearing action, so the row leaves this view's
+  // list the way archive and trashing leave theirs.
+  function handleRowNotSpam(row: ThreadSummary): void {
+    window.api
+      .modifyLabels({
+        kind: 'thread',
+        id: row.id,
+        addLabelIds: ['INBOX'],
+        removeLabelIds: ['SPAM']
+      })
+      .then(() => handleThreadRemoved(row.id))
+      .catch((e: unknown) => recordError(e))
+  }
+
+  // Unsnooze on a Snoozed row, mirroring the row-level not spam above: the
+  // row leaves this view's list when the mail rejoins the Inbox. Mail parked
+  // natively carries no writable label, so the INBOX add alone ends the
+  // parking state; mail Mailsy parked itself restores through the restore
+  // pair, which also clears the wake schedule (EmailDetail's note).
+  function handleRowUnsnooze(row: ThreadSummary): void {
+    const write = row.snoozedByMailsy
+      ? window.api.restoreThread(row.id)
+      : window.api.modifyLabels({ kind: 'thread', id: row.id, addLabelIds: ['INBOX'] })
+    write.then(() => handleThreadRemoved(row.id)).catch((e: unknown) => recordError(e))
+  }
+
   // Star is thread-level like read/unread: threads.modify applies STARRED to
   // every message in the conversation.
   function handleThreadStarChanged(threadId: string, starred: boolean): void {
@@ -313,9 +460,93 @@ function App(): React.JSX.Element {
       .catch((e: unknown) => recordError(e))
   }
 
+  // A labels.list read wrapped for the places a mutation makes the rail's
+  // totals stale: create, delete, and every thread-level apply/remove.
+  // recordError is render-scoped like the neighbouring handlers; nothing it
+  // closes over changes this callback's behavior.
+  const refreshLabels = useCallback((): void => {
+    window.api
+      .listLabels()
+      .then((labelList) =>
+        // The rail and the detail menu are the user-label surfaces; system
+        // labels are Gmail's own views and stay out of both.
+        setLabels(labelList.filter((label) => label.type === 'user'))
+      )
+      .catch((e: unknown) => recordError(e))
+    // recordError is render-scoped; nothing it closes over changes this
+    // callback's behavior.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  useEffect(() => {
+    if (signedIn !== true) return
+    refreshLabels()
+  }, [signedIn, refreshLabels])
+
+  // Switching to a label sets the view pair: activeFolder carries the
+  // label-view plumbing and activeLabel the id, together the whole view.
+  function handleLabelSelect(label: MailLabel): void {
+    if (activeLabel?.id === label.id) return
+    setActiveLabel(label)
+    setActiveFolder('label')
+    setSearchInput('')
+    setCommittedQuery('')
+    closeEmail()
+    setError(null)
+    setThreads([])
+    setPageToken(undefined)
+    setActiveSearching(false)
+    lastFetchedRef.current = null
+  }
+
+  function handleCreateLabel(name: string): void {
+    window.api
+      .createUserLabel(name)
+      .then(() => {
+        setError(null)
+        refreshLabels()
+      })
+      .catch((e: unknown) => recordError(e))
+  }
+
+  function handleDeleteLabel(label: MailLabel): void {
+    const confirmed = window.confirm(
+      `Delete label “${label.name}”? Mail keeps every other label; the label is removed from every thread.`
+    )
+    if (!confirmed) return
+    window.api
+      .deleteUserLabel(label.id)
+      .then(() => {
+        setError(null)
+        // The deleted view's search cache has no live label behind it; a
+        // future label may reuse the id family, so the stale pages go with
+        // the label.
+        searchPageCacheRef.current.delete(`label:${label.id}`)
+        refreshLabels()
+        // The open view was exactly this label: its threads got unlabeled
+        // server-side, so the view itself is gone and the Inbox takes the
+        // screen back. A label view is the only place activeLabel tracks a
+        // still-existing label, so handleFolderSelect('inbox') is the full
+        // reset.
+        if (activeLabel?.id === label.id) handleFolderSelect('inbox')
+      })
+      .catch((e: unknown) => recordError(e))
+  }
+
+  // Apply/remove on the open thread: one labels.list read refreshes the
+  // rail's totals, and when the mutation drops the thread from the label
+  // view on screen, the row leaves the list the way archive leaves Inbox.
+  function handleThreadLabelChanged(threadId: string, labelId: string, applied: boolean): void {
+    refreshLabels()
+    if (activeLabel && !applied && activeLabel.id === labelId) {
+      setThreads((prev) => prev.filter((row) => row.id !== threadId))
+    }
+  }
+
   function handleFolderSelect(folder: MailFolder): void {
-    if (folder === activeFolder) return
+    if (folder === activeFolder && activeLabel === null) return
     setActiveFolder(folder)
+    setActiveLabel(null)
     setSearchInput('')
     setCommittedQuery('')
     closeEmail()
@@ -323,9 +554,8 @@ function App(): React.JSX.Element {
     // The list resets with the folder: a stale nextPageToken from the old
     // folder must never pair with the new folder's next-page fetch.
     setThreads([])
-    nextPageTokenRef.current = undefined
-    setNextPageToken(undefined)
-    searchingRef.current = false
+    setPageToken(undefined)
+    setActiveSearching(false)
     lastFetchedRef.current = null
   }
 
@@ -344,13 +574,18 @@ function App(): React.JSX.Element {
         maxResults: committedQuery ? SEARCH_PAGE_SIZE : LIST_PAGE_SIZE,
         pageToken: nextPageTokenRef.current ?? undefined,
         folder: activeFolder,
+        ...(activeLabel ? { userLabelId: activeLabel.id } : {}),
         ...(committedQuery ? { q: committedQuery } : {})
       })
       .then((page) => {
         if (requestIdRef.current !== requestId) return
-        setThreads((prev) => [...prev, ...page.threads])
-        nextPageTokenRef.current = page.nextPageToken
-        setNextPageToken(page.nextPageToken)
+        // Merged-in tail rows reappear in an older page's token range;
+        // keyed dedup keeps them single.
+        setThreads((prev) => {
+          const seen = new Set(prev.map((row) => row.id))
+          return [...prev, ...page.threads.filter((row) => !seen.has(row.id))]
+        })
+        setPageToken(page.nextPageToken)
       })
       .catch((e: unknown) => recordError(e))
       .finally(() => {
@@ -360,7 +595,162 @@ function App(): React.JSX.Element {
     // recordError is render-scoped like the neighbouring handlers it calls;
     // nothing it closes over changes this callback's behavior.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [committedQuery, activeFolder])
+  }, [committedQuery, activeFolder, activeLabel])
+
+  // First-page loads share one fetch pipeline; the mode decides the rest
+  // of the behavior.
+  const loadFirstPage = useCallback(
+    (mode: FirstPageMode): void => {
+      // A colliding fetch would see its response dropped by the request
+      // id; skipping here keeps a pushed reset fold from ever starting
+      // one it already knows will lose.
+      if (mode === 'sync' && (searchingRef.current || loadingMoreRef.current)) return
+      const requestId = ++requestIdRef.current
+      if (mode === 'sync') {
+        setQuietSearching(true)
+      } else {
+        setActiveSearching(true)
+      }
+      if (mode !== 'sync') setError(null)
+      if (mode === 'load') closeEmail()
+      window.api
+        .listFolder({
+          maxResults: committedQuery ? SEARCH_PAGE_SIZE : LIST_PAGE_SIZE,
+          folder: activeFolder,
+          ...(activeLabel ? { userLabelId: activeLabel.id } : {}),
+          ...(committedQuery ? { q: committedQuery } : {})
+        })
+        .then((page) => {
+          if (requestIdRef.current !== requestId) return
+          setThreads((prev) =>
+            mode === 'load'
+              ? page.threads
+              : mergeIncoming(prev, page.threads, mode === 'sync', selectionRef.current)
+          )
+          // A deeper token survives a pushed fold or manual refresh: string
+          // when more pages remain, null when exhausted. Resetting it to the
+          // fresh first page would re-walk pages the user already loaded on
+          // the next Load more.
+          if (mode === 'load' || nextPageTokenRef.current === undefined) {
+            setPageToken(page.nextPageToken)
+          }
+          storeFirstPage(page, committedQuery)
+        })
+        .catch((e: unknown) => {
+          if (requestIdRef.current !== requestId) return
+          if (mode === 'sync') {
+            // A pushed fold never paints the banner and never wipes a
+            // message the user is reading: only a dead grant acts. Transient
+            // sync failures surface on the next user-driven fetch.
+            if (isDeadGrantError(e)) exitToSignedOut()
+            return
+          }
+          recordError(e)
+        })
+        .finally(() => {
+          if (requestIdRef.current === requestId) {
+            setActiveSearching(false)
+          }
+        })
+    },
+    // closeEmail, storeFirstPage and recordError are render-scoped like the
+    // neighbouring handlers; nothing they close over changes this callback's
+    // behavior.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [committedQuery, activeFolder, activeLabel]
+  )
+
+  // The pushed-sync channel replaces the old fixed-interval poll: main
+  // sweeps the mailbox incrementally on its own adaptive clock (and on
+  // window focus), and every sweep result arrives here. The subscription
+  // lives only while signed in, so a result landing after sign-out finds
+  // no listener to repaint the empty screen. handleSyncResult below is a
+  // function declaration, so the render body can pin the latest copy to
+  // the ref the subscription reads.
+  const syncResultHandlerRef = useRef<(result: SyncResult) => void>(() => {})
+  const signedInRef = useRef<boolean | null>(null)
+
+  function handleSyncResult(result: SyncResult): void {
+    // A sweep resolving after sign-out has a cleared list behind it; its
+    // rows would repaint the signed-out screen. The same guard keeps a
+    // reset fold from refetching against a dead session.
+    if (signedInRef.current !== true) return
+    if (result.kind === 'reset') {
+      loadFirstPage('sync')
+      return
+    }
+    const viewLabel = viewLabelOf(activeFolder, activeLabel?.id ?? null)
+    // Query-defined views and server-search results cannot be judged by
+    // the swept label sets; they take a full quiet fold, but only when
+    // the sweep actually saw mailbox movement — an idle sweep costs
+    // them nothing.
+    if (viewLabel === null) {
+      if (result.threads.length > 0 || result.deletedThreadIds.length > 0) loadFirstPage('sync')
+      return
+    }
+    setThreads(
+      (prev) =>
+        applyMailDelta(prev, result, {
+          labelId: viewLabel,
+          isSearchActive: committedQuery.length > 0
+        }) ?? prev
+    )
+  }
+  // Pinned every render (effects are fine with refs; render bodies are
+  // not): the subscription reads the latest handler, and the guard in it
+  // reads the latest signed-in state.
+  useEffect(() => {
+    syncResultHandlerRef.current = handleSyncResult
+    signedInRef.current = signedIn
+  })
+
+  useEffect(() => {
+    if (signedIn !== true) return
+    return window.api.onSyncResult((result) => syncResultHandlerRef.current(result))
+  }, [signedIn])
+
+  // The Refresh button's path through the same funnel. In-flight clicks
+  // neither queue a second sweep nor get swallowed: the guard drops them
+  // while the button is already showing the sweep, and main coalesces
+  // anything that reaches it onto the running sweep. Failures surface
+  // through the shared error line.
+  const [syncing, setSyncing] = useState(false)
+  const syncingRef = useRef(false)
+
+  function handleRefresh(): void {
+    if (syncingRef.current) return
+    syncingRef.current = true
+    setSyncing(true)
+    window.api
+      .syncMail('button')
+      .then(handleSyncResult)
+      .catch((e: unknown) => recordError(e))
+      .finally(() => {
+        syncingRef.current = false
+        setSyncing(false)
+      })
+  }
+
+  // The snooze heartbeat, the minutes-level sweep of the wake design: an
+  // immediate tick on mount is the startup catch-up, and every tick that
+  // returns a restored count above zero refreshes the view so the
+  // returning thread appears without waiting for the next sync sweep. A
+  // failed tick self-corrects on the interval, so it never nags the
+  // error line.
+  useEffect(() => {
+    if (signedIn !== true) return
+    const snoozeSweep = (): void => {
+      window.api
+        .snoozeTick()
+        .then((restored) => {
+          if (restored > 0) loadFirstPage('manual')
+        })
+        .catch(() => {})
+    }
+    snoozeSweep()
+    const timer = window.setInterval(snoozeSweep, SNOOZE_TICK_MS)
+    return () => window.clearInterval(timer)
+  }, [loadFirstPage, signedIn])
 
   useEffect(() => {
     const sentinel = sentinelRef.current
@@ -388,70 +778,39 @@ function App(): React.JSX.Element {
     return () => clearTimeout(timer)
   }, [searchInput])
 
-  // Single source for list/search fetching. Skips duplicate queries so
-  // re-renders and the initial mount can't double-fire the same request,
-  // and reuses cached search pages instead of spending quota again.
+  // First-page loads go through loadFirstPage below. This effect owns the
+  // decision to skip: the view is already the list on screen, or the query
+  // has a cached first page to honor instead of spending quota again.
   useEffect(() => {
     if (signedIn !== true) return
     if (
       lastFetchedRef.current &&
       lastFetchedRef.current.folder === activeFolder &&
+      lastFetchedRef.current.labelId === (activeLabel?.id ?? null) &&
       lastFetchedRef.current.q === committedQuery &&
       threads.length > 0
     ) {
       return
     }
     const cached = committedQuery
-      ? searchPageCacheRef.current.get(activeFolder)?.get(committedQuery)
+      ? searchPageCacheRef.current.get(viewKey)?.get(committedQuery)
       : undefined
     if (cached) {
       setThreads(cached.threads)
-      nextPageTokenRef.current = cached.nextPageToken
-      setNextPageToken(cached.nextPageToken)
-      lastFetchedRef.current = { folder: activeFolder, q: committedQuery }
+      setPageToken(cached.nextPageToken)
+      lastFetchedRef.current = {
+        folder: activeFolder,
+        labelId: activeLabel?.id ?? null,
+        q: committedQuery
+      }
       return
     }
-    const requestId = ++requestIdRef.current
-    searchingRef.current = true
-    setSearching(true)
-    setError(null)
-    closeEmail()
-    window.api
-      .listFolder({
-        maxResults: committedQuery ? SEARCH_PAGE_SIZE : LIST_PAGE_SIZE,
-        folder: activeFolder,
-        ...(committedQuery ? { q: committedQuery } : {})
-      })
-      .then((page) => {
-        if (requestIdRef.current !== requestId) return
-        setThreads(page.threads)
-        nextPageTokenRef.current = page.nextPageToken
-        setNextPageToken(page.nextPageToken)
-        if (!committedQuery) {
-          setUnfilteredByFolder((prev) => new Map(prev).set(activeFolder, page.threads))
-        } else {
-          const folderCache =
-            searchPageCacheRef.current.get(activeFolder) ?? new Map<string, ThreadPage>()
-          searchPageCacheRef.current.set(activeFolder, folderCache)
-          folderCache.set(committedQuery, page)
-          if (folderCache.size > 20) folderCache.delete(folderCache.keys().next().value!)
-        }
-        lastFetchedRef.current = { folder: activeFolder, q: committedQuery }
-      })
-      .catch((e: unknown) => {
-        if (requestIdRef.current !== requestId) return
-        recordError(e)
-      })
-      .finally(() => {
-        if (requestIdRef.current === requestId) {
-          searchingRef.current = false
-          setSearching(false)
-        }
-      })
+    loadFirstPage('load')
     // `emails.length` is intentionally read, not depended on: depending on
-    // it would refetch after every result arrives.
+    // it would refetch after every result arrives. loadFirstPage's identity
+    // flips with the same two inputs, so listing it would change nothing.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [committedQuery, signedIn, activeFolder])
+  }, [committedQuery, signedIn, activeFolder, activeLabel])
 
   useEffect(() => {
     let cancelled = false
@@ -483,6 +842,24 @@ function App(): React.JSX.Element {
     <div className="app">
       <div className="actions">
         {signedIn === false && <button onClick={handleSignIn}>Sign in with Google</button>}
+        {signedIn === true && (
+          <>
+            <button type="button" onClick={openCompose}>
+              Compose
+            </button>
+            <button
+              type="button"
+              className={syncing ? 'refresh-button syncing' : 'refresh-button'}
+              aria-busy={syncing}
+              onClick={() => handleRefresh()}
+              aria-label="Refresh mail"
+            >
+              <RefreshCw size={14} strokeWidth={2} aria-hidden="true" />
+              Refresh
+            </button>
+            <button onClick={handleSignOut}>Sign out</button>
+          </>
+        )}
         {searching && threads.length === 0 && !isSearchActive && (
           <span role="status">Loading…</span>
         )}
@@ -492,12 +869,32 @@ function App(): React.JSX.Element {
       {error && <p className="error">{error}</p>}
 
       <main className="mail-layout">
-        <FolderRail activeFolder={activeFolder} onSelect={handleFolderSelect} />
+        <FolderRail
+          activeFolder={activeFolder}
+          activeLabelId={activeLabel?.id ?? null}
+          labels={labels}
+          onSelect={handleFolderSelect}
+          onSelectLabel={handleLabelSelect}
+          onCreateLabel={handleCreateLabel}
+          onDeleteLabel={handleDeleteLabel}
+        />
         <aside
           className="email-sidebar"
-          aria-label={FOLDER_CONFIG[activeFolder].label}
+          aria-label={activeLabel ? activeLabel.name : FOLDER_CONFIG[activeFolder].label}
           ref={sidebarRef}
         >
+          {activeLabel && (
+            <div className="user-label-heading">
+              <h2>{activeLabel.name}</h2>
+              <button
+                type="button"
+                aria-label={`Delete ${activeLabel.name}`}
+                onClick={() => handleDeleteLabel(activeLabel)}
+              >
+                delete label
+              </button>
+            </div>
+          )}
           <form
             className="search-bar"
             role="search"
@@ -531,49 +928,17 @@ function App(): React.JSX.Element {
           )}
           <ul className="emails">
             {displayedThreads.map((row) => (
-              <li key={row.id} className={row.unreadCount > 0 ? 'unread' : undefined}>
-                <button
-                  type="button"
-                  onClick={() => handleSelect(row)}
-                  style={{ all: 'unset', display: 'block', cursor: 'pointer', width: '100%' }}
-                >
-                  <strong className="email-text">
-                    {row.subject}
-                    {row.unreadCount > 1 ? ` (${row.unreadCount})` : ''}
-                  </strong>
-                  {/* Sender names for the whole conversation, like Gmail's
-                      participant summary on thread rows. */}
-                  <div className="from email-text">
-                    {row.participants.map(senderNameOf).join(', ')}
-                  </div>
-                  <div className="snippet email-text">{row.snippet}</div>
-                </button>
-                {activeFolder !== 'drafts' && (
-                  <>
-                    <button type="button" onClick={() => handleRowReadToggle(row)}>
-                      {row.unreadCount > 0 ? 'mark read' : 'mark unread'}
-                    </button>
-                    <button
-                      type="button"
-                      className={`star-toggle${row.starred ? ' starred' : ''}`}
-                      onClick={() => handleRowStarToggle(row)}
-                      title={row.starred ? 'Unstar' : 'Star'}
-                      aria-label={row.starred ? 'Unstar' : 'Star'}
-                      aria-pressed={row.starred}
-                    >
-                      {/* The star glyph is a closed contour drawn unfilled by
-                          the icon set; filling it with the row's gold when
-                          starred is the whole state read. */}
-                      <HugeiconsIcon
-                        icon={StarIcon}
-                        size={18}
-                        strokeWidth={1.8}
-                        fill={row.starred ? 'currentColor' : 'none'}
-                      />
-                    </button>
-                  </>
-                )}
-              </li>
+              <MailListRow
+                key={row.id}
+                row={row}
+                folder={activeFolder}
+                onOpen={handleSelect}
+                onReadToggle={handleRowReadToggle}
+                onStarToggle={handleRowStarToggle}
+                onNotSpam={handleRowNotSpam}
+                onUnsnooze={handleRowUnsnooze}
+                onDeleteDraft={handleDraftDiscard}
+              />
             ))}
           </ul>
           {hasMore ? (
@@ -600,23 +965,33 @@ function App(): React.JSX.Element {
         </aside>
 
         <section className="email-content" aria-label="Email content">
-          {selectedThread ? (
-            activeFolder === 'drafts' ? (
+          {composing ? (
+            <ComposeEditor onClose={closeEmail} />
+          ) : selectedThread ? (
+            selectedIsDraft ? (
               <DraftEditor
                 key={selectedThread.id}
                 row={selectedThread}
                 detail={draftDetail}
                 detailLoading={draftDetailLoading}
                 onSent={handleDraftSent}
+                onDraftDiscard={() => handleDraftDiscard(selectedThread)}
+                discardError={
+                  draftDiscard && draftDiscard.rowId === selectedThread.id
+                    ? draftDiscard.error
+                    : null
+                }
               />
             ) : (
               <EmailDetail
                 key={selectedThread.id}
                 thread={selectedThread}
                 folder={activeFolder}
+                labels={labels}
                 onThreadRemoved={handleThreadRemoved}
                 onThreadReadChanged={handleThreadReadChanged}
                 onThreadStarChanged={handleThreadStarChanged}
+                onThreadLabelChanged={handleThreadLabelChanged}
               />
             )
           ) : (
