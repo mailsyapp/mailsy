@@ -27,22 +27,17 @@ button {
   cursor: pointer;
 }
 
-/* The Refresh button is the live refresh affordance: a click turns the
-   spinner on for as long as the sweep runs, so the button never reads as
-   dead. The spinner slot is always printed at its final size, so the
-   never-spinning state and the spinning one owe the same width. */
-.refresh-button::before {
-  content: '';
-  display: inline-block;
-  width: 10px;
-  height: 10px;
-  margin-right: 6px;
+/* The Refresh button is the live refresh affordance: its RefreshCw icon is
+   always visible, so the button's width is identical idle and busy, and a
+   click turns the same icon into the spinner for as long as the sweep
+   runs, so the button never reads as dead or as carrying phantom space. */
+.refresh-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 
-.refresh-button.syncing::before {
-  border: 2px solid currentColor;
-  border-bottom-color: transparent;
-  border-radius: 50%;
+.refresh-button.syncing svg {
   animation: refresh-spin 0.7s linear infinite;
 }
 
@@ -183,6 +178,67 @@ button {
 .folder-rail-button.active {
   background: #000;
   color: #fff;
+}
+
+/* Rail tooltips, native titles replaced: Electron's title tooltips lag a
+   second and vary with the OS, while these match the app's type. The tip
+   lives on data-tip (the same text the element's aria-label announces),
+   so hover and focus-visible alike reveal it: keyboard users get the
+   hint too, at identical strength.
+   Timing is the native-tooltip standard, carried partly by CSS and
+   partly by FolderRail's hover handling: show waits for the pointer to
+   dwell TOOLTIP_DWELL_MS on an affordance, then the .tips-active class
+   ends the wait for the whole rail — moving down the rail shows each
+   neighbor's tip instantly, one tooltip gliding instead of a fresh 0.5s
+   stall per icon. Leaving the rail revokes the class, so a fresh visit
+   pays the wait again. Hide is always instant, so a skim never leaves a
+   parade of labels mid-fade. */
+.folder-rail [data-tip] {
+  position: relative;
+}
+
+.folder-rail [data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  left: calc(100% + 10px);
+  top: 50%;
+  translate: 0 -50%;
+  z-index: 10;
+  padding: 5px 9px;
+  border-radius: 6px;
+  background: #1a1a1a;
+  color: #fff;
+  font-size: 12px;
+  line-height: 1;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity 0.12s ease,
+    visibility 0.12s ease;
+}
+
+.folder-rail [data-tip]:hover::after,
+.folder-rail [data-tip]:focus-visible::after {
+  opacity: 1;
+  visibility: visible;
+  transition-delay: 0.5s;
+}
+
+.folder-rail.tips-active [data-tip]:hover::after,
+.folder-rail.tips-active [data-tip]:focus-visible::after {
+  transition-delay: 0s;
+}
+
+@media (max-width: 700px) {
+  /* The rail is a horizontal row here, so a tip to the right would sit
+     over the neighbor icon; below the row is where the eye already is. */
+  .folder-rail [data-tip]::after {
+    left: 50%;
+    top: calc(100% + 8px);
+    translate: -50% 0;
+  }
 }
 
 @media (max-width: 700px) {
