@@ -1,40 +1,44 @@
-import { useRef, useState } from 'react'
-import { HugeiconsIcon } from '@hugeicons/react'
+import { useEffect, useRef, useState } from 'react'
 import {
-  AddIcon,
-  AlarmClockIcon,
-  Cancel01Icon,
-  Delete02Icon,
-  DiscountTag01Icon,
-  InboxIcon,
-  InformationCircleIcon,
-  LabelImportantIcon,
-  Mail02Icon,
-  MailEdit01Icon,
-  MessageMultiple02Icon,
-  SentIcon,
-  SpamIcon,
-  StarIcon,
-  Tag01Icon,
-  User02Icon
-} from '@hugeicons/core-free-icons'
+  AlarmClock,
+  Flag,
+  Inbox,
+  Info,
+  Mail,
+  Megaphone,
+  MessagesSquare,
+  OctagonAlert,
+  Plus,
+  Send,
+  SquarePen,
+  Star,
+  Tag,
+  Trash2,
+  Users,
+  X,
+  type LucideIcon
+} from 'lucide-react'
 import type { MailFolder, MailLabel } from '../../../shared/types'
 
-const FOLDERS: Array<{ id: MailFolder; label: string; icon: typeof InboxIcon }> = [
-  { id: 'inbox', label: 'Inbox', icon: InboxIcon },
-  { id: 'starred', label: 'Starred', icon: StarIcon },
-  { id: 'snoozed', label: 'Snoozed', icon: AlarmClockIcon },
+// The dwell before a rail tooltip shows, matching the native-tooltip
+// standard (~0.5s rest before the hint appears).
+const TOOLTIP_DWELL_MS = 500
+
+const FOLDERS: Array<{ id: MailFolder; label: string; icon: LucideIcon }> = [
+  { id: 'inbox', label: 'Inbox', icon: Inbox },
+  { id: 'starred', label: 'Starred', icon: Star },
+  { id: 'snoozed', label: 'Snoozed', icon: AlarmClock },
   // Gmail's category stack, Important first, the four inbox tabs after it.
-  { id: 'important', label: 'Important', icon: LabelImportantIcon },
-  { id: 'social', label: 'Social', icon: User02Icon },
-  { id: 'promotions', label: 'Promotions', icon: DiscountTag01Icon },
-  { id: 'updates', label: 'Updates', icon: InformationCircleIcon },
-  { id: 'forums', label: 'Forums', icon: MessageMultiple02Icon },
-  { id: 'drafts', label: 'Drafts', icon: MailEdit01Icon },
-  { id: 'sent', label: 'Sent', icon: SentIcon },
-  { id: 'spam', label: 'Spam', icon: SpamIcon },
-  { id: 'trash', label: 'Trash', icon: Delete02Icon },
-  { id: 'all', label: 'All Mail', icon: Mail02Icon }
+  { id: 'important', label: 'Important', icon: Flag },
+  { id: 'social', label: 'Social', icon: Users },
+  { id: 'promotions', label: 'Promotions', icon: Megaphone },
+  { id: 'updates', label: 'Updates', icon: Info },
+  { id: 'forums', label: 'Forums', icon: MessagesSquare },
+  { id: 'drafts', label: 'Drafts', icon: SquarePen },
+  { id: 'sent', label: 'Sent', icon: Send },
+  { id: 'spam', label: 'Spam', icon: OctagonAlert },
+  { id: 'trash', label: 'Trash', icon: Trash2 },
+  { id: 'all', label: 'All Mail', icon: Mail }
 ]
 
 // One chip per user label, held together by the count it opens: the body
@@ -59,7 +63,7 @@ function UserLabelChip({
       <button
         type="button"
         className="user-label-chip-open"
-        title={label.name}
+        data-tip={label.name}
         aria-label={label.name}
         aria-current={isActive ? 'page' : undefined}
         style={{ background: color.background, color: color.text }}
@@ -70,11 +74,11 @@ function UserLabelChip({
       <button
         type="button"
         className="user-label-chip-remove"
-        title={`Delete label ${label.name}`}
+        data-tip={`Delete label ${label.name}`}
         aria-label={`Delete ${label.name}`}
         onClick={() => onDelete(label)}
       >
-        <HugeiconsIcon icon={Cancel01Icon} size={10} strokeWidth={2.5} />
+        <X size={10} strokeWidth={2.5} aria-hidden="true" />
       </button>
     </div>
   )
@@ -113,6 +117,54 @@ export function FolderRail({
   // delete affordances. Collapse-on-toggle keeps the 56px column at its
   // familiar width, so expanding never reflows the rest of the layout.
   const [labelsShown, setLabelsShown] = useState(false)
+  // Tooltip dwell, the wait-then-costs-nothing-again rule: the first tip
+  // shows only after the pointer rests TOOLTIP_DWELL_MS on an affordance
+  // (the CSS transition-delay carries the wait), and once one tip is up
+  // the .tips-active class ends the wait for the rest of the rail —
+  // moving down the rail must not re-charge 0.5s on every neighbor, or
+  // reading the column feels like a slot machine. Leaving the rail
+  // revokes the mode so a fresh visit pays the wait again. The class is
+  // managed by ref, never React state: hover churn would re-render the
+  // whole folder list for a purely pointer-visual change.
+  const railRef = useRef<HTMLElement | null>(null)
+  const tipTimerRef = useRef<number | null>(null)
+
+  useEffect(
+    () => () => {
+      // Unmount mid-dwell must not leave a timer that mutates a dead node.
+      if (tipTimerRef.current !== null) window.clearTimeout(tipTimerRef.current)
+    },
+    []
+  )
+
+  function handleTipHover(event: React.MouseEvent<HTMLElement>): void {
+    const rail = railRef.current
+    if (!rail) return
+    if (tipTimerRef.current !== null) {
+      window.clearTimeout(tipTimerRef.current)
+      tipTimerRef.current = null
+    }
+    // Mode is already on (neighbor switches pay nothing) or the pointer
+    // is over a tipless node (chips container, create input): nothing to
+    // charge or grant.
+    if (rail.classList.contains('tips-active')) return
+    if (!(event.target instanceof Element)) return
+    if (!event.target.closest('[data-tip]')) return
+    tipTimerRef.current = window.setTimeout(() => {
+      tipTimerRef.current = null
+      rail.classList.add('tips-active')
+    }, TOOLTIP_DWELL_MS)
+  }
+
+  function handleTipLeave(): void {
+    // A dwell that never elapsed is cancelled, not banked; leaving the
+    // rail entirely also ends the already-paid mode.
+    if (tipTimerRef.current !== null) {
+      window.clearTimeout(tipTimerRef.current)
+      tipTimerRef.current = null
+    }
+    railRef.current?.classList.remove('tips-active')
+  }
 
   function commitDraft(): void {
     const name = draftName.trim()
@@ -123,7 +175,13 @@ export function FolderRail({
   }
 
   return (
-    <nav className="folder-rail" aria-label="Mail folders">
+    <nav
+      className="folder-rail"
+      aria-label="Mail folders"
+      ref={railRef}
+      onMouseOver={handleTipHover}
+      onMouseLeave={handleTipLeave}
+    >
       {FOLDERS.map((folder) => {
         const isActive = folder.id === activeFolder && activeLabelId === null
         return (
@@ -131,24 +189,24 @@ export function FolderRail({
             key={folder.id}
             type="button"
             className={`folder-rail-button${isActive ? ' active' : ''}`}
-            title={folder.label}
+            data-tip={folder.label}
             aria-label={folder.label}
             aria-current={isActive ? 'page' : undefined}
             onClick={() => onSelect(folder.id)}
           >
-            <HugeiconsIcon icon={folder.icon} size={22} strokeWidth={1.8} />
+            <folder.icon size={22} strokeWidth={1.8} aria-hidden="true" />
           </button>
         )
       })}
       <button
         type="button"
         className={`folder-rail-button${activeLabelId !== null && !labelsShown && labels.length > 0 ? ' active' : ''}`}
-        title={labelsShown ? 'Hide labels' : 'Labels'}
+        data-tip={labelsShown ? 'Hide labels' : 'Labels'}
         aria-label={labelsShown ? 'Hide labels' : 'Labels'}
         aria-expanded={labelsShown}
         onClick={() => setLabelsShown((shown) => !shown)}
       >
-        <HugeiconsIcon icon={Tag01Icon} size={22} strokeWidth={1.8} />
+        <Tag size={22} strokeWidth={1.8} aria-hidden="true" />
       </button>
       {labelsShown && (
         <>
@@ -194,7 +252,7 @@ export function FolderRail({
             type="button"
             className="user-label-create"
             aria-label="New label"
-            title="New label"
+            data-tip="New label"
             onClick={() => {
               setDraftOpen(true)
               // autofocus fires on mount, but an already-visited draft may
@@ -202,7 +260,7 @@ export function FolderRail({
               requestAnimationFrame(() => draftRef.current?.focus())
             }}
           >
-            <HugeiconsIcon icon={AddIcon} size={18} strokeWidth={2.2} />
+            <Plus size={18} strokeWidth={2.2} aria-hidden="true" />
           </button>
         </>
       )}

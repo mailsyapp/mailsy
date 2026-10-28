@@ -30,6 +30,7 @@
     "fuse.js": "^7.5.0",
     "google-auth-library": "^11.1.0",
     "googleapis": "^183.0.0",
+    "lucide-react": "^1.60.0",
     "nodemailer": "^10.0.14"
   },
   "devDependencies": {

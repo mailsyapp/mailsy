@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { RefreshCw } from 'lucide-react'
 import type {
   ThreadSummary,
   EmailDetail as EmailDetailData,
@@ -853,6 +854,7 @@ function App(): React.JSX.Element {
               onClick={() => handleRefresh()}
               aria-label="Refresh mail"
             >
+              <RefreshCw size={14} strokeWidth={2} aria-hidden="true" />
               Refresh
             </button>
             <button onClick={handleSignOut}>Sign out</button>
