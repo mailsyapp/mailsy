@@ -47,8 +47,7 @@ const api = {
   discardDraft: (draftId: string): Promise<void> =>
     ipcRenderer.invoke('gmail:discard-draft', draftId),
   // Nothing picked resolves to [] so a cancelled dialog changes nothing.
-  pickAttachments: (): Promise<ComposeAttachment[]> =>
-    ipcRenderer.invoke('attachments:pick'),
+  pickAttachments: (): Promise<ComposeAttachment[]> => ipcRenderer.invoke('attachments:pick'),
   // One stored attachment's bytes, standard base64 (see fetchAttachment).
   getAttachment: (messageId: string, attachmentId: string): Promise<string> =>
     ipcRenderer.invoke('gmail:get-attachment', messageId, attachmentId),

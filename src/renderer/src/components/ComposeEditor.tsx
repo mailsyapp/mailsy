@@ -1,7 +1,9 @@
 import { useState } from 'react'
 import { RecipientFields } from './RecipientFields'
-import { hasRecipient, type RecipientState } from '../../../shared/types'
+import { hasRecipient, type RecipientState, type SendEmailRequest } from '../../../shared/types'
 import { useDraftAutosave } from './useDraftAutosave'
+import { AttachmentChips } from './AttachmentChips'
+import { useComposerAttachments } from './useComposerAttachments'
 
 type ComposeEditorProps = {
   // Closes the composer without sending. App owns the content pane (an open
@@ -28,9 +30,17 @@ export function ComposeEditor({ onClose }: ComposeEditorProps): React.JSX.Elemen
   // Once sent, the form retires instead of re-arming: a second send would
   // be a real second message, not a retry (there is no draft to consume).
   const [sent, setSent] = useState(false)
-  // The carbon lists ride the same autosave payload as everything else, so
-  // a restored draft reopens with them.
-  const autosave = useDraftAutosave({ ...recipients, subject, body }, undefined, true)
+  // Local files picked with the native dialog; the records ride every
+  // autosave and send payload below like the text fields do, so a restored
+  // draft reopens with them.
+  const attach = useComposerAttachments()
+  const attachmentsField = (): Pick<SendEmailRequest, 'attachments'> =>
+    attach.attachments.length ? { attachments: attach.attachments } : {}
+  const autosave = useDraftAutosave(
+    { ...recipients, subject, body, ...attachmentsField() },
+    undefined,
+    true
+  )
 
   async function handleCancel(): Promise<void> {
     // Cancel is today's discard action: let any in-flight or queued write
@@ -66,9 +76,15 @@ export function ComposeEditor({ onClose }: ComposeEditorProps): React.JSX.Elemen
       autosave.suspend()
       try {
         if (draftId) {
-          await window.api.sendDraft({ draftId, ...recipients, subject, body })
+          await window.api.sendDraft({
+            draftId,
+            ...recipients,
+            subject,
+            body,
+            ...attachmentsField()
+          })
         } else {
-          await window.api.sendEmail({ ...recipients, subject, body })
+          await window.api.sendEmail({ ...recipients, subject, body, ...attachmentsField() })
         }
       } finally {
         autosave.resume()
@@ -102,6 +118,14 @@ export function ComposeEditor({ onClose }: ComposeEditorProps): React.JSX.Elemen
         <span>Message</span>
         <textarea value={body} onChange={(event) => setBody(event.target.value)} />
       </label>
+
+      <AttachmentChips
+        attachments={attach.attachments}
+        error={attach.error}
+        picking={attach.picking}
+        onPick={attach.pick}
+        onRemove={attach.remove}
+      />
 
       {sendError && <p role="alert">{sendError}</p>}
       {autosave.error && <p role="alert">Draft not saved: {autosave.error}</p>}

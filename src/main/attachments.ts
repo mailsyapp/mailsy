@@ -1,7 +1,11 @@
 import { dialog } from 'electron'
 import { readFile } from 'node:fs/promises'
 import { basename } from 'node:path'
-import { ATTACHMENTS_TOTAL_LIMIT_BYTES, type ComposeAttachment } from '../shared/types'
+import {
+  ATTACHMENTS_TOTAL_LIMIT_BYTES,
+  attachmentsLimitError,
+  type ComposeAttachment
+} from '../shared/types'
 
 // Local file picking for the composer. It sits outside mail/ because
 // choosing local files is not Gmail work; index.ts wires the single verb
@@ -32,9 +36,7 @@ export async function pickAttachments(): Promise<ComposeAttachment[]> {
   const attachments = await Promise.all(result.filePaths.map(readAttachmentFile))
   const totalBytes = attachments.reduce((sum, attachment) => sum + attachment.size, 0)
   if (totalBytes > ATTACHMENTS_TOTAL_LIMIT_BYTES) {
-    throw new Error(
-      `Attachments are too large to send (${Math.floor(totalBytes / (1024 * 1024))} MB). Gmail's limit is 25 MB per message.`
-    )
+    throw new Error(attachmentsLimitError(totalBytes))
   }
   return attachments
 }

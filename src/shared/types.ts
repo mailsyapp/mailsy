@@ -120,6 +120,13 @@ export const SESSION_EXPIRED_ERROR = 'Your Google session has expired. Sign in a
 // share this constant so the number can't drift apart.
 export const ATTACHMENTS_TOTAL_LIMIT_BYTES = 20 * 1024 * 1024
 
+// The sentence every over-limit path says, built here so the pick-time
+// refusal, the send boundary, and the renderer's own cumulative check stay
+// word-identical.
+export function attachmentsLimitError(totalBytes: number): string {
+  return `Attachments are too large to send (${Math.floor(totalBytes / (1024 * 1024))} MB). Gmail's limit is 25 MB per message.`
+}
+
 // The composer's three address lines. Omission is "not this field" for a
 // patch handler and "never typed" for the receipt test; the lines carry the
 // same comma-separated address shape as SendEmailRequest's `to`.
