@@ -18,7 +18,8 @@ export async function toEmailDetail(
   const out: MessageBodies = {
     text: '',
     html: '',
-    inlineImages: []
+    inlineImages: [],
+    attachments: []
   }
   if (msg.payload) collectBodies(msg.payload, out)
   if (!out.text && !out.html) out.text = decodeBody(msg.payload?.body?.data)
@@ -64,7 +65,10 @@ export async function toEmailDetail(
     unread: (msg.labelIds ?? []).includes('UNREAD'),
     starred: (msg.labelIds ?? []).includes('STARRED'),
     bodyText: out.text,
-    bodyHtml
+    bodyHtml,
+    // Content-less refs only; the draft editor resolves each back to bytes
+    // when it must re-emit the draft without losing its files.
+    attachments: out.attachments
   }
 }
 

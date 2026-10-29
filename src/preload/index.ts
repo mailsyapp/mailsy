@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 import type {
+  ComposeAttachment,
   EmailDetail,
   EmailThread,
   ListFolderOptions,
@@ -45,6 +46,12 @@ const api = {
     ipcRenderer.invoke('gmail:save-draft', request),
   discardDraft: (draftId: string): Promise<void> =>
     ipcRenderer.invoke('gmail:discard-draft', draftId),
+  // Nothing picked resolves to [] so a cancelled dialog changes nothing.
+  pickAttachments: (): Promise<ComposeAttachment[]> =>
+    ipcRenderer.invoke('attachments:pick'),
+  // One stored attachment's bytes, standard base64 (see fetchAttachment).
+  getAttachment: (messageId: string, attachmentId: string): Promise<string> =>
+    ipcRenderer.invoke('gmail:get-attachment', messageId, attachmentId),
   modifyLabels: (request: ModifyLabelsRequest): Promise<void> =>
     ipcRenderer.invoke('gmail:modify', request),
   snoozeThread: (threadId: string, restoreAt: number): Promise<void> =>
