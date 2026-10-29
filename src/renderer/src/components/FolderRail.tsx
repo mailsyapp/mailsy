@@ -62,13 +62,14 @@ function UserLabelChip({
   onDelete: (label: MailLabel) => void
 }): React.JSX.Element {
   const color = label.color ?? { background: '#d9d9d9', text: '#000000' }
+  const count = label.threadsTotal > 0 ? label.threadsTotal : ''
   return (
-    <div className={`user-label-chip${isActive ? ' active' : ''}${expanded ? ' expanded' : ''}`}>
+    <div className={`user-label-chip${isActive ? ' active' : ''}`}>
       <button
         type="button"
         className="user-label-chip-open"
         data-tip={expanded ? undefined : label.name}
-        aria-label={expanded ? undefined : label.name}
+        aria-label={label.name}
         aria-current={isActive ? 'page' : undefined}
         style={{ background: color.background, color: color.text }}
         onClick={() => onSelect(label)}
@@ -76,14 +77,10 @@ function UserLabelChip({
         {expanded ? (
           <>
             <span className="user-label-chip-name">{label.name}</span>
-            <span className="user-label-chip-count">
-              {label.threadsTotal > 0 ? label.threadsTotal : ''}
-            </span>
+            <span className="user-label-chip-count">{count}</span>
           </>
-        ) : label.threadsTotal > 0 ? (
-          label.threadsTotal
         ) : (
-          ''
+          count
         )}
       </button>
       <button
@@ -132,10 +129,10 @@ export function FolderRail({
   // nothing persisted. Expanded makes the label section permanently
   // visible, so labelsShown only gates the collapsed rail's Tag toggle.
   const [expanded, setExpanded] = useState(false)
-  // The rail collapses to the folder icons by default; the Labels toggle
-  // expands it for the label chips, their inline create form, and the
-  // delete affordances. Collapse-on-toggle keeps the 56px column at its
-  // familiar width, so expanding never reflows the rest of the layout.
+  // Collapsed mode keeps the Label chips behind a toggle (the user called
+  // the always-on chips out as clutter on 2026-10-20): the Tags button
+  // reveals them without overflowing the 56px column. Expanded mode above
+  // is the only always-visible chips surface.
   const [labelsShown, setLabelsShown] = useState(false)
   // Tooltip dwell, the wait-then-costs-nothing-again rule: the first tip
   // shows only after the pointer rests TOOLTIP_DWELL_MS on an affordance
@@ -211,7 +208,7 @@ export function FolderRail({
         className="folder-rail-button rail-toggle"
         data-tip={expanded ? 'Collapse sidebar' : 'Expand sidebar'}
         aria-label={expanded ? 'Collapse sidebar' : 'Expand sidebar'}
-        onClick={() => setExpanded((open) => !open)}
+        onClick={() => setExpanded((wasExpanded) => !wasExpanded)}
       >
         {expanded ? (
           <PanelLeftClose size={22} strokeWidth={1.8} aria-hidden="true" />
@@ -227,9 +224,11 @@ export function FolderRail({
             type="button"
             className={`folder-rail-button${isActive ? ' active' : ''}${expanded ? ' expanded' : ''}`}
             // Expanded rows read as text already; a tip would only repeat
-            // the label next to itself.
+            // the label next to itself. The aria-label stays on either
+            // way: the mobile media query hides the text span, so the
+            // accessible name cannot live in the visible content alone.
             data-tip={expanded ? undefined : folder.label}
-            aria-label={expanded ? undefined : folder.label}
+            aria-label={folder.label}
             aria-current={isActive ? 'page' : undefined}
             onClick={() => onSelect(folder.id)}
           >
@@ -294,8 +293,8 @@ export function FolderRail({
           )}
           <button
             type="button"
-            className={`user-label-create${expanded ? ' expanded' : ''}`}
-            aria-label={expanded ? undefined : 'New label'}
+            className="user-label-create"
+            aria-label="New label"
             data-tip={expanded ? undefined : 'New label'}
             onClick={() => {
               setDraftOpen(true)

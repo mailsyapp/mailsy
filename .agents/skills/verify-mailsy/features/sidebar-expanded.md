@@ -6,8 +6,8 @@ The rail has two widths. Collapsed (the default) is the icon column with tooltip
 
 - `expand-control` is the single expand/collapse control at the top of the rail: `Expand sidebar` when collapsed, `Collapse sidebar` when expanded, exactly one at all times in the vertical layout.
 - `named-rows` renders each of the thirteen folders as an icon + name row while expanded, each a unique button, with tooltips suppressed where the text already says it.
-- `labels-section` shows the Labels section permanently while expanded: the seeded user label as a full-width chip row carrying its name and thread count, the `New label` affordance opening the same inline form the collapsed Tag toggle reveals, and the section gone again after collapsing.
-- `state-rides-renders` keeps the expansion across a folder switch and collapses back to a default view identical to the one the `sidebar` journey asserts.
+- `labels-section` shows the Labels section permanently while expanded: the seeded user label as a full-width chip row carrying its name and thread count, the `New label` affordance opening the same inline form the collapsed Tag toggle reveals, and the collapsed-only Tag toggle gone while expanded.
+- `state-rides-renders` keeps the expansion across a folder switch and, after collapsing, keeps the chips the Tag toggle left on screen: expansion changes the rail's width and visibility, never the labels gate the collapse remembers.
 
 ## How to get to it (user POV)
 
@@ -23,9 +23,9 @@ Preconditions:
 - Seeded label `Receipts` present (same mailbox seed the `labels` journey uses).
 - `scripts/doctor.sh` exits 0.
 
-- **Expand.** Run `node scripts/drive.mjs --feature sidebar-expanded --run-id "$RUN_ID" --port "$VERIFY_MAILSY_PORT"`. The journey first asserts the default view still gates the labels surface off (`New label` absent), clicks `Expand sidebar`, and waits for the control to announce `Collapse sidebar`.
+- **Expand.** Run `node scripts/drive.mjs --feature sidebar-expanded --run-id "$RUN_ID" --port "$VERIFY_MAILSY_PORT"`. The journey first asserts the default view still gates the labels surface off (`New label` absent), reveals it once through the collapsed Tag toggle, then clicks `Expand sidebar` and waits for the control to announce `Collapse sidebar`. While expanded, the Tag toggle itself is gone (the section is permanent there).
 - **Named rows and the labels section.** Every folder button is unique by name while expanded, exactly one `Labels` heading exists, the `Receipts` chip is readable by name, and `New label` opens the inline `Label name` form (Escape dismisses it).
-- **State and round trip.** The journey switches to Trash and back while expanded (expansion and the labels section survive the re-render), then collapses and asserts `New label` is gone and Inbox browsing still works.
+- **State and round trip.** The journey switches to Trash and back while expanded (expansion and the labels section survive the re-render), then collapses and asserts the chips are still on screen exactly as the Tag toggle left them (`state-rides-renders`), and finally hides them again so the default view matches the one the `sidebar` journey asserts.
 
 ## Proof
 

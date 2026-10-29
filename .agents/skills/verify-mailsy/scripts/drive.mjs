@@ -1527,11 +1527,24 @@ try {
       'the rail carries exactly one expand control',
       'expand control missing or duplicated'
     )
+    // The collapsed Tag reveal is the state expansion has to preserve:
+    // show the chips first, so the round trip ends where this journey began.
+    await rail.getByRole('button', { name: 'Labels', exact: true }).click()
+    assert(
+      (await rail.getByRole('button', { name: 'New label', exact: true }).count()) === 1,
+      'the collapsed Tag toggle reveals the labels surface',
+      'the Tag toggle did not reveal the labels surface'
+    )
     await toggle.click()
     await rail
       .getByRole('button', { name: 'Collapse sidebar', exact: true })
       .waitFor({ timeout: 10000 })
     log('pass: expanding flips the control to Collapse sidebar')
+    assert(
+      (await rail.getByRole('button', { name: 'Labels', exact: true }).count()) === 0,
+      'the collapsed-only Tag toggle is gone while expanded',
+      'the Tag toggle survived the expansion'
+    )
     const FOLDERS = [
       'Inbox',
       'Starred',
@@ -1563,7 +1576,7 @@ try {
     // The seeded user label re-exposed as the section the default view
     // hides: chip rows show the label's name, New label opens the create
     // form the collapsed Tag toggle used to reveal.
-    await rail.getByText('Receipts', { exact: true }).first().waitFor({ timeout: 10000 })
+    await rail.getByText('Receipts', { exact: true }).waitFor({ timeout: 10000 })
     log('pass: the labels section re-exposes the seeded label by name')
     await rail.getByRole('button', { name: 'New label', exact: true }).click()
     await rail.getByRole('textbox', { name: 'Label name' }).waitFor({ timeout: 10000 })
@@ -1583,16 +1596,23 @@ try {
       'the labels section survives a folder switch while expanded',
       'the labels section was lost across a folder switch'
     )
-    // Round trip: collapse re-gates the label section and leaves the
-    // default view exactly as the `sidebar` journey asserts it.
+    // Round trip: collapse re-gates the expanded-only sections and leaves
+    // the chips exactly as the Tag toggle left them, then hiding the
+    // chips by hand restores the default view the other journeys assert.
     await rail.getByRole('button', { name: 'Collapse sidebar', exact: true }).click()
     await rail
       .getByRole('button', { name: 'Expand sidebar', exact: true })
       .waitFor({ timeout: 10000 })
     assert(
+      (await rail.getByRole('button', { name: 'New label', exact: true }).count()) === 1,
+      'collapse returns the chips the Tag toggle left on screen',
+      'the chips-shown state did not survive the collapse'
+    )
+    await rail.getByRole('button', { name: 'Hide labels', exact: true }).click()
+    assert(
       (await rail.getByRole('button', { name: 'New label', exact: true }).count()) === 0,
-      'collapsing re-gates the labels section',
-      'New label affordance survived the collapse'
+      'the default view is restored after collapsing and hiding',
+      'the labels surface stayed open in the default view'
     )
     await rail.getByRole('button', { name: 'Inbox', exact: true }).click()
     await page.getByRole('complementary', { name: 'Inbox' }).waitFor({ timeout: 10000 })

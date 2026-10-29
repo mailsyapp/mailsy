@@ -230,12 +230,12 @@ button {
   align-items: stretch;
 }
 
-.user-label-chip.expanded {
+.folder-rail.expanded .user-label-chip {
   width: 100%;
   height: 40px;
 }
 
-.user-label-chip.expanded .user-label-chip-open {
+.folder-rail.expanded .user-label-chip-open {
   justify-content: space-between;
   padding: 0 10px;
 }
@@ -252,7 +252,7 @@ button {
   font-variant-numeric: tabular-nums;
 }
 
-.user-label-create.expanded {
+.folder-rail.expanded .user-label-create {
   width: 100%;
   height: 40px;
   justify-content: flex-start;
@@ -344,8 +344,10 @@ button {
 
   /* Expanded mode reverts to this row's icon spacing: rail width, row
      stretching and the text spans are all collapsed-rail-only concepts
-     (the toggle is display-none, the label section simply shows its
-     icon-sized chips as the regular layout does). */
+     (the toggle stays 40px, the label section falls back from its named
+     rows to the icon-sized chips the regular layout shows — the thread
+     count span stays visible so an expanded narrow-window chip still
+     means something). */
   .folder-rail.expanded {
     width: auto;
     align-items: center;
@@ -355,10 +357,9 @@ button {
     /* Kept visible, not display-none: the state must stay round-trippable
        if the user expands on desktop and narrows the window. In the row
        layout it renders as the plain 40px icon button, and clicking it
-       flips back to the collapsed icon set. */
-    width: 40px;
-    justify-content: center;
-    padding: 0;
+       flips back to the collapsed icon set. The one expanded rule that
+       must go is the vertical column's margin below the toggle. */
+    margin-bottom: 0;
   }
 
   .folder-rail.expanded .folder-rail-button {
@@ -370,8 +371,7 @@ button {
   .folder-rail.expanded .folder-rail-button-text,
   .folder-rail.expanded .folder-rail-heading,
   .folder-rail.expanded .user-label-create-text,
-  .folder-rail.expanded .user-label-chip-name,
-  .folder-rail.expanded .user-label-chip-count {
+  .folder-rail.expanded .user-label-chip-name {
     display: none;
   }
 
