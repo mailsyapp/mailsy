@@ -1,10 +1,11 @@
 import { chromium } from 'playwright'
 const MOCK = new URL('../fixtures/api-mock.js', import.meta.url).pathname
+const PORT = process.argv[2] ?? process.env.VERIFY_MAILSY_PORT ?? '4317'
 const browser = await chromium.launch()
 const context = await browser.newContext()
 await context.addInitScript({ path: MOCK })
 const page = await context.newPage()
-await page.goto('http://127.0.0.1:4283/', { waitUntil: 'domcontentloaded' })
+await page.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: 'domcontentloaded' })
 await page.getByRole('complementary', { name: 'Inbox' }).waitFor({ timeout: 10000 })
 await page.getByRole('button', { name: 'Compose', exact: true }).click()
 const content = page.getByRole('region', { name: 'Email content' })

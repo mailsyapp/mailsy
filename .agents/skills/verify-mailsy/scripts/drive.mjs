@@ -25,6 +25,12 @@ if (!FEATURE || !RUN_ID || !PORT) {
   console.error('usage: drive.mjs --feature <id> --run-id <id> --port <n> [--signed-out]')
   process.exit(2)
 }
+// RUN_ID names the artifacts dir under the skill; refuse any value that
+// could escape it (matches the serve.sh/doctor.sh guard).
+if (!/^[A-Za-z0-9._-]+$/.test(RUN_ID)) {
+  console.error(`infra: --run-id may contain only letters, digits, '.', '_' and '-' (got '${RUN_ID}')`)
+  process.exit(2)
+}
 try {
   await access(MOCK, constants.R_OK)
 } catch {

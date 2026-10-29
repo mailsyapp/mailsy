@@ -8,9 +8,11 @@ The `.agents/skills/` directory contains shareable agent skills (see `.agents/RE
 
 ```bash
 export RUN_ID="run-$(date +%s)"
-export VERIFY_MAILSY_PORT=4317
+export VERIFY_MAILSY_PORT=4317   # pick a free port per concurrent run
 cd .agents/skills/verify-mailsy
-./scripts/doctor.sh && ./scripts/serve.sh start
+npm --prefix drive install                        # Playwright + Chromium, once
+mkdir -p "artifacts/$RUN_ID" && ./scripts/doctor.sh   # preflight, read-only
+./scripts/serve.sh start
 node scripts/drive.mjs --feature inbox --run-id "$RUN_ID" --port "$VERIFY_MAILSY_PORT"
 ./scripts/serve.sh stop
 ```

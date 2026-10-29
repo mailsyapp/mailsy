@@ -1,14 +1,16 @@
 // Read-only live probe against the real Electron app (Gmail backend).
 // Asserts: signed-in inbox renders, refresh sweep runs without error,
 // Snoozed / All Mail views answer, zero error banners. Screenshots saved.
+// One-off probes resolve Playwright from the skill's single dependency
+// install (../drive, see SKILL.md Helpers) instead of a local node_modules.
 import { createRequire } from 'node:module'
-import { chromium } from 'playwright-core'
 import { mkdirSync } from 'node:fs'
 
 const RUN_DIR = process.argv[2]
 const CDP_PORT = process.argv[3] ?? '9223'
 mkdirSync(RUN_DIR, { recursive: true })
-const require2 = createRequire(new URL('./', import.meta.url))
+const require2 = createRequire(new URL('../drive/', import.meta.url))
+const { chromium } = require2('playwright')
 
 // Watchdog: a CDP or slow mesh hang must never wedge the coordinator; hard
 // exit with whatever states are already logged + screenshots on disk.

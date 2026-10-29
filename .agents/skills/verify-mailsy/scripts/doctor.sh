@@ -9,7 +9,17 @@ if [ -n "${VERIFY_MAILSY_REPO:-}" ]; then
 elif REPO="$(git -C "$HERE" rev-parse --show-toplevel 2>/dev/null)"; then
   :
 else
-  REPO="$(cd "$SKILL_DIR/../../../.." && pwd)"
+  # SKILL_DIR sits three levels under the repo root: <repo>/.agents/skills/<skill>.
+  REPO="$(cd "$SKILL_DIR/../../.." && pwd)"
+fi
+# RUN_ID names the run dir under /tmp; refuse any value that could escape it.
+if [ -n "${RUN_ID:-}" ]; then
+  case "$RUN_ID" in
+    *[!A-Za-z0-9._-]*)
+      echo "RUN_ID may contain only letters, digits, '.', '_' and '-' (got '$RUN_ID')" >&2
+      exit 2
+      ;;
+  esac
 fi
 PORT="${VERIFY_MAILSY_PORT:-4317}"
 RUN_DIR="/tmp/verify-mailsy-${RUN_ID:-default}"

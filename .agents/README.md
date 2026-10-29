@@ -20,15 +20,17 @@ Point your agent harness at this directory (e.g. OpenCode reads skill dirs that 
 
 ```bash
 export RUN_ID="run-$(date +%s)"
-export VERIFY_MAILSY_PORT=4317
+export VERIFY_MAILSY_PORT=4317   # pick a free port per concurrent run
 cd .agents/skills/verify-mailsy
-./scripts/doctor.sh          # preflight, read-only
-./scripts/serve.sh start     # serves the renderer on the scaffold config
+npm --prefix drive install       # Playwright + Chromium, once
+mkdir -p "artifacts/$RUN_ID"     # evidence dir; helpers stay read-only
+./scripts/doctor.sh              # preflight, read-only
+./scripts/serve.sh start         # serves the renderer on the scaffold config
 node scripts/drive.mjs --feature inbox --run-id "$RUN_ID" --port "$VERIFY_MAILSY_PORT"
 ./scripts/serve.sh stop
 ```
 
-`REPO` resolution order for the helpers: `$VERIFY_MAILSY_REPO` (set it when running the skill from outside a checkout, or against a worktree), else `git rev-parse --show-toplevel`, else the path four levels up.
+`REPO` resolution order for the helpers: `$VERIFY_MAILSY_REPO` (set it when running the skill from outside a checkout, or against a worktree), else `git rev-parse --show-toplevel`, else the path three levels up from the skill dir.
 
 ## Layout policy
 

@@ -46,6 +46,7 @@ Google OAuth (`.env` `MAIN_VITE_GOOGLE_CLIENT_ID/SECRET`) is **not** required fo
 Run first whenever anything looks off, and before every drive. Read-only; it changes nothing.
 
 ```bash
+mkdir -p "artifacts/$RUN_ID"    # evidence dir first: the script itself writes nothing
 ./scripts/doctor.sh > "artifacts/$RUN_ID/doctor.log"
 ```
 
@@ -105,3 +106,11 @@ Scripted runs do not cover the Electron shell (`src/main/`, preload, OAuth loopb
 ## Helpers
 
 Every helper is executable and invoked exactly as shown above: `scripts/doctor.sh`, `scripts/serve.sh start|stop`, `node scripts/drive.mjs --feature <id> --run-id <id> --port <n>`. The driver needs its dependency once: `npm --prefix drive install` (Playwright + Chromium download, cached in `~/.cache/ms-playwright`). A helper you have to reverse-engineer is not a helper — if the invocation differs, fix this file.
+
+## Scratch probes (reference only)
+
+Everything outside the helpers above is one-off scratch kept for reference, not the maintained surface. Known assumptions:
+
+- `drive/*.mjs` probes mix two transports: scaffold-server runs (default or argv port) and `chromium.connectOverCDP('http://127.0.0.1:9222')` against a live dev-mode Electron window (`--remote-debugging-port=9222`). Expect to edit ports before reuse.
+- `scripts/ccbcc-probe.mjs` drives the scaffold server at `$VERIFY_MAILSY_PORT` (default 4317, or its argv); `scripts/live-probe.mjs` drives the live app over CDP (argv: `<run-dir> [cdp-port]`, watchdog at 150s).
+- Both `scripts/*.mjs` probes resolve Playwright from `drive/node_modules` — the one `npm --prefix drive install` above must exist. Nothing else in `scripts/` ships a dependency.
