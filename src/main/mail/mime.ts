@@ -1,7 +1,7 @@
 import type { Readable } from 'node:stream'
 import { createTransport } from 'nodemailer'
 import type { gmail_v1 } from 'googleapis'
-import type { SendEmailRequest } from '../../shared/types'
+import type { MessageAttachmentRef, SendEmailRequest } from '../../shared/types'
 
 function toBuffer(message: Buffer | Readable): Promise<Buffer> {
   if (Buffer.isBuffer(message)) return Promise.resolve(message)
@@ -46,6 +46,21 @@ export interface MessageBodies {
   text: string
   html: string
   inlineImages: InlineImage[]
+  // Named parts that are not cid-inline media: the content-less
+  // attachment list a detail fetch reports. Sizes are the raw base64
+  // payload sizes Gmail reports, and stop being exact after decoding, so
+  // the UI labels them approximate.
+  attachments: MessageAttachmentRef[]
+}
+
+function collectRef(out: MessageBodies, part: gmail_v1.Schema$MessagePart): void {
+  if (part.filename && part.body?.attachmentId) {
+    out.attachments.push({
+      filename: part.filename,
+      size: part.body.size ?? 0,
+      attachmentId: part.body.attachmentId
+    })
+  }
 }
 
 export function collectBodies(part: gmail_v1.Schema$MessagePart, out: MessageBodies): void {
@@ -57,20 +72,29 @@ export function collectBodies(part: gmail_v1.Schema$MessagePart, out: MessageBod
       (header) => header.name?.toLowerCase() === 'content-id'
     )?.value
     if (contentId) {
+      // Rendered inline: the cid references below replace them with data
+      // URLs, so they never join the attachment list even though they
+      // carry filenames and attachment ids too.
       out.inlineImages.push({
         contentId,
         mimeType: mime,
         data: part.body?.data,
         attachmentId: part.body?.attachmentId
       })
+    } else if (part.filename && part.body?.attachmentId) {
+      collectRef(out, part)
     }
+  }
+  // A filename means a named non-inline part: a real attachment.
+  else if (part.filename && part.body?.attachmentId) {
+    collectRef(out, part)
   }
   for (const p of part.parts ?? []) collectBodies(p, out)
 }
 
 type RawMessageFields = Pick<
   SendEmailRequest,
-  'to' | 'cc' | 'bcc' | 'subject' | 'body' | 'bodyHtml' | 'inReplyTo' | 'references'
+  'to' | 'cc' | 'bcc' | 'subject' | 'body' | 'bodyHtml' | 'inReplyTo' | 'references' | 'attachments'
 >
 
 export async function buildRawMessage(from: string, request: RawMessageFields): Promise<string> {
@@ -89,7 +113,19 @@ export async function buildRawMessage(from: string, request: RawMessageFields): 
     text: request.body,
     ...(request.bodyHtml !== undefined ? { html: request.bodyHtml } : {}),
     ...(request.inReplyTo ? { inReplyTo: request.inReplyTo } : {}),
-    ...(request.references ? { references: request.references } : {})
+    ...(request.references ? { references: request.references } : {}),
+    // Nodemailer infers each part's content type from the filename and
+    // emits Content-Disposition: attachment parts, so the decoded bytes
+    // ride the raw MIME exactly the way Gmail expects to store and send
+    // them. Empty lists are absent (never an empty multipart block).
+    ...(request.attachments?.length
+      ? {
+          attachments: request.attachments.map((attachment) => ({
+            filename: attachment.filename,
+            content: Buffer.from(attachment.data, 'base64')
+          }))
+        }
+      : {})
   })
   const raw = await toBuffer(message.message)
   return raw.toString('base64url')

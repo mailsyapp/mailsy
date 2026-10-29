@@ -1,5 +1,10 @@
 import { getAccountEmail, getGmailClient } from '../auth'
-import type { SaveDraftRequest, SendDraftRequest, SendEmailRequest } from '../../shared/types'
+import {
+  ATTACHMENTS_TOTAL_LIMIT_BYTES,
+  type SaveDraftRequest,
+  type SendDraftRequest,
+  type SendEmailRequest
+} from '../../shared/types'
 import { hasRecipient } from '../../shared/types'
 import { isNotFoundError, rethrowDeadGrant, withQuotaRetry } from './resilience'
 import { buildRawMessage } from './mime'
@@ -19,13 +24,47 @@ function assertMessageFields(request: SendEmailRequest, requireRecipient: boolea
     (request.bcc !== undefined && typeof request.bcc !== 'string') ||
     (request.threadId !== undefined && typeof request.threadId !== 'string') ||
     (request.inReplyTo !== undefined && typeof request.inReplyTo !== 'string') ||
-    (request.references !== undefined && typeof request.references !== 'string')
+    (request.references !== undefined && typeof request.references !== 'string') ||
+    !attachmentsShaped(request)
   ) {
     throw new Error('Invalid email request')
   }
   // The send receipt test is the shared rule; main re-asks it at the trust
   // boundary so a renderer that skipped the gate still cannot send empty.
   if (requireRecipient && !hasRecipient(request)) throw new Error('Recipient is required')
+  const totalBytes = attachmentsBytes(request)
+  if (totalBytes > ATTACHMENTS_TOTAL_LIMIT_BYTES) {
+    throw new Error(
+      `Attachments are too large to send (${Math.floor(totalBytes / (1024 * 1024))} MB). Gmail's limit is 25 MB per message.`
+    )
+  }
+}
+
+// Field shapes only: every listed entry must be a fully shaped
+// ComposeAttachment (the bridge carries bytes, so a partial entry would
+// produce a corrupt MIME part). Size lives on its own rule below.
+function attachmentsShaped(request: SendEmailRequest): boolean {
+  if (request.attachments === undefined) return true
+  if (!Array.isArray(request.attachments)) return false
+  return request.attachments.every(
+    (attachment) =>
+      !!attachment &&
+      typeof attachment === 'object' &&
+      typeof attachment.filename === 'string' &&
+      typeof attachment.size === 'number' &&
+      typeof attachment.data === 'string' &&
+      attachment.data.length > 0
+  )
+}
+
+// Decoded byte total across the list; 0 for any request without one. The
+// picker computed the same number from the real files, and a mutated
+// request can arrive with anything, so main re-asks before building MIME.
+function attachmentsBytes(request: SendEmailRequest): number {
+  if (!request.attachments) return 0
+  let total = 0
+  for (const attachment of request.attachments) total += Math.floor(attachment.data.length * 0.75)
+  return total
 }
 
 export async function sendEmail(request: SendEmailRequest): Promise<void> {
