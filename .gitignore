@@ -6,5 +6,11 @@ out
 *.log*
 .env
 AGENTS.md
-.agents/
 TASKS.md
+
+# .agents publishes the skills/ dir; orchestration history and run evidence stay local
+.agents/orchestrate/
+.agents/pr-body-*.md
+.agents/**/artifacts/
+.agents/skills/verify-mailsy/drive/*.png
+.agents/skills/verify-mailsy/drive/*.log

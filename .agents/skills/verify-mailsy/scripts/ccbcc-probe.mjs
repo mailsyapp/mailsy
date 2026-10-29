@@ -1,0 +1,23 @@
+import { chromium } from 'playwright'
+const MOCK = new URL('../fixtures/api-mock.js', import.meta.url).pathname
+const PORT = process.argv[2] ?? process.env.VERIFY_MAILSY_PORT ?? '4317'
+const browser = await chromium.launch()
+const context = await browser.newContext()
+await context.addInitScript({ path: MOCK })
+const page = await context.newPage()
+await page.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: 'domcontentloaded' })
+await page.getByRole('complementary', { name: 'Inbox' }).waitFor({ timeout: 10000 })
+await page.getByRole('button', { name: 'Compose', exact: true }).click()
+const content = page.getByRole('region', { name: 'Email content' })
+await content.getByRole('heading', { name: 'New email' }).waitFor({ timeout: 10000 })
+await content.getByRole('button', { name: 'Cc', exact: true }).click()
+await content.locator('.composer').getByLabel('Cc').fill('cecil@example.com')
+await content.getByRole('button', { name: 'Bcc', exact: true }).click()
+await content.locator('.composer').getByLabel('Bcc').fill('secret@example.com')
+await content.locator('.composer').getByLabel('To').fill('ada@example.com')
+await content.locator('.composer').getByLabel('Subject').fill('Carbon note for the record')
+await content.locator('.composer').getByLabel('Message').fill('Carbon recipients ride the send.')
+await content.getByRole('button', { name: 'Send', exact: true }).click()
+await content.getByText('Message sent.').waitFor({ timeout: 10000 })
+console.log(JSON.stringify((await page.evaluate(() => window.__sent)), null, 2))
+await browser.close()
