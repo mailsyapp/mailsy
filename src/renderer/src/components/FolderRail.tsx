@@ -8,6 +8,8 @@ import {
   Megaphone,
   MessagesSquare,
   OctagonAlert,
+  PanelLeftClose,
+  PanelLeftOpen,
   Plus,
   Send,
   SquarePen,
@@ -48,28 +50,41 @@ const FOLDERS: Array<{ id: MailFolder; label: string; icon: LucideIcon }> = [
 // nested button is not renderable.
 function UserLabelChip({
   label,
+  expanded,
   isActive,
   onSelect,
   onDelete
 }: {
   label: MailLabel
+  expanded: boolean
   isActive: boolean
   onSelect: (label: MailLabel) => void
   onDelete: (label: MailLabel) => void
 }): React.JSX.Element {
   const color = label.color ?? { background: '#d9d9d9', text: '#000000' }
   return (
-    <div className={`user-label-chip${isActive ? ' active' : ''}`}>
+    <div className={`user-label-chip${isActive ? ' active' : ''}${expanded ? ' expanded' : ''}`}>
       <button
         type="button"
         className="user-label-chip-open"
-        data-tip={label.name}
-        aria-label={label.name}
+        data-tip={expanded ? undefined : label.name}
+        aria-label={expanded ? undefined : label.name}
         aria-current={isActive ? 'page' : undefined}
         style={{ background: color.background, color: color.text }}
         onClick={() => onSelect(label)}
       >
-        {label.threadsTotal > 0 ? label.threadsTotal : ''}
+        {expanded ? (
+          <>
+            <span className="user-label-chip-name">{label.name}</span>
+            <span className="user-label-chip-count">
+              {label.threadsTotal > 0 ? label.threadsTotal : ''}
+            </span>
+          </>
+        ) : label.threadsTotal > 0 ? (
+          label.threadsTotal
+        ) : (
+          ''
+        )}
       </button>
       <button
         type="button"
@@ -112,6 +127,11 @@ export function FolderRail({
   const [draftOpen, setDraftOpen] = useState(false)
   const [draftName, setDraftName] = useState('')
   const draftRef = useRef<HTMLInputElement | null>(null)
+  // The rail has two widths, collapsed (icon-only, default) and expanded
+  // (~220px rows): renderer-local presentation like labelsShown below,
+  // nothing persisted. Expanded makes the label section permanently
+  // visible, so labelsShown only gates the collapsed rail's Tag toggle.
+  const [expanded, setExpanded] = useState(false)
   // The rail collapses to the folder icons by default; the Labels toggle
   // expands it for the label chips, their inline create form, and the
   // delete affordances. Collapse-on-toggle keeps the 56px column at its
@@ -174,48 +194,72 @@ export function FolderRail({
     setDraftOpen(false)
   }
 
+  // Expanded shows the label section permanently; collapsed keeps the
+  // existing Tag-toggle gate.
+  const labelsVisible = expanded || labelsShown
+
   return (
     <nav
-      className="folder-rail"
+      className={`folder-rail${expanded ? ' expanded' : ''}`}
       aria-label="Mail folders"
       ref={railRef}
       onMouseOver={handleTipHover}
       onMouseLeave={handleTipLeave}
     >
+      <button
+        type="button"
+        className="folder-rail-button rail-toggle"
+        data-tip={expanded ? 'Collapse sidebar' : 'Expand sidebar'}
+        aria-label={expanded ? 'Collapse sidebar' : 'Expand sidebar'}
+        onClick={() => setExpanded((open) => !open)}
+      >
+        {expanded ? (
+          <PanelLeftClose size={22} strokeWidth={1.8} aria-hidden="true" />
+        ) : (
+          <PanelLeftOpen size={22} strokeWidth={1.8} aria-hidden="true" />
+        )}
+      </button>
       {FOLDERS.map((folder) => {
         const isActive = folder.id === activeFolder && activeLabelId === null
         return (
           <button
             key={folder.id}
             type="button"
-            className={`folder-rail-button${isActive ? ' active' : ''}`}
-            data-tip={folder.label}
-            aria-label={folder.label}
+            className={`folder-rail-button${isActive ? ' active' : ''}${expanded ? ' expanded' : ''}`}
+            // Expanded rows read as text already; a tip would only repeat
+            // the label next to itself.
+            data-tip={expanded ? undefined : folder.label}
+            aria-label={expanded ? undefined : folder.label}
             aria-current={isActive ? 'page' : undefined}
             onClick={() => onSelect(folder.id)}
           >
             <folder.icon size={22} strokeWidth={1.8} aria-hidden="true" />
+            {expanded && <span className="folder-rail-button-text">{folder.label}</span>}
           </button>
         )
       })}
-      <button
-        type="button"
-        className={`folder-rail-button${activeLabelId !== null && !labelsShown && labels.length > 0 ? ' active' : ''}`}
-        data-tip={labelsShown ? 'Hide labels' : 'Labels'}
-        aria-label={labelsShown ? 'Hide labels' : 'Labels'}
-        aria-expanded={labelsShown}
-        onClick={() => setLabelsShown((shown) => !shown)}
-      >
-        <Tag size={22} strokeWidth={1.8} aria-hidden="true" />
-      </button>
-      {labelsShown && (
+      {!expanded && (
+        <button
+          type="button"
+          className={`folder-rail-button${activeLabelId !== null && !labelsShown && labels.length > 0 ? ' active' : ''}`}
+          data-tip={labelsShown ? 'Hide labels' : 'Labels'}
+          aria-label={labelsShown ? 'Hide labels' : 'Labels'}
+          aria-expanded={labelsShown}
+          onClick={() => setLabelsShown((shown) => !shown)}
+        >
+          <Tag size={22} strokeWidth={1.8} aria-hidden="true" />
+        </button>
+      )}
+      {labelsVisible && (
         <>
+          {expanded && <span className="folder-rail-heading">Labels</span>}
           {labels.length > 0 && (
             <div className="user-label-chips" aria-label="User labels">
               {labels.map((label) => (
                 <UserLabelChip
                   key={label.id}
                   label={label}
+                  expanded={expanded}
                   isActive={label.id === activeLabelId}
                   onSelect={onSelectLabel}
                   onDelete={onDeleteLabel}
@@ -250,9 +294,9 @@ export function FolderRail({
           )}
           <button
             type="button"
-            className="user-label-create"
-            aria-label="New label"
-            data-tip="New label"
+            className={`user-label-create${expanded ? ' expanded' : ''}`}
+            aria-label={expanded ? undefined : 'New label'}
+            data-tip={expanded ? undefined : 'New label'}
             onClick={() => {
               setDraftOpen(true)
               // autofocus fires on mount, but an already-visited draft may
@@ -261,6 +305,7 @@ export function FolderRail({
             }}
           >
             <Plus size={18} strokeWidth={2.2} aria-hidden="true" />
+            {expanded && <span className="user-label-create-text">New label</span>}
           </button>
         </>
       )}

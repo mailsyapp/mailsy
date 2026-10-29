@@ -144,7 +144,9 @@ button {
 .mail-layout {
   display: grid;
   flex: 1;
-  grid-template-columns: 56px minmax(220px, 32%) minmax(0, 1fr);
+  /* auto: the rail sizes itself — 56px collapsed, its own width when
+     expanded — instead of a fixed grid track. */
+  grid-template-columns: auto minmax(220px, 32%) minmax(0, 1fr);
   gap: 12px;
   min-height: 0;
 }
@@ -156,6 +158,10 @@ button {
   gap: 4px;
   padding: 12px 0;
   border: 2px solid black;
+  /* The grid's first column is auto now, so the collapsed rail fixes its
+     own width and renders exactly as the old 56px track did. */
+  box-sizing: border-box;
+  width: 56px;
 }
 
 .folder-rail-button {
@@ -178,6 +184,84 @@ button {
 .folder-rail-button.active {
   background: #000;
   color: #fff;
+}
+
+/* Expanded rail: rows widen to icon + name text and the label section is
+   permanently visible, so the Tag toggle (which only gates collapsed) is
+   gone. Everything here is scoped under .folder-rail.expanded so the
+   mobile media query can revert the whole block to its horizontal row. */
+.folder-rail.expanded {
+  width: 220px;
+  align-items: stretch;
+}
+
+.folder-rail.expanded .folder-rail-button {
+  width: 100%;
+  justify-content: flex-start;
+  gap: 10px;
+  padding: 0 10px;
+}
+
+/* The toggle stays icon-only in both states — a left-aligned 40px square
+   instead of stretching with the text rows. After the row rule above, so
+   it wins the equal-specificity tie. */
+.folder-rail.expanded .rail-toggle {
+  width: 40px;
+  justify-content: center;
+  padding: 0;
+  margin-bottom: 8px;
+}
+
+.folder-rail-button-text {
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.folder-rail-heading {
+  margin: 8px 10px 0;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.folder-rail.expanded .user-label-chips {
+  width: 100%;
+  align-items: stretch;
+}
+
+.user-label-chip.expanded {
+  width: 100%;
+  height: 40px;
+}
+
+.user-label-chip.expanded .user-label-chip-open {
+  justify-content: space-between;
+  padding: 0 10px;
+}
+
+.user-label-chip-name {
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.user-label-chip-count {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.user-label-create.expanded {
+  width: 100%;
+  height: 40px;
+  justify-content: flex-start;
+  gap: 10px;
+  padding: 0 10px;
+}
+
+.user-label-create-text {
+  font-size: 13px;
 }
 
 /* Rail tooltips, native titles replaced: Electron's title tooltips lag a
@@ -250,9 +334,67 @@ button {
   /* Three grid children now: the rail becomes a compact horizontal row
      instead of a 35%-height column block. */
   .folder-rail {
+    /* The 56px collapsed width is the vertical column's; the row sizes
+       itself like it always did. */
+    width: auto;
     flex-direction: row;
     justify-content: center;
     padding: 6px 0;
+  }
+
+  /* Expanded mode reverts to this row's icon spacing: rail width, row
+     stretching and the text spans are all collapsed-rail-only concepts
+     (the toggle is display-none, the label section simply shows its
+     icon-sized chips as the regular layout does). */
+  .folder-rail.expanded {
+    width: auto;
+    align-items: center;
+  }
+
+  .folder-rail.expanded .rail-toggle {
+    /* Kept visible, not display-none: the state must stay round-trippable
+       if the user expands on desktop and narrows the window. In the row
+       layout it renders as the plain 40px icon button, and clicking it
+       flips back to the collapsed icon set. */
+    width: 40px;
+    justify-content: center;
+    padding: 0;
+  }
+
+  .folder-rail.expanded .folder-rail-button {
+    width: 40px;
+    justify-content: center;
+    padding: 0;
+  }
+
+  .folder-rail.expanded .folder-rail-button-text,
+  .folder-rail.expanded .folder-rail-heading,
+  .folder-rail.expanded .user-label-create-text,
+  .folder-rail.expanded .user-label-chip-name,
+  .folder-rail.expanded .user-label-chip-count {
+    display: none;
+  }
+
+  .folder-rail.expanded .user-label-chips {
+    width: auto;
+    align-items: center;
+  }
+
+  .folder-rail.expanded .user-label-chip {
+    width: 32px;
+    height: 32px;
+  }
+
+  .folder-rail.expanded .user-label-chip-open {
+    justify-content: center;
+    padding: 0;
+  }
+
+  .folder-rail.expanded .user-label-create {
+    width: 32px;
+    height: 32px;
+    justify-content: center;
+    padding: 0;
   }
 }
 
