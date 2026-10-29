@@ -1,5 +1,6 @@
 import { getAccountEmail, getGmailClient } from '../auth'
 import {
+  attachmentsLimitError,
   ATTACHMENTS_TOTAL_LIMIT_BYTES,
   type SaveDraftRequest,
   type SendDraftRequest,
@@ -34,9 +35,7 @@ function assertMessageFields(request: SendEmailRequest, requireRecipient: boolea
   if (requireRecipient && !hasRecipient(request)) throw new Error('Recipient is required')
   const totalBytes = attachmentsBytes(request)
   if (totalBytes > ATTACHMENTS_TOTAL_LIMIT_BYTES) {
-    throw new Error(
-      `Attachments are too large to send (${Math.floor(totalBytes / (1024 * 1024))} MB). Gmail's limit is 25 MB per message.`
-    )
+    throw new Error(attachmentsLimitError(totalBytes))
   }
 }
 
