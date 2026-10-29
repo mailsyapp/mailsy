@@ -1509,6 +1509,95 @@ try {
     await page.getByRole('complementary', { name: 'Inbox' }).waitFor({ timeout: 10000 })
     log('pass: the Inbox affordance opens its view again')
     await snapshot(page, 'sidebar')
+  } else if (FEATURE === 'sidebar-expanded') {
+    // The expanded sidebar: one control flips the icon rail to named rows
+    // and re-exposes the labels section the default view gates off. The
+    // state must survive a folder switch and collapse clean again.
+    const rail = page.getByRole('navigation', { name: 'Mail folders' })
+    const inbox = page.getByRole('complementary', { name: 'Inbox' })
+    await inbox.waitFor({ timeout: 10000 })
+    assert(
+      (await rail.getByRole('button', { name: 'New label', exact: true }).count()) === 0,
+      'the default view still gates the labels section off',
+      'New label affordance rendered before the sidebar was expanded'
+    )
+    const toggle = rail.getByRole('button', { name: 'Expand sidebar', exact: true })
+    assert(
+      (await toggle.count()) === 1,
+      'the rail carries exactly one expand control',
+      'expand control missing or duplicated'
+    )
+    await toggle.click()
+    await rail
+      .getByRole('button', { name: 'Collapse sidebar', exact: true })
+      .waitFor({ timeout: 10000 })
+    log('pass: expanding flips the control to Collapse sidebar')
+    const FOLDERS = [
+      'Inbox',
+      'Starred',
+      'Snoozed',
+      'Important',
+      'Social',
+      'Promotions',
+      'Updates',
+      'Forums',
+      'Drafts',
+      'Sent',
+      'Spam',
+      'Trash',
+      'All Mail'
+    ]
+    for (const name of FOLDERS) {
+      const count = await rail.getByRole('button', { name, exact: true }).count()
+      assert(
+        count === 1,
+        `the ${name} row is unique while expanded`,
+        `expanded rail affordance for ${name} missing or duplicated (count ${count})`
+      )
+    }
+    assert(
+      (await rail.getByText('Labels', { exact: true }).count()) === 1,
+      'the expanded rail shows one Labels section heading',
+      'Labels section heading missing or duplicated while expanded'
+    )
+    // The seeded user label re-exposed as the section the default view
+    // hides: chip rows show the label's name, New label opens the create
+    // form the collapsed Tag toggle used to reveal.
+    await rail.getByText('Receipts', { exact: true }).first().waitFor({ timeout: 10000 })
+    log('pass: the labels section re-exposes the seeded label by name')
+    await rail.getByRole('button', { name: 'New label', exact: true }).click()
+    await rail.getByRole('textbox', { name: 'Label name' }).waitFor({ timeout: 10000 })
+    log('pass: New label opens its inline form while expanded')
+    await rail.getByRole('textbox', { name: 'Label name' }).press('Escape')
+    // A folder switch re-renders the rail from the parent; expansion is
+    // component state and must ride through it untouched.
+    await rail.getByRole('button', { name: 'Trash', exact: true }).click()
+    await page.getByRole('complementary', { name: 'Trash' }).waitFor({ timeout: 10000 })
+    assert(
+      (await rail.getByRole('button', { name: 'Collapse sidebar', exact: true }).count()) === 1,
+      'expansion survives a folder switch',
+      'the rail fell back to collapsed across a folder switch'
+    )
+    assert(
+      (await rail.getByRole('button', { name: 'New label', exact: true }).count()) === 1,
+      'the labels section survives a folder switch while expanded',
+      'the labels section was lost across a folder switch'
+    )
+    // Round trip: collapse re-gates the label section and leaves the
+    // default view exactly as the `sidebar` journey asserts it.
+    await rail.getByRole('button', { name: 'Collapse sidebar', exact: true }).click()
+    await rail
+      .getByRole('button', { name: 'Expand sidebar', exact: true })
+      .waitFor({ timeout: 10000 })
+    assert(
+      (await rail.getByRole('button', { name: 'New label', exact: true }).count()) === 0,
+      'collapsing re-gates the labels section',
+      'New label affordance survived the collapse'
+    )
+    await rail.getByRole('button', { name: 'Inbox', exact: true }).click()
+    await page.getByRole('complementary', { name: 'Inbox' }).waitFor({ timeout: 10000 })
+    log('pass: collapsing returns the default view and folder browsing works')
+    await snapshot(page, 'sidebar-expanded')
   } else if (FEATURE === 'labels') {
     // The detail pane's Labels menu applies and removes labels on the
     // open thread. The rail's chips and New label affordance are the
