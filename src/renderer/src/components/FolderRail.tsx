@@ -288,7 +288,7 @@ export function FolderRail({
             />
             <span
               className="active-label-tile-text"
-              style={{ color: activeLabel.color?.text ?? '#000000' }}
+              style={{ color: activeLabel.color?.background ?? '#ffffff' }}
             >
               {activeLabel.name.slice(0, 3).toUpperCase()}
             </span>

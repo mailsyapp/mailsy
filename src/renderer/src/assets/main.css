@@ -708,11 +708,11 @@ button {
    color with a tiny tag glyph and its first three letters — exactly
    where the Tag toggle sits when no label is active. */
 .active-label-tile {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 2px;
   width: 32px;
   height: 32px;
   padding: 0;
@@ -720,21 +720,27 @@ button {
   border-radius: 8px;
 }
 
-/* The glyph is the folded-label tab the drawer rows draw, not a generic
-   tag icon: same shape, drawn in the tile's own contrast color, so the
-   tile and the open-drawer rows are the same object at two sizes. */
+/* The glyph is the folded-label tab the drawer rows draw, at tile
+   scale: the tile is the label's color, the tab rises in the contrast
+   color, and the short name is knocked into the tab's body (the label's
+   own color showing through), like an app icon. */
 .active-label-tile-glyph {
   flex: none;
-  width: 10px;
-  height: 12px;
+  width: 20px;
+  height: 26px;
   clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 75%, 0 100%);
 }
 
 .active-label-tile-text {
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.3px;
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 10px;
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.2px;
   line-height: 1;
+  text-align: center;
 }
 
 .user-label-create {
