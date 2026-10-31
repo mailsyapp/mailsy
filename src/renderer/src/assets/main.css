@@ -213,25 +213,49 @@ button {
   flex-shrink: 0;
 }
 
+/* The highlight pill keeps the collapsed drawing, not a full-bleed bar:
+   the rows inset 6px each side, the exact air the 40px square sits in
+   inside the 56px column, so active black, hover grey and the rows all
+   end where the collapsed pill's edges are. The inset also starts the
+   row box at the collapsed button's exact x, which is what lets the
+   pinned icon and the pill line up. */
 .folder-rail.expanded .folder-rail-button {
-  width: 100%;
+  width: calc(100% - 12px);
+  margin-inline: 6px;
   /* 40px: the collapsed square's height, so each icon stays vertically
      centered exactly where it sat before the drawer opened. */
   height: 40px;
   justify-content: flex-start;
   gap: 10px;
-  padding: 0 10px;
+  padding: 0 10px 0 4px;
+}
+
+/* The collapse control stays the icon-only pill it renders collapsed:
+   a full-width pill behind one icon would be a third highlight shape.
+   It keeps the rule's 6px inset so its box starts where the collapsed
+   toggle sits (x=32), and centers the glyph exactly as the square did. */
+.folder-rail.expanded .rail-toggle {
+  width: 40px;
+  justify-content: center;
+  padding: 0;
 }
 
 /* Each icon keeps its exact collapsed centered slot while the drawer is
-   open: the row's 1px border, 10px padding and this margin put a 22px
-   glyph back at its collapsed x (measured against the rail's inner
-   edge), and the text reveals to its right instead of re-anchoring
-   anything. The Plus icon is 18px wide and centered in a 32px collapsed
-   control, so the New label row carries its own offset. */
-.folder-rail.expanded .folder-rail-button > svg,
-.folder-rail.expanded .rail-toggle > svg {
+   open: the insets above restart the row at the collapsed button's x, so
+   the row's 1px border, 4px padding and this margin put a 22px glyph
+   back at its collapsed spot (measured against live rects). Text
+   reveals to its right instead of re-anchoring anything. The Plus icon
+   is 18px wide and centered in a 32px collapsed control, so the New
+   label row carries its own offset. */
+.folder-rail.expanded .folder-rail-button > svg {
   margin-left: 4px;
+}
+
+/* The toggle is centered again (it kept the square's geometry), so this
+   offset is folder-row-only: leaving it on the toggle would add the 4px
+   to an already centered glyph. */
+.folder-rail.expanded .rail-toggle > svg {
+  margin-left: 0;
 }
 
 .folder-rail.expanded .user-label-create > svg {
@@ -257,7 +281,11 @@ button {
 }
 
 .folder-rail.expanded .user-label-chip {
-  width: 100%;
+  /* Same 6px inset as the folder rows: the colored plate and the
+     folder highlight pill draw from one shared shape, so the labels
+     surface reads as the same object the collapsed rail shows. */
+  width: calc(100% - 12px);
+  margin-inline: 6px;
   height: 40px;
 }
 
@@ -279,11 +307,12 @@ button {
 }
 
 .folder-rail.expanded .user-label-create {
-  width: 100%;
+  width: calc(100% - 12px);
+  margin-inline: 6px;
   height: 40px;
   justify-content: flex-start;
   gap: 10px;
-  padding: 0 10px;
+  padding: 0 10px 0 4px;
 }
 
 .user-label-create-text {
@@ -401,13 +430,13 @@ button {
     height: 40px;
     justify-content: center;
     padding: 0;
+    margin: 0;
   }
 
   /* The drawer's icon margins exist to pin icons in the vertical
      column's collapsed slots; this row centers icons again, so the
      margins go back to nothing or every glyph would sit off-center. */
   .folder-rail.expanded .folder-rail-button > svg,
-  .folder-rail.expanded .rail-toggle > svg,
   .folder-rail.expanded .user-label-create > svg {
     margin-left: 0;
   }
@@ -427,6 +456,7 @@ button {
   .folder-rail.expanded .user-label-chip {
     width: 32px;
     height: 32px;
+    margin: 0;
   }
 
   .folder-rail.expanded .user-label-chip-open {
@@ -451,6 +481,7 @@ button {
     height: 32px;
     justify-content: center;
     padding: 0;
+    margin: 0;
   }
 }
 

@@ -1539,6 +1539,7 @@ try {
       .locator('svg')
       .first()
       .boundingBox()
+    const pillBefore = await rail.locator('.folder-rail-button.active').first().boundingBox()
     // The collapsed Tag reveal is the state expansion has to preserve:
     // show the chips first, so the round trip ends where this journey began.
     await rail.getByRole('button', { name: 'Labels', exact: true }).click()
@@ -1577,6 +1578,24 @@ try {
       'the folder icons keep their exact size and spot while the drawer is open',
       `expanding moved the folder icon (measured: before x=${iconBefore.x} y=${iconBefore.y} w=${iconBefore.width} h=${iconBefore.height}, after x=${iconAfter.x} y=${iconAfter.y} w=${iconAfter.width} h=${iconAfter.height})`
     )
+    // The highlight is the collapsed pill drawn longer, not a full-bleed
+    // bar: the active button's left edge stays where the collapsed square
+    // sat and its width stays at least a collapsed square short of the
+    // drawer's inner width (the 6px inset each side).
+    const drawerWidth = (await rail.boundingBox()).width
+    // The highlight is the collapsed pill drawn longer, not a full-bleed
+    // bar: the active button's left edge stays where the collapsed square
+    // sat and its width stays at least a collapsed square short of the
+    // drawer's inner width (the 6px inset each side).
+    const pillAfter = await rail.locator('.folder-rail-button.active').first().boundingBox()
+    assert(
+      pillAfter !== null &&
+        pillBefore !== null &&
+        Math.abs(pillAfter.x - pillBefore.x) < 0.5 &&
+        pillAfter.width < drawerWidth - 12,
+      'the active highlight renders the collapsed pill shape inset in the open drawer',
+      `the active highlight is not the collapsed pill in the open drawer (before x=${pillBefore?.x} w=${pillBefore?.width}, after x=${pillAfter?.x} w=${pillAfter?.width}, drawer width=${drawerWidth})`
+    )
     const FOLDERS = [
       'Inbox',
       'Starred',
@@ -1610,6 +1629,18 @@ try {
     // form the collapsed Tag toggle used to reveal.
     await rail.getByText('Receipts', { exact: true }).waitFor({ timeout: 10000 })
     log('pass: the labels section re-exposes the seeded label by name')
+    // The labels surface draws from the same shape: the chip plate stays
+    // the pill (its left edge where the highlight's is, inset, not
+    // full-bleed) while the drawer is open.
+    const chipBox = await rail.locator('.user-label-chip').first().boundingBox()
+    assert(
+      chipBox !== null &&
+        pillAfter !== null &&
+        Math.abs(chipBox.x - pillAfter.x) < 0.5 &&
+        chipBox.width < drawerWidth - 12,
+      'the label chip plate renders the same inset pill as the highlight',
+      `the chip plate is not the inset pill (chip x=${chipBox?.x} w=${chipBox?.width}, pill x=${pillAfter?.x}, drawer width=${drawerWidth})`
+    )
     await rail.getByRole('button', { name: 'New label', exact: true }).click()
     await rail.getByRole('textbox', { name: 'Label name' }).waitFor({ timeout: 10000 })
     log('pass: New label opens its inline form while expanded')
