@@ -8,6 +8,8 @@ import {
   Megaphone,
   MessagesSquare,
   OctagonAlert,
+  PanelLeftClose,
+  PanelLeftOpen,
   Plus,
   Send,
   SquarePen,
@@ -48,28 +50,48 @@ const FOLDERS: Array<{ id: MailFolder; label: string; icon: LucideIcon }> = [
 // nested button is not renderable.
 function UserLabelChip({
   label,
+  expanded,
   isActive,
   onSelect,
   onDelete
 }: {
   label: MailLabel
+  expanded: boolean
   isActive: boolean
   onSelect: (label: MailLabel) => void
   onDelete: (label: MailLabel) => void
 }): React.JSX.Element {
   const color = label.color ?? { background: '#d9d9d9', text: '#000000' }
+  const count = label.threadsTotal > 0 ? label.threadsTotal : ''
   return (
     <div className={`user-label-chip${isActive ? ' active' : ''}`}>
       <button
         type="button"
         className="user-label-chip-open"
-        data-tip={label.name}
+        data-tip={expanded ? undefined : label.name}
         aria-label={label.name}
         aria-current={isActive ? 'page' : undefined}
-        style={{ background: color.background, color: color.text }}
+        style={
+          {
+            '--chip-bg': color.background,
+            '--chip-text': color.text
+          } as React.CSSProperties
+        }
         onClick={() => onSelect(label)}
       >
-        {label.threadsTotal > 0 ? label.threadsTotal : ''}
+        {expanded ? (
+          <>
+            <span
+              className="user-label-chip-dot"
+              style={{ background: color.background }}
+              aria-hidden="true"
+            />
+            <span className="user-label-chip-name">{label.name}</span>
+            <span className="user-label-chip-count">{count}</span>
+          </>
+        ) : (
+          count
+        )}
       </button>
       <button
         type="button"
@@ -112,10 +134,15 @@ export function FolderRail({
   const [draftOpen, setDraftOpen] = useState(false)
   const [draftName, setDraftName] = useState('')
   const draftRef = useRef<HTMLInputElement | null>(null)
-  // The rail collapses to the folder icons by default; the Labels toggle
-  // expands it for the label chips, their inline create form, and the
-  // delete affordances. Collapse-on-toggle keeps the 56px column at its
-  // familiar width, so expanding never reflows the rest of the layout.
+  // The rail has two widths, collapsed (icon-only, default) and expanded
+  // (~220px rows): renderer-local presentation like labelsShown below,
+  // nothing persisted. Expanded makes the label section permanently
+  // visible, so labelsShown only gates the collapsed rail's Tag toggle.
+  const [expanded, setExpanded] = useState(false)
+  // Collapsed mode keeps the Label chips behind a toggle (the user called
+  // the always-on chips out as clutter on 2026-10-20): the Tags button
+  // reveals them without overflowing the 56px column. Expanded mode above
+  // is the only always-visible chips surface.
   const [labelsShown, setLabelsShown] = useState(false)
   // Tooltip dwell, the wait-then-costs-nothing-again rule: the first tip
   // shows only after the pointer rests TOOLTIP_DWELL_MS on an affordance
@@ -174,50 +201,122 @@ export function FolderRail({
     setDraftOpen(false)
   }
 
+  // Expanded shows the label section permanently; collapsed keeps the
+  // existing Tag-toggle gate.
+  const labelsVisible = expanded || labelsShown
+
+  // Selecting any view folds the drawer: it is an overlay over the mail,
+  // not a column of the layout, so a chosen destination gets the whole
+  // width back the moment it opens. Collapsed selection collapses a
+  // drawer that is already closed, which is nothing.
+  function selectFolder(folder: MailFolder): void {
+    onSelect(folder)
+    setExpanded(false)
+  }
+
+  function selectLabel(label: MailLabel): void {
+    onSelectLabel(label)
+    setExpanded(false)
+  }
+
+  const activeLabel =
+    activeLabelId !== null ? labels.find((label) => label.id === activeLabelId) : undefined
+
   return (
     <nav
-      className="folder-rail"
+      className={`folder-rail${expanded ? ' expanded' : ''}`}
       aria-label="Mail folders"
       ref={railRef}
       onMouseOver={handleTipHover}
       onMouseLeave={handleTipLeave}
     >
+      <button
+        type="button"
+        className="folder-rail-button rail-toggle"
+        data-tip={expanded ? 'Collapse sidebar' : 'Expand sidebar'}
+        aria-label={expanded ? 'Collapse sidebar' : 'Expand sidebar'}
+        onClick={() => setExpanded((wasExpanded) => !wasExpanded)}
+      >
+        {expanded ? (
+          <PanelLeftClose size={22} strokeWidth={1.8} aria-hidden="true" />
+        ) : (
+          <PanelLeftOpen size={22} strokeWidth={1.8} aria-hidden="true" />
+        )}
+      </button>
       {FOLDERS.map((folder) => {
         const isActive = folder.id === activeFolder && activeLabelId === null
         return (
           <button
             key={folder.id}
             type="button"
-            className={`folder-rail-button${isActive ? ' active' : ''}`}
-            data-tip={folder.label}
+            className={`folder-rail-button${isActive ? ' active' : ''}${expanded ? ' expanded' : ''}`}
+            // Expanded rows read as text already; a tip would only repeat
+            // the label next to itself. The aria-label stays on either
+            // way: the mobile media query hides the text span, so the
+            // accessible name cannot live in the visible content alone.
+            data-tip={expanded ? undefined : folder.label}
             aria-label={folder.label}
             aria-current={isActive ? 'page' : undefined}
-            onClick={() => onSelect(folder.id)}
+            onClick={() => selectFolder(folder.id)}
           >
             <folder.icon size={22} strokeWidth={1.8} aria-hidden="true" />
+            {expanded && <span className="folder-rail-button-text">{folder.label}</span>}
           </button>
         )
       })}
-      <button
-        type="button"
-        className={`folder-rail-button${activeLabelId !== null && !labelsShown && labels.length > 0 ? ' active' : ''}`}
-        data-tip={labelsShown ? 'Hide labels' : 'Labels'}
-        aria-label={labelsShown ? 'Hide labels' : 'Labels'}
-        aria-expanded={labelsShown}
-        onClick={() => setLabelsShown((shown) => !shown)}
-      >
-        <Tag size={22} strokeWidth={1.8} aria-hidden="true" />
-      </button>
-      {labelsShown && (
+      {!expanded &&
+        (activeLabel ? (
+          // A label view is active and the collapsed rail keeps its chips
+          // tucked away: the rail still has to say which view it is on,
+          // so the label takes the Tag toggle's place as a small tile in
+          // the label's own color carrying its first three letters (two
+          // identities on the tile, none on a plain highlight). Clicking
+          // it opens the same labels surface the Tag toggle opens.
+          <button
+            type="button"
+            className="active-label-tile"
+            data-tip={`Labels: ${activeLabel.name}`}
+            aria-label={`Labels: ${activeLabel.name}`}
+            aria-expanded={false}
+            style={{ background: activeLabel.color?.background ?? '#d9d9d9' }}
+            onClick={() => setLabelsShown(true)}
+          >
+            <span
+              className="active-label-tile-glyph"
+              aria-hidden="true"
+              style={{ background: activeLabel.color?.text ?? '#000000' }}
+            />
+            <span
+              className="active-label-tile-text"
+              style={{ color: activeLabel.color?.background ?? '#ffffff' }}
+            >
+              {activeLabel.name.slice(0, 3).toUpperCase()}
+            </span>
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="folder-rail-button"
+            data-tip={labelsShown ? 'Hide labels' : 'Labels'}
+            aria-label={labelsShown ? 'Hide labels' : 'Labels'}
+            aria-expanded={labelsShown}
+            onClick={() => setLabelsShown((shown) => !shown)}
+          >
+            <Tag size={22} strokeWidth={1.8} aria-hidden="true" />
+          </button>
+        ))}
+      {labelsVisible && (
         <>
+          {expanded && <span className="folder-rail-heading">Labels</span>}
           {labels.length > 0 && (
             <div className="user-label-chips" aria-label="User labels">
               {labels.map((label) => (
                 <UserLabelChip
                   key={label.id}
                   label={label}
+                  expanded={expanded}
                   isActive={label.id === activeLabelId}
-                  onSelect={onSelectLabel}
+                  onSelect={selectLabel}
                   onDelete={onDeleteLabel}
                 />
               ))}
@@ -252,7 +351,7 @@ export function FolderRail({
             type="button"
             className="user-label-create"
             aria-label="New label"
-            data-tip="New label"
+            data-tip={expanded ? undefined : 'New label'}
             onClick={() => {
               setDraftOpen(true)
               // autofocus fires on mount, but an already-visited draft may
@@ -261,6 +360,7 @@ export function FolderRail({
             }}
           >
             <Plus size={18} strokeWidth={2.2} aria-hidden="true" />
+            {expanded && <span className="user-label-create-text">New label</span>}
           </button>
         </>
       )}

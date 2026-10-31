@@ -144,6 +144,10 @@ button {
 .mail-layout {
   display: grid;
   flex: 1;
+  /* The track stays 56px even while the rail is expanded: the expanded
+     rail is an overlay in that column (it draws wider into the list
+     column, see .folder-rail.expanded below), so pushing the mail ever
+     wider or resetting the list on every open/close never happens. */
   grid-template-columns: 56px minmax(220px, 32%) minmax(0, 1fr);
   gap: 12px;
   min-height: 0;
@@ -156,6 +160,10 @@ button {
   gap: 4px;
   padding: 12px 0;
   border: 2px solid black;
+  /* Collapsed, the rail fills exactly the 56px track the grid reserves
+     (border included). */
+  box-sizing: border-box;
+  width: 56px;
 }
 
 .folder-rail-button {
@@ -178,6 +186,170 @@ button {
 .folder-rail-button.active {
   background: #000;
   color: #fff;
+}
+
+/* Expanded rail: an overlay drawer — the same box the collapsed rail
+   occupies, drawn wider into the list column. Its grid track stays 56px,
+   so the mail never reflows: opening the drawer covers the list's left
+   edge instead of pushing it. Expanding above the list is why the drawer
+   carries its own background and stacking. contain: size keeps the
+   drawer's own content (the labels section it adds) from inflating the
+   auto row that also sizes the mail column — without it, opening the
+   drawer taller than the layout stretches the whole row. */
+.folder-rail.expanded {
+  width: 220px;
+  z-index: 3;
+  background: #fff;
+  align-items: stretch;
+  contain: size;
+  overflow-y: auto;
+}
+
+/* The drawer's children are flex items in a sized, scrollable column: at
+   default flex-shrink they squeeze to fit (a 40px row can end up 31px),
+   which is exactly the icon drift this section forbids. Content taller
+   than the rail scrolls instead. */
+.folder-rail.expanded > * {
+  flex-shrink: 0;
+}
+
+/* The highlight pill keeps the collapsed drawing, not a full-bleed bar:
+   the rows inset 6px each side, the exact air the 40px square sits in
+   inside the 56px column, so active black, hover grey and the rows all
+   end where the collapsed pill's edges are. The inset also starts the
+   row box at the collapsed button's exact x, which is what lets the
+   pinned icon and the pill line up. */
+.folder-rail.expanded .folder-rail-button {
+  width: calc(100% - 12px);
+  margin-inline: 6px;
+  /* 40px: the collapsed square's height, so each icon stays vertically
+     centered exactly where it sat before the drawer opened. */
+  height: 40px;
+  justify-content: flex-start;
+  gap: 10px;
+  padding: 0 10px 0 4px;
+}
+
+/* The collapse control stays the icon-only pill it renders collapsed:
+   a full-width pill behind one icon would be a third highlight shape.
+   It keeps the rule's 6px inset so its box starts where the collapsed
+   toggle sits (x=32), and centers the glyph exactly as the square did. */
+.folder-rail.expanded .rail-toggle {
+  width: 40px;
+  justify-content: center;
+  padding: 0;
+}
+
+/* Each icon keeps its exact collapsed centered slot while the drawer is
+   open: the insets above restart the row at the collapsed button's x, so
+   the row's 1px border, 4px padding and this margin put a 22px glyph
+   back at its collapsed spot (measured against live rects). Text
+   reveals to its right instead of re-anchoring anything. The Plus icon
+   is 18px wide and centered in a 32px collapsed control, so the New
+   label row carries its own offset. */
+.folder-rail.expanded .folder-rail-button > svg {
+  margin-left: 4px;
+}
+
+/* The toggle is centered again (it kept the square's geometry), so this
+   offset is folder-row-only: leaving it on the toggle would add the 4px
+   to an already centered glyph. */
+.folder-rail.expanded .rail-toggle > svg {
+  margin-left: 0;
+}
+
+.folder-rail.expanded .user-label-create > svg {
+  margin-left: 7px;
+}
+
+.folder-rail-button-text {
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.folder-rail-heading {
+  margin: 8px 10px 0;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.folder-rail.expanded .user-label-chips {
+  width: 100%;
+  align-items: stretch;
+}
+
+.folder-rail.expanded .user-label-chip {
+  /* Same 6px inset as the folder rows: the chip row and the folder
+     highlight pill draw from one shared shape, so the labels surface
+     reads as the same object the collapsed rail shows. */
+  width: calc(100% - 12px);
+  margin-inline: 6px;
+  height: 40px;
+}
+
+/* Expanded rows go Gmail-style: no color plate. A small tab in the
+   label's color sits in the icon column, the name reads in the text
+   column, and the thread count sits at the row's right edge. The 1px
+   border and the plate background just fall away (the collapsed chip
+   keeps its full-color square). */
+.folder-rail.expanded .user-label-chip-open {
+  justify-content: flex-start;
+  gap: 10px;
+  padding: 0 10px 0 0;
+  border-color: transparent;
+  background: transparent;
+  color: inherit;
+}
+
+/* The count pins to the row's right edge; the name always sits right
+   after the tab, with or without a count (space-between would fling a
+   name to the edge on countless labels). */
+.folder-rail.expanded .user-label-chip-count {
+  margin-left: auto;
+}
+
+/* The tab: 12x14 with a notch at the bottom, like a folded label end.
+   Centered in the 22px icon column (its box starts 13px into the row),
+   so the tab's middle sits on the same vertical as the folder icons. */
+.user-label-chip-dot {
+  flex: none;
+  width: 12px;
+  height: 14px;
+  margin-left: 13px;
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 75%, 0 100%);
+}
+
+.user-label-chip-name {
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The active label reads bold, not painted: rows have no plate here,
+   and the collapsed square's outline has no open-drawer counterpart. */
+.folder-rail.expanded .user-label-chip.active .user-label-chip-name {
+  font-weight: 700;
+}
+
+.user-label-chip-count {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.folder-rail.expanded .user-label-create {
+  width: calc(100% - 12px);
+  margin-inline: 6px;
+  height: 40px;
+  justify-content: flex-start;
+  gap: 10px;
+  padding: 0 10px 0 4px;
+}
+
+.user-label-create-text {
+  font-size: 13px;
 }
 
 /* Rail tooltips, native titles replaced: Electron's title tooltips lag a
@@ -250,9 +422,103 @@ button {
   /* Three grid children now: the rail becomes a compact horizontal row
      instead of a 35%-height column block. */
   .folder-rail {
+    /* The 56px collapsed width is the vertical column's; the row sizes
+       itself like it always did. */
+    width: auto;
     flex-direction: row;
     justify-content: center;
     padding: 6px 0;
+  }
+
+  /* Expanded mode reverts to this row's icon spacing: rail width, row
+     stretching and the text spans are all collapsed-rail-only concepts
+     (the toggle stays 40px, the label section falls back from its named
+     rows to the icon-sized chips the regular layout shows — the thread
+     count span stays visible so an expanded narrow-window chip still
+     means something). contain: size is a vertical-layout rule: the
+     horizontal row must size itself by its content again. Every folder
+     row plus the labels surface is wider than a narrow window, so the
+     row starts flex-start at the left edge and scrolls horizontally —
+     centered content would clip off-screen at both ends alike. */
+  .folder-rail.expanded {
+    width: auto;
+    align-items: center;
+    justify-content: flex-start;
+    contain: none;
+    overflow-y: visible;
+    overflow-x: auto;
+  }
+
+  .folder-rail.expanded .rail-toggle {
+    /* Kept visible, not display-none: the state must stay round-trippable
+       if the user expands on desktop and narrows the window. In the row
+       layout it renders as the plain 40px icon button, and clicking it
+       flips back to the collapsed icon set. The one expanded rule that
+       must go is the vertical column's margin below the toggle. */
+    margin-bottom: 0;
+  }
+
+  .folder-rail.expanded .folder-rail-button {
+    width: 40px;
+    height: 40px;
+    justify-content: center;
+    padding: 0;
+    margin: 0;
+  }
+
+  /* The drawer's icon margins exist to pin icons in the vertical
+     column's collapsed slots; this row centers icons again, so the
+     margins go back to nothing or every glyph would sit off-center. */
+  .folder-rail.expanded .folder-rail-button > svg,
+  .folder-rail.expanded .user-label-create > svg {
+    margin-left: 0;
+  }
+
+  .folder-rail.expanded .user-label-chip-name,
+  .folder-rail.expanded .user-label-chip-dot {
+    display: none;
+  }
+
+  .folder-rail.expanded .user-label-chips {
+    width: auto;
+    align-items: center;
+  }
+
+  .folder-rail.expanded .user-label-chip {
+    width: 32px;
+    height: 32px;
+    margin: 0;
+  }
+
+  /* Back to the collapsed plate in the row: the dot-less square carries
+     the label's own color again (the desktop drawer's transparent row
+     background is a vertical-column rule). */
+  .folder-rail.expanded .user-label-chip-open {
+    justify-content: center;
+    padding: 0;
+    border-color: #000;
+    background: var(--chip-bg);
+    color: var(--chip-text);
+  }
+
+  /* The drawer's hover-revealed row control goes back to the pinned
+     corner badge here: touch has no hover to reveal it with, and the
+     32px chips are the collapsed surface's look again. */
+  .folder-rail.expanded .user-label-chip-remove {
+    top: -4px;
+    right: -4px;
+    translate: none;
+    width: 14px;
+    height: 14px;
+    opacity: 1;
+  }
+
+  .folder-rail.expanded .user-label-create {
+    width: 32px;
+    height: 32px;
+    justify-content: center;
+    padding: 0;
+    margin: 0;
   }
 }
 
@@ -385,14 +651,22 @@ button {
   padding: 0;
   border: 1px solid #000;
   border-radius: 8px;
+  background: var(--chip-bg);
+  color: var(--chip-text);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
 
-.user-label-chip-remove {
+/* The tooltip anchor rule above (`[data-tip]` → position: relative) is an
+   equal-strength override for this button: restating absolute keeps its
+   corner badge a badge instead of an in-flow button poking out past the
+   chip's 32px box. */
+.user-label-chip-remove,
+.user-label-chip-remove[data-tip] {
   position: absolute;
   top: -4px;
   right: -4px;
+  z-index: 1;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -405,9 +679,68 @@ button {
   color: #555;
 }
 
+/* In the expanded rail the badge would sit on the boundary the 40px rows
+   share, half over the neighbor chip, so it moves into the row: right
+   edge, hover-revealed like Gmail's label rows, focus-visible for the
+   keyboard at the same visibility. */
+.folder-rail.expanded .user-label-chip-remove {
+  top: 50%;
+  right: 8px;
+  translate: 0 -50%;
+  width: 20px;
+  height: 20px;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.folder-rail.expanded .user-label-chip:hover .user-label-chip-remove,
+.folder-rail.expanded .user-label-chip-remove:focus-visible {
+  opacity: 1;
+}
+
 .user-label-chip-remove:hover {
   color: #b00020;
   border-color: #b00020;
+}
+
+/* Spark-style collapsed indicator: a label view active while the chips
+   are tucked away renders the label itself — a 32px tile in the label's
+   color with a tiny tag glyph and its first three letters — exactly
+   where the Tag toggle sits when no label is active. */
+.active-label-tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid rgba(0, 0, 0, 0.2);
+  border-radius: 8px;
+}
+
+/* The glyph is the folded-label tab the drawer rows draw, at tile
+   scale: the tile is the label's color, the tab rises in the contrast
+   color, and the short name is knocked into the tab's body (the label's
+   own color showing through), like an app icon. */
+.active-label-tile-glyph {
+  flex: none;
+  width: 20px;
+  height: 26px;
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 75%, 0 100%);
+}
+
+.active-label-tile-text {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 10px;
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.2px;
+  line-height: 1;
+  text-align: center;
 }
 
 .user-label-create {

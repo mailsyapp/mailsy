@@ -62,7 +62,7 @@ node scripts/drive.mjs --feature inbox --run-id "$RUN_ID" --port "$VERIFY_MAILSY
 node scripts/drive.mjs --feature search --run-id "$RUN_ID" --port "$VERIFY_MAILSY_PORT"
 ```
 
-Available `--feature` values mirror the map: `sign-in`, `sign-out`, `inbox`, `search`, `read-thread`, `compose-send`, `compose-new`, `drafts`, `draft-autosave`, `delete-draft`, `delete-to-trash`, `archive`, `mark-read`, `starred`, `all-mail`, `reply-all`, `cc-bcc`, `spam`, `snooze`, `snooze-emulation`, `category-views`, `unread-bold`, `sidebar`, `labels`, `refresh`. Each journey uses stable handles only — ARIA roles and accessible names (`Search emails` searchbox, `Inbox`/`Drafts` complementary landmarks, `Clear search` button, `reply`/`forward` buttons, `Send` button, `Compose email`/`Draft` headings, `Email content` region). No coordinates, no tab order.
+Available `--feature` values mirror the map: `sign-in`, `sign-out`, `inbox`, `search`, `read-thread`, `compose-send`, `compose-new`, `drafts`, `draft-autosave`, `delete-draft`, `delete-to-trash`, `archive`, `mark-read`, `starred`, `all-mail`, `reply-all`, `cc-bcc`, `spam`, `snooze`, `snooze-emulation`, `category-views`, `unread-bold`, `sidebar`, `sidebar-expanded`, `labels`, `refresh`. Each journey uses stable handles only — ARIA roles and accessible names (`Search emails` searchbox, `Inbox`/`Drafts` complementary landmarks, `Clear search` button, `reply`/`forward` buttons, `Send` button, `Compose email`/`Draft` headings, `Email content` region). No coordinates, no tab order.
 
 Proof standards (every run):
 
