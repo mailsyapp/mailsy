@@ -1645,6 +1645,26 @@ try {
     await rail.getByRole('textbox', { name: 'Label name' }).waitFor({ timeout: 10000 })
     log('pass: New label opens its inline form while expanded')
     await rail.getByRole('textbox', { name: 'Label name' }).press('Escape')
+    // A label selection folds the drawer too, and the collapsed rail
+    // answers "which label" with a tile in the label's own color where
+    // the Tag toggle otherwise sits (Spark-style). The tile click is the
+    // way back to the labels surface.
+    await rail.getByRole('button', { name: 'Receipts', exact: true }).click()
+    await rail.getByRole('button', { name: 'Expand sidebar', exact: true }).waitFor({ timeout: 10000 })
+    log('pass: selecting a label collapses the open drawer')
+    const tile = rail.getByRole('button', { name: 'Labels: Receipts', exact: true })
+    assert(
+      (await tile.count()) === 1,
+      'the collapsed rail shows the active label as its own tile',
+      'the active label tile is missing or duplicated in the collapsed rail'
+    )
+    await tile.click()
+    assert(
+      (await rail.getByRole('button', { name: 'New label', exact: true }).count()) === 1,
+      'the tile click reveals the labels surface the Tag toggle would',
+      'clicking the active label tile did not reveal the labels surface'
+    )
+    log('pass: the active label tile opens the labels surface')
     // Selecting a view folds the drawer: it is an overlay, so the chosen
     // folder gets its full width back at once and the rails' chips state
     // rides the collapse unchanged.

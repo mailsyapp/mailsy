@@ -281,17 +281,44 @@ button {
 }
 
 .folder-rail.expanded .user-label-chip {
-  /* Same 6px inset as the folder rows: the colored plate and the
-     folder highlight pill draw from one shared shape, so the labels
-     surface reads as the same object the collapsed rail shows. */
+  /* Same 6px inset as the folder rows: the chip row and the folder
+     highlight pill draw from one shared shape, so the labels surface
+     reads as the same object the collapsed rail shows. */
   width: calc(100% - 12px);
   margin-inline: 6px;
   height: 40px;
 }
 
+/* Expanded rows go Gmail-style: no color plate. A small tab in the
+   label's color sits in the icon column, the name reads in the text
+   column, and the thread count sits at the row's right edge. The 1px
+   border and the plate background just fall away (the collapsed chip
+   keeps its full-color square). */
 .folder-rail.expanded .user-label-chip-open {
-  justify-content: space-between;
-  padding: 0 10px;
+  justify-content: flex-start;
+  gap: 10px;
+  padding: 0 10px 0 0;
+  border-color: transparent;
+  background: transparent;
+  color: inherit;
+}
+
+/* The count pins to the row's right edge; the name always sits right
+   after the tab, with or without a count (space-between would fling a
+   name to the edge on countless labels). */
+.folder-rail.expanded .user-label-chip-count {
+  margin-left: auto;
+}
+
+/* The tab: 12x14 with a notch at the bottom, like a folded label end.
+   Centered in the 22px icon column (its box starts 13px into the row),
+   so the tab's middle sits on the same vertical as the folder icons. */
+.user-label-chip-dot {
+  flex: none;
+  width: 12px;
+  height: 14px;
+  margin-left: 13px;
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 75%, 0 100%);
 }
 
 .user-label-chip-name {
@@ -299,6 +326,12 @@ button {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* The active label reads bold, not painted: rows have no plate here,
+   and the collapsed square's outline has no open-drawer counterpart. */
+.folder-rail.expanded .user-label-chip.active .user-label-chip-name {
+  font-weight: 700;
 }
 
 .user-label-chip-count {
@@ -441,10 +474,8 @@ button {
     margin-left: 0;
   }
 
-  .folder-rail.expanded .folder-rail-button-text,
-  .folder-rail.expanded .folder-rail-heading,
-  .folder-rail.expanded .user-label-create-text,
-  .folder-rail.expanded .user-label-chip-name {
+  .folder-rail.expanded .user-label-chip-name,
+  .folder-rail.expanded .user-label-chip-dot {
     display: none;
   }
 
@@ -459,9 +490,15 @@ button {
     margin: 0;
   }
 
+  /* Back to the collapsed plate in the row: the dot-less square carries
+     the label's own color again (the desktop drawer's transparent row
+     background is a vertical-column rule). */
   .folder-rail.expanded .user-label-chip-open {
     justify-content: center;
     padding: 0;
+    border-color: #000;
+    background: var(--chip-bg);
+    color: var(--chip-text);
   }
 
   /* The drawer's hover-revealed row control goes back to the pinned
@@ -614,6 +651,8 @@ button {
   padding: 0;
   border: 1px solid #000;
   border-radius: 8px;
+  background: var(--chip-bg);
+  color: var(--chip-text);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
@@ -662,6 +701,30 @@ button {
 .user-label-chip-remove:hover {
   color: #b00020;
   border-color: #b00020;
+}
+
+/* Spark-style collapsed indicator: a label view active while the chips
+   are tucked away renders the label itself — a 32px tile in the label's
+   color with a tiny tag glyph and its first three letters — exactly
+   where the Tag toggle sits when no label is active. */
+.active-label-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid rgba(0, 0, 0, 0.2);
+  border-radius: 8px;
+}
+
+.active-label-tile-text {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  line-height: 1;
 }
 
 .user-label-create {

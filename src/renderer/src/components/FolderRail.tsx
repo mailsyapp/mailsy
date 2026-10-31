@@ -71,11 +71,21 @@ function UserLabelChip({
         data-tip={expanded ? undefined : label.name}
         aria-label={label.name}
         aria-current={isActive ? 'page' : undefined}
-        style={{ background: color.background, color: color.text }}
+        style={
+          {
+            '--chip-bg': color.background,
+            '--chip-text': color.text
+          } as React.CSSProperties
+        }
         onClick={() => onSelect(label)}
       >
         {expanded ? (
           <>
+            <span
+              className="user-label-chip-dot"
+              style={{ background: color.background }}
+              aria-hidden="true"
+            />
             <span className="user-label-chip-name">{label.name}</span>
             <span className="user-label-chip-count">{count}</span>
           </>
@@ -209,6 +219,9 @@ export function FolderRail({
     setExpanded(false)
   }
 
+  const activeLabel =
+    activeLabelId !== null ? labels.find((label) => label.id === activeLabelId) : undefined
+
   return (
     <nav
       className={`folder-rail${expanded ? ' expanded' : ''}`}
@@ -251,18 +264,48 @@ export function FolderRail({
           </button>
         )
       })}
-      {!expanded && (
-        <button
-          type="button"
-          className={`folder-rail-button${activeLabelId !== null && !labelsShown && labels.length > 0 ? ' active' : ''}`}
-          data-tip={labelsShown ? 'Hide labels' : 'Labels'}
-          aria-label={labelsShown ? 'Hide labels' : 'Labels'}
-          aria-expanded={labelsShown}
-          onClick={() => setLabelsShown((shown) => !shown)}
-        >
-          <Tag size={22} strokeWidth={1.8} aria-hidden="true" />
-        </button>
-      )}
+      {!expanded &&
+        (activeLabel ? (
+          // A label view is active and the collapsed rail keeps its chips
+          // tucked away: the rail still has to say which view it is on,
+          // so the label takes the Tag toggle's place as a small tile in
+          // the label's own color carrying its first three letters (two
+          // identities on the tile, none on a plain highlight). Clicking
+          // it opens the same labels surface the Tag toggle opens.
+          <button
+            type="button"
+            className="active-label-tile"
+            data-tip={`Labels: ${activeLabel.name}`}
+            aria-label={`Labels: ${activeLabel.name}`}
+            aria-expanded={false}
+            style={{ background: activeLabel.color?.background ?? '#d9d9d9' }}
+            onClick={() => setLabelsShown(true)}
+          >
+            <Tag
+              size={9}
+              strokeWidth={2.6}
+              aria-hidden="true"
+              style={{ color: activeLabel.color?.text ?? '#000000' }}
+            />
+            <span
+              className="active-label-tile-text"
+              style={{ color: activeLabel.color?.text ?? '#000000' }}
+            >
+              {activeLabel.name.slice(0, 3).toUpperCase()}
+            </span>
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="folder-rail-button"
+            data-tip={labelsShown ? 'Hide labels' : 'Labels'}
+            aria-label={labelsShown ? 'Hide labels' : 'Labels'}
+            aria-expanded={labelsShown}
+            onClick={() => setLabelsShown((shown) => !shown)}
+          >
+            <Tag size={22} strokeWidth={1.8} aria-hidden="true" />
+          </button>
+        ))}
       {labelsVisible && (
         <>
           {expanded && <span className="folder-rail-heading">Labels</span>}
