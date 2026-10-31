@@ -1527,6 +1527,10 @@ try {
       'the rail carries exactly one expand control',
       'expand control missing or duplicated'
     )
+    // The drawer is an overlay: the mail column must keep its exact spot
+    // when the rail widens, so the list's own box is measured before and
+    // after the expansion and compared.
+    const listBefore = await page.getByRole('complementary', { name: 'Inbox' }).boundingBox()
     // The collapsed Tag reveal is the state expansion has to preserve:
     // show the chips first, so the round trip ends where this journey began.
     await rail.getByRole('button', { name: 'Labels', exact: true }).click()
@@ -1544,6 +1548,12 @@ try {
       (await rail.getByRole('button', { name: 'Labels', exact: true }).count()) === 0,
       'the collapsed-only Tag toggle is gone while expanded',
       'the Tag toggle survived the expansion'
+    )
+    const listAfter = await page.getByRole('complementary', { name: 'Inbox' }).boundingBox()
+    assert(
+      Math.abs(listAfter.x - listBefore.x) < 0.5 && Math.abs(listAfter.y - listBefore.y) < 0.5,
+      'the mail column keeps its exact spot while the drawer is open',
+      `expanding moved the mail column (measured at the list box: before x=${listBefore.x} y=${listBefore.y}, after x=${listAfter.x} y=${listAfter.y})`
     )
     const FOLDERS = [
       'Inbox',
@@ -1582,31 +1592,20 @@ try {
     await rail.getByRole('textbox', { name: 'Label name' }).waitFor({ timeout: 10000 })
     log('pass: New label opens its inline form while expanded')
     await rail.getByRole('textbox', { name: 'Label name' }).press('Escape')
-    // A folder switch re-renders the rail from the parent; expansion is
-    // component state and must ride through it untouched.
+    // Selecting a view folds the drawer: it is an overlay, so the chosen
+    // folder gets its full width back at once and the rails' chips state
+    // rides the collapse unchanged.
     await rail.getByRole('button', { name: 'Trash', exact: true }).click()
     await page.getByRole('complementary', { name: 'Trash' }).waitFor({ timeout: 10000 })
     assert(
-      (await rail.getByRole('button', { name: 'Collapse sidebar', exact: true }).count()) === 1,
-      'expansion survives a folder switch',
-      'the rail fell back to collapsed across a folder switch'
+      (await rail.getByRole('button', { name: 'Expand sidebar', exact: true }).count()) === 1,
+      'selecting a folder collapses the open drawer',
+      'the rail stayed expanded after a folder selection'
     )
     assert(
       (await rail.getByRole('button', { name: 'New label', exact: true }).count()) === 1,
-      'the labels section survives a folder switch while expanded',
-      'the labels section was lost across a folder switch'
-    )
-    // Round trip: collapse re-gates the expanded-only sections and leaves
-    // the chips exactly as the Tag toggle left them, then hiding the
-    // chips by hand restores the default view the other journeys assert.
-    await rail.getByRole('button', { name: 'Collapse sidebar', exact: true }).click()
-    await rail
-      .getByRole('button', { name: 'Expand sidebar', exact: true })
-      .waitFor({ timeout: 10000 })
-    assert(
-      (await rail.getByRole('button', { name: 'New label', exact: true }).count()) === 1,
-      'collapse returns the chips the Tag toggle left on screen',
-      'the chips-shown state did not survive the collapse'
+      'the chips the Tag toggle left are still on screen after the collapse',
+      'the chips-shown state was lost when the drawer collapsed'
     )
     await rail.getByRole('button', { name: 'Hide labels', exact: true }).click()
     assert(

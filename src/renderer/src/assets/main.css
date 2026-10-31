@@ -144,9 +144,11 @@ button {
 .mail-layout {
   display: grid;
   flex: 1;
-  /* auto: the rail sizes itself — 56px collapsed, its own width when
-     expanded — instead of a fixed grid track. */
-  grid-template-columns: auto minmax(220px, 32%) minmax(0, 1fr);
+  /* The track stays 56px even while the rail is expanded: the expanded
+     rail is an overlay in that column (it draws wider into the list
+     column, see .folder-rail.expanded below), so pushing the mail ever
+     wider or resetting the list on every open/close never happens. */
+  grid-template-columns: 56px minmax(220px, 32%) minmax(0, 1fr);
   gap: 12px;
   min-height: 0;
 }
@@ -158,8 +160,8 @@ button {
   gap: 4px;
   padding: 12px 0;
   border: 2px solid black;
-  /* The grid's first column is auto now, so the collapsed rail fixes its
-     own width and renders exactly as the old 56px track did. */
+  /* Collapsed, the rail fills exactly the 56px track the grid reserves
+     (border included). */
   box-sizing: border-box;
   width: 56px;
 }
@@ -186,13 +188,21 @@ button {
   color: #fff;
 }
 
-/* Expanded rail: rows widen to icon + name text and the label section is
-   permanently visible, so the Tag toggle (which only gates collapsed) is
-   gone. Everything here is scoped under .folder-rail.expanded so the
-   mobile media query can revert the whole block to its horizontal row. */
+/* Expanded rail: an overlay drawer — the same box the collapsed rail
+   occupies, drawn wider into the list column. Its grid track stays 56px,
+   so the mail never reflows: opening the drawer covers the list's left
+   edge instead of pushing it. Expanding above the list is why the drawer
+   carries its own background and stacking. contain: size keeps the
+   drawer's own content (the labels section it adds) from inflating the
+   auto row that also sizes the mail column — without it, opening the
+   drawer taller than the layout stretches the whole row. */
 .folder-rail.expanded {
   width: 220px;
+  z-index: 3;
+  background: #fff;
   align-items: stretch;
+  contain: size;
+  overflow-y: auto;
 }
 
 .folder-rail.expanded .folder-rail-button {
@@ -347,10 +357,13 @@ button {
      (the toggle stays 40px, the label section falls back from its named
      rows to the icon-sized chips the regular layout shows — the thread
      count span stays visible so an expanded narrow-window chip still
-     means something). */
+     means something). contain: size is a vertical-layout rule: the
+     horizontal row must size itself by its content again. */
   .folder-rail.expanded {
     width: auto;
     align-items: center;
+    contain: none;
+    overflow-y: visible;
   }
 
   .folder-rail.expanded .rail-toggle {
@@ -388,6 +401,18 @@ button {
   .folder-rail.expanded .user-label-chip-open {
     justify-content: center;
     padding: 0;
+  }
+
+  /* The drawer's hover-revealed row control goes back to the pinned
+     corner badge here: touch has no hover to reveal it with, and the
+     32px chips are the collapsed surface's look again. */
+  .folder-rail.expanded .user-label-chip-remove {
+    top: -4px;
+    right: -4px;
+    translate: none;
+    width: 14px;
+    height: 14px;
+    opacity: 1;
   }
 
   .folder-rail.expanded .user-label-create {
@@ -531,10 +556,16 @@ button {
   font-variant-numeric: tabular-nums;
 }
 
-.user-label-chip-remove {
+/* The tooltip anchor rule above (`[data-tip]` → position: relative) is an
+   equal-strength override for this button: restating absolute keeps its
+   corner badge a badge instead of an in-flow button poking out past the
+   chip's 32px box. */
+.user-label-chip-remove,
+.user-label-chip-remove[data-tip] {
   position: absolute;
   top: -4px;
   right: -4px;
+  z-index: 1;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -545,6 +576,25 @@ button {
   border-radius: 50%;
   background: #fff;
   color: #555;
+}
+
+/* In the expanded rail the badge would sit on the boundary the 40px rows
+   share, half over the neighbor chip, so it moves into the row: right
+   edge, hover-revealed like Gmail's label rows, focus-visible for the
+   keyboard at the same visibility. */
+.folder-rail.expanded .user-label-chip-remove {
+  top: 50%;
+  right: 8px;
+  translate: 0 -50%;
+  width: 20px;
+  height: 20px;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.folder-rail.expanded .user-label-chip:hover .user-label-chip-remove,
+.folder-rail.expanded .user-label-chip-remove:focus-visible {
+  opacity: 1;
 }
 
 .user-label-chip-remove:hover {

@@ -195,6 +195,20 @@ export function FolderRail({
   // existing Tag-toggle gate.
   const labelsVisible = expanded || labelsShown
 
+  // Selecting any view folds the drawer: it is an overlay over the mail,
+  // not a column of the layout, so a chosen destination gets the whole
+  // width back the moment it opens. Collapsed selection collapses a
+  // drawer that is already closed, which is nothing.
+  function selectFolder(folder: MailFolder): void {
+    onSelect(folder)
+    setExpanded(false)
+  }
+
+  function selectLabel(label: MailLabel): void {
+    onSelectLabel(label)
+    setExpanded(false)
+  }
+
   return (
     <nav
       className={`folder-rail${expanded ? ' expanded' : ''}`}
@@ -230,7 +244,7 @@ export function FolderRail({
             data-tip={expanded ? undefined : folder.label}
             aria-label={folder.label}
             aria-current={isActive ? 'page' : undefined}
-            onClick={() => onSelect(folder.id)}
+            onClick={() => selectFolder(folder.id)}
           >
             <folder.icon size={22} strokeWidth={1.8} aria-hidden="true" />
             {expanded && <span className="folder-rail-button-text">{folder.label}</span>}
@@ -260,7 +274,7 @@ export function FolderRail({
                   label={label}
                   expanded={expanded}
                   isActive={label.id === activeLabelId}
-                  onSelect={onSelectLabel}
+                  onSelect={selectLabel}
                   onDelete={onDeleteLabel}
                 />
               ))}
