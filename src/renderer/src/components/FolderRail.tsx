@@ -281,11 +281,10 @@ export function FolderRail({
             style={{ background: activeLabel.color?.background ?? '#d9d9d9' }}
             onClick={() => setLabelsShown(true)}
           >
-            <Tag
-              size={9}
-              strokeWidth={2.6}
+            <span
+              className="active-label-tile-glyph"
               aria-hidden="true"
-              style={{ color: activeLabel.color?.text ?? '#000000' }}
+              style={{ background: activeLabel.color?.text ?? '#000000' }}
             />
             <span
               className="active-label-tile-text"
