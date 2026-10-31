@@ -205,21 +205,37 @@ button {
   overflow-y: auto;
 }
 
+/* The drawer's children are flex items in a sized, scrollable column: at
+   default flex-shrink they squeeze to fit (a 40px row can end up 31px),
+   which is exactly the icon drift this section forbids. Content taller
+   than the rail scrolls instead. */
+.folder-rail.expanded > * {
+  flex-shrink: 0;
+}
+
 .folder-rail.expanded .folder-rail-button {
   width: 100%;
+  /* 40px: the collapsed square's height, so each icon stays vertically
+     centered exactly where it sat before the drawer opened. */
+  height: 40px;
   justify-content: flex-start;
   gap: 10px;
   padding: 0 10px;
 }
 
-/* The toggle stays icon-only in both states — a left-aligned 40px square
-   instead of stretching with the text rows. After the row rule above, so
-   it wins the equal-specificity tie. */
-.folder-rail.expanded .rail-toggle {
-  width: 40px;
-  justify-content: center;
-  padding: 0;
-  margin-bottom: 8px;
+/* Each icon keeps its exact collapsed centered slot while the drawer is
+   open: the row's 1px border, 10px padding and this margin put a 22px
+   glyph back at its collapsed x (measured against the rail's inner
+   edge), and the text reveals to its right instead of re-anchoring
+   anything. The Plus icon is 18px wide and centered in a 32px collapsed
+   control, so the New label row carries its own offset. */
+.folder-rail.expanded .folder-rail-button > svg,
+.folder-rail.expanded .rail-toggle > svg {
+  margin-left: 4px;
+}
+
+.folder-rail.expanded .user-label-create > svg {
+  margin-left: 7px;
 }
 
 .folder-rail-button-text {
@@ -358,12 +374,17 @@ button {
      rows to the icon-sized chips the regular layout shows — the thread
      count span stays visible so an expanded narrow-window chip still
      means something). contain: size is a vertical-layout rule: the
-     horizontal row must size itself by its content again. */
+     horizontal row must size itself by its content again. Every folder
+     row plus the labels surface is wider than a narrow window, so the
+     row starts flex-start at the left edge and scrolls horizontally —
+     centered content would clip off-screen at both ends alike. */
   .folder-rail.expanded {
     width: auto;
     align-items: center;
+    justify-content: flex-start;
     contain: none;
     overflow-y: visible;
+    overflow-x: auto;
   }
 
   .folder-rail.expanded .rail-toggle {
@@ -377,8 +398,18 @@ button {
 
   .folder-rail.expanded .folder-rail-button {
     width: 40px;
+    height: 40px;
     justify-content: center;
     padding: 0;
+  }
+
+  /* The drawer's icon margins exist to pin icons in the vertical
+     column's collapsed slots; this row centers icons again, so the
+     margins go back to nothing or every glyph would sit off-center. */
+  .folder-rail.expanded .folder-rail-button > svg,
+  .folder-rail.expanded .rail-toggle > svg,
+  .folder-rail.expanded .user-label-create > svg {
+    margin-left: 0;
   }
 
   .folder-rail.expanded .folder-rail-button-text,

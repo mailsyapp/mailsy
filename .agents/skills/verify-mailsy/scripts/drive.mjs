@@ -1529,8 +1529,16 @@ try {
     )
     // The drawer is an overlay: the mail column must keep its exact spot
     // when the rail widens, so the list's own box is measured before and
-    // after the expansion and compared.
+    // after the expansion and compared. The first folder icon's box is
+    // measured the same way: expanding must reveal names around the
+    // icons, never re-anchor the icons themselves.
     const listBefore = await page.getByRole('complementary', { name: 'Inbox' }).boundingBox()
+    const iconBefore = await page
+      .locator('.folder-rail-button')
+      .first()
+      .locator('svg')
+      .first()
+      .boundingBox()
     // The collapsed Tag reveal is the state expansion has to preserve:
     // show the chips first, so the round trip ends where this journey began.
     await rail.getByRole('button', { name: 'Labels', exact: true }).click()
@@ -1554,6 +1562,20 @@ try {
       Math.abs(listAfter.x - listBefore.x) < 0.5 && Math.abs(listAfter.y - listBefore.y) < 0.5,
       'the mail column keeps its exact spot while the drawer is open',
       `expanding moved the mail column (measured at the list box: before x=${listBefore.x} y=${listBefore.y}, after x=${listAfter.x} y=${listAfter.y})`
+    )
+    const iconAfter = await page
+      .locator('.folder-rail-button')
+      .first()
+      .locator('svg')
+      .first()
+      .boundingBox()
+    assert(
+      Math.abs(iconAfter.x - iconBefore.x) < 0.5 &&
+        Math.abs(iconAfter.y - iconBefore.y) < 0.5 &&
+        Math.abs(iconAfter.width - iconBefore.width) < 0.5 &&
+        Math.abs(iconAfter.height - iconBefore.height) < 0.5,
+      'the folder icons keep their exact size and spot while the drawer is open',
+      `expanding moved the folder icon (measured: before x=${iconBefore.x} y=${iconBefore.y} w=${iconBefore.width} h=${iconBefore.height}, after x=${iconAfter.x} y=${iconAfter.y} w=${iconAfter.width} h=${iconAfter.height})`
     )
     const FOLDERS = [
       'Inbox',
