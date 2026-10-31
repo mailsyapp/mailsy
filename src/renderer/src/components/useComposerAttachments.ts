@@ -3,19 +3,23 @@ import {
   ATTACHMENTS_TOTAL_LIMIT_BYTES,
   attachmentsLimitError,
   type ComposeAttachment,
-  type MessageAttachmentRef
+  type MessageAttachmentRef,
+  type SendEmailRequest
 } from '../../../shared/types'
 
 // One composer's attachment set, shared by the three composer surfaces
 // (new compose, draft edit, reply/forward). State lives here; the content
 // rides the compose fields exactly like text, so no layer ever owns
-// attachments separately. `prefill` is the draft-editor round trip: the
-// stored refs of the draft being edited, resolved to full records before
-// `ready` flips true — an autosave that started earlier would replace the
-// stored raw message and silently strip those files. Resolve failures
-// surface in `error` with the missing names; the loaded rest still attach.
+// attachments separately. `field` is that ride: the empty-list-free
+// request field every autosave and send payload spreads. `prefill` is the
+// draft-editor round trip: the stored refs of the draft being edited,
+// resolved to full records before `ready` flips true — an autosave that
+// started earlier would replace the stored raw message and silently strip
+// those files. Resolve failures surface in `error` with the missing
+// names; the loaded rest still attach.
 export interface ComposerAttachments {
   attachments: ComposeAttachment[]
+  field: Pick<SendEmailRequest, 'attachments'>
   error: string | null
   ready: boolean
   picking: boolean
@@ -100,5 +104,7 @@ export function useComposerAttachments(prefill?: AttachmentPrefill): ComposerAtt
     setError(null)
   }, [])
 
-  return { attachments, error, ready, picking, pick, remove, clear }
+  const field: Pick<SendEmailRequest, 'attachments'> = attachments.length > 0 ? { attachments } : {}
+
+  return { attachments, field, error, ready, picking, pick, remove, clear }
 }

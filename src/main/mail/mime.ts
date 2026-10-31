@@ -53,41 +53,28 @@ export interface MessageBodies {
   attachments: MessageAttachmentRef[]
 }
 
-function collectRef(out: MessageBodies, part: gmail_v1.Schema$MessagePart): void {
-  if (part.filename && part.body?.attachmentId) {
+export function collectBodies(part: gmail_v1.Schema$MessagePart, out: MessageBodies): void {
+  const mime = part.mimeType ?? ''
+  if (mime === 'text/plain' && !out.text) out.text = decodeBody(part.body?.data)
+  if (mime === 'text/html' && !out.html) out.html = decodeBody(part.body?.data)
+  // cid-referenced media is the body's own vocabulary, not a listed file;
+  // any other named part with bytes is a content-less attachment ref.
+  const inlineCid = mime.startsWith('image/')
+    ? part.headers?.find((header) => header.name?.toLowerCase() === 'content-id')?.value
+    : undefined
+  if (inlineCid) {
+    out.inlineImages.push({
+      contentId: inlineCid,
+      mimeType: mime,
+      data: part.body?.data,
+      attachmentId: part.body?.attachmentId
+    })
+  } else if (part.filename && part.body?.attachmentId) {
     out.attachments.push({
       filename: part.filename,
       size: part.body.size ?? 0,
       attachmentId: part.body.attachmentId
     })
-  }
-}
-
-export function collectBodies(part: gmail_v1.Schema$MessagePart, out: MessageBodies): void {
-  const mime = part.mimeType ?? ''
-  if (mime === 'text/plain' && !out.text) out.text = decodeBody(part.body?.data)
-  if (mime === 'text/html' && !out.html) out.html = decodeBody(part.body?.data)
-  if (mime.startsWith('image/')) {
-    const contentId = part.headers?.find(
-      (header) => header.name?.toLowerCase() === 'content-id'
-    )?.value
-    if (contentId) {
-      // Rendered inline: the cid references below replace them with data
-      // URLs, so they never join the attachment list even though they
-      // carry filenames and attachment ids too.
-      out.inlineImages.push({
-        contentId,
-        mimeType: mime,
-        data: part.body?.data,
-        attachmentId: part.body?.attachmentId
-      })
-    } else if (part.filename && part.body?.attachmentId) {
-      collectRef(out, part)
-    }
-  }
-  // A filename means a named non-inline part: a real attachment.
-  else if (part.filename && part.body?.attachmentId) {
-    collectRef(out, part)
   }
   for (const p of part.parts ?? []) collectBodies(p, out)
 }

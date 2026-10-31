@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { RecipientFields } from './RecipientFields'
-import { hasRecipient, type RecipientState, type SendEmailRequest } from '../../../shared/types'
+import { hasRecipient, type RecipientState } from '../../../shared/types'
 import { useDraftAutosave } from './useDraftAutosave'
 import { AttachmentChips } from './AttachmentChips'
 import { useComposerAttachments } from './useComposerAttachments'
@@ -34,10 +34,8 @@ export function ComposeEditor({ onClose }: ComposeEditorProps): React.JSX.Elemen
   // autosave and send payload below like the text fields do, so a restored
   // draft reopens with them.
   const attach = useComposerAttachments()
-  const attachmentsField = (): Pick<SendEmailRequest, 'attachments'> =>
-    attach.attachments.length ? { attachments: attach.attachments } : {}
   const autosave = useDraftAutosave(
-    { ...recipients, subject, body, ...attachmentsField() },
+    { ...recipients, subject, body, ...attach.field },
     undefined,
     true
   )
@@ -76,15 +74,9 @@ export function ComposeEditor({ onClose }: ComposeEditorProps): React.JSX.Elemen
       autosave.suspend()
       try {
         if (draftId) {
-          await window.api.sendDraft({
-            draftId,
-            ...recipients,
-            subject,
-            body,
-            ...attachmentsField()
-          })
+          await window.api.sendDraft({ draftId, ...recipients, subject, body, ...attach.field })
         } else {
-          await window.api.sendEmail({ ...recipients, subject, body, ...attachmentsField() })
+          await window.api.sendEmail({ ...recipients, subject, body, ...attach.field })
         }
       } finally {
         autosave.resume()

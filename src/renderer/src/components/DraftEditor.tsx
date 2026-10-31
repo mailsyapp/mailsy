@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { EmailDetail as EmailDetailData, ThreadSummary } from '../../../shared/types'
-import { hasRecipient, type RecipientState, type SendEmailRequest } from '../../../shared/types'
+import { hasRecipient, type RecipientState } from '../../../shared/types'
 import { RecipientFields } from './RecipientFields'
 import { useDraftAutosave } from './useDraftAutosave'
 import { AttachmentChips } from './AttachmentChips'
@@ -63,8 +63,6 @@ function DraftForm({
   const attach = useComposerAttachments(
     detail.attachments.length ? { messageId: detail.id, refs: detail.attachments } : undefined
   )
-  const attachmentsField = (): Pick<SendEmailRequest, 'attachments'> =>
-    attach.attachments.length ? { attachments: attach.attachments } : {}
   // Editing an existing draft autosaves through drafts.update, so a
   // dismissed edit (row click, folder switch, reset) is not lost either.
   // Threading and the settled attachment list ride along, so the stored
@@ -75,7 +73,7 @@ function DraftForm({
       ...recipients,
       subject,
       body,
-      ...attachmentsField(),
+      ...attach.field,
       threadId: detail.threadId || undefined,
       // Same header set the atomic send writes: drafts.update replaces the
       // whole stored message, so an autosave without the draft's reply
@@ -110,7 +108,7 @@ function DraftForm({
             ...recipients,
             subject,
             body,
-            ...attachmentsField(),
+            ...attach.field,
             threadId: detail.threadId || undefined,
             // The draft's own In-Reply-To header is the message it was a reply
             // to. detail.messageId is the draft's unsent Message-ID and would
@@ -122,12 +120,7 @@ function DraftForm({
           // No draft ID (shouldn't happen for rows from the Drafts folder):
           // send as a new message but do NOT report sent — the unknown draft
           // is still in Gmail, and dropping the row would hide that fact.
-          await window.api.sendEmail({
-            ...recipients,
-            subject,
-            body,
-            ...attachmentsField()
-          })
+          await window.api.sendEmail({ ...recipients, subject, body, ...attach.field })
           setNotice(
             'Sent as a new message; the original draft entry was left in place (unknown draft ID).'
           )

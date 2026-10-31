@@ -256,8 +256,6 @@ export function EmailDetail({
   // the files join only when the bridge call leaves. Cancel clears them
   // with the text; the form remounts per thread via key in App.
   const attach = useComposerAttachments()
-  const attachmentsField = (): Pick<SendEmailRequest, 'attachments'> =>
-    attach.attachments.length ? { attachments: attach.attachments } : {}
 
   const [archiving, setArchiving] = useState(false)
   const [archiveError, setArchiveError] = useState<string | null>(null)
@@ -416,6 +414,10 @@ export function EmailDetail({
   function openReplyComposer(target: EmailDetailData, toLine: string, ccLine = ''): void {
     setSendError(null)
     setSent(false)
+    // A fresh reply starts from a clean file set the way it starts from a
+    // clean body: the hook instance survives the pane, so an abandoned
+    // earlier reply's picked files must not ride into this one.
+    attach.clear()
     const originalText = target.bodyText || target.snippet || thread.snippet
     const quotedText = `On ${target.date}, ${target.from} wrote:\n${originalText
       .split('\n')
@@ -467,6 +469,7 @@ export function EmailDetail({
 
     setSendError(null)
     setSent(false)
+    attach.clear()
     const originalText = target.bodyText || target.snippet || thread.snippet
     const forwardHeader = [
       '---------- Forwarded message ----------',
@@ -517,7 +520,7 @@ export function EmailDetail({
     try {
       await window.api.sendEmail({
         ...draft,
-        ...attachmentsField(),
+        ...attach.field,
         ...(quotedContent
           ? { bodyHtml: formatDraftHtml(draft.body, quotedContent.text, quotedContent.html) }
           : {})
