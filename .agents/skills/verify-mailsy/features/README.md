@@ -59,4 +59,6 @@ Keep implementation details out of the map. Name only user paths, stable handles
 - [Snooze emulation](./snooze-emulation.md) covers Mailsy's own snooze: park via presets, the wake schedule, fast-forwarded wakes, and the restore pair on row and detail.
 - [Folder rail](./sidebar.md) covers the rail's thirteen folder affordances: one each, the labels surface hidden in the default view, and folder clicks opening their views.
 - [User labels](./labels.md) covers the open thread's `Labels` menu apply/remove with a refetch round trip, and the rail labels surface hidden in the default view.
+- [Delete draft](./delete-draft.md) covers the draft-row delete affordance and the confirm gate around the boundary call.
+- [Attachments](./attachments.md) covers attaching files in all three composers: pick, chip display and removal, send carrying the bytes, autosave persistence, and the stored-draft round trip.
 - [Refresh](./refresh.md) covers the live refresh channel: the button's instant busy state and in-flight dedupe, surfaced sweep failures, and arrival of new mail through pushed delta and reset folds without a click.
