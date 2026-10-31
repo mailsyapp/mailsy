@@ -114,19 +114,6 @@ export interface MailLabel {
 // it to drop back to the sign-in screen, so both sides share one constant.
 export const SESSION_EXPIRED_ERROR = 'Your Google session has expired. Sign in again.'
 
-// One guard for both sides: 20 MB of decoded attachment bytes per message,
-// comfortably inside Gmail's 25 MB encoded-message cap. The renderer gates
-// its pick button on it and main enforces it at the trust boundary; both
-// share this constant so the number can't drift apart.
-export const ATTACHMENTS_TOTAL_LIMIT_BYTES = 20 * 1024 * 1024
-
-// The sentence every over-limit path says, built here so the pick-time
-// refusal, the send boundary, and the renderer's own cumulative check stay
-// word-identical.
-export function attachmentsLimitError(totalBytes: number): string {
-  return `Attachments are too large to send (${Math.floor(totalBytes / (1024 * 1024))} MB). Gmail's limit is 25 MB per message.`
-}
-
 // The composer's three address lines. Omission is "not this field" for a
 // patch handler and "never typed" for the receipt test; the lines carry the
 // same comma-separated address shape as SendEmailRequest's `to`.
@@ -150,11 +137,11 @@ export function hasRecipient({ to, cc, bcc }: RecipientLines): boolean {
 }
 
 // One file the composer sends with the message. The record carries the
-// decoded bytes only (base64 over the bridge); malloc'ed MIME output is
-// derived in main. This travels inside SendEmailRequest, so a compose can
-// attach, autosave, and send with the exact same object: drafts.update
-// replaces the raw message wholesale, so attachments are message content,
-// never a separate store.
+// bytes only (base64 over the bridge); MIME encoding is derived in main.
+// This travels inside SendEmailRequest, so a compose can attach, autosave,
+// and send with the exact same object: drafts.update replaces the raw
+// message wholesale, so attachments are message content, never a separate
+// store.
 export interface ComposeAttachment {
   filename: string
   size: number
@@ -170,6 +157,19 @@ export interface MessageAttachmentRef {
   filename: string
   size: number
   attachmentId: string
+}
+
+// One guard for both sides: 20 MB of decoded attachment bytes per message,
+// comfortably inside Gmail's 25 MB encoded-message cap. The picker rejects
+// an over-budget selection and main re-asks at the trust boundary; both
+// share this constant so the number can't drift apart.
+export const ATTACHMENTS_TOTAL_LIMIT_BYTES = 20 * 1024 * 1024
+
+// The sentence every over-limit path says, built here so the pick-time
+// refusal, the boundary re-ask, and the renderer's cumulative check stay
+// word-identical.
+export function attachmentsLimitError(totalBytes: number): string {
+  return `Attachments are too large to send (${Math.floor(totalBytes / (1024 * 1024))} MB). Gmail's limit is 25 MB per message.`
 }
 
 export interface SendEmailRequest {
