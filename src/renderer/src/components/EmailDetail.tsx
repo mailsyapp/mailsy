@@ -16,6 +16,8 @@ import { replyAllRecipients } from '../lib/recipients'
 import { hasRecipient } from '../../../shared/types'
 import { SNOOZE_PRESETS } from '../lib/snooze'
 import { RecipientFields } from './RecipientFields'
+import { AttachmentChips } from './AttachmentChips'
+import { useComposerAttachments } from './useComposerAttachments'
 
 // Folders where report spam makes sense: drafts and sent (mail you own),
 // spam itself, and Trash are the excluded rest. A user-label view behaves
@@ -249,6 +251,11 @@ export function EmailDetail({
   const [sending, setSending] = useState(false)
   const [sendError, setSendError] = useState<string | null>(null)
   const [sent, setSent] = useState(false)
+  // The reply/forward form's own file set, separate from `draft` so the
+  // typed-text payload state keeps being exactly a SendEmailRequest and
+  // the files join only when the bridge call leaves. Cancel clears them
+  // with the text; the form remounts per thread via key in App.
+  const attach = useComposerAttachments()
 
   const [archiving, setArchiving] = useState(false)
   const [archiveError, setArchiveError] = useState<string | null>(null)
@@ -407,6 +414,10 @@ export function EmailDetail({
   function openReplyComposer(target: EmailDetailData, toLine: string, ccLine = ''): void {
     setSendError(null)
     setSent(false)
+    // A fresh reply starts from a clean file set the way it starts from a
+    // clean body: the hook instance survives the pane, so an abandoned
+    // earlier reply's picked files must not ride into this one.
+    attach.clear()
     const originalText = target.bodyText || target.snippet || thread.snippet
     const quotedText = `On ${target.date}, ${target.from} wrote:\n${originalText
       .split('\n')
@@ -458,6 +469,7 @@ export function EmailDetail({
 
     setSendError(null)
     setSent(false)
+    attach.clear()
     const originalText = target.bodyText || target.snippet || thread.snippet
     const forwardHeader = [
       '---------- Forwarded message ----------',
@@ -508,6 +520,7 @@ export function EmailDetail({
     try {
       await window.api.sendEmail({
         ...draft,
+        ...attach.field,
         ...(quotedContent
           ? { bodyHtml: formatDraftHtml(draft.body, quotedContent.text, quotedContent.html) }
           : {})
@@ -818,12 +831,21 @@ export function EmailDetail({
 
           {sendError && <p role="alert">{sendError}</p>}
 
+          <AttachmentChips
+            attachments={attach.attachments}
+            error={attach.error}
+            picking={attach.picking}
+            onPick={attach.pick}
+            onRemove={attach.remove}
+          />
+
           <div className="composerActions">
             <button
               type="button"
               onClick={() => {
                 setDraft(null)
                 setQuotedContent(null)
+                attach.clear()
               }}
             >
               Cancel

@@ -22,6 +22,8 @@ export interface EmailDetail extends EmailSummary {
   references: string
   bodyHtml?: string
   bodyText?: string
+  // Content-less refs; drafts resolve these back to bytes per attachment.
+  attachments: MessageAttachmentRef[]
 }
 
 export interface EmailThread {
@@ -134,6 +136,42 @@ export function hasRecipient({ to, cc, bcc }: RecipientLines): boolean {
   return Boolean(to?.trim() || cc?.trim() || bcc?.trim())
 }
 
+// One file the composer sends with the message. The record carries the
+// bytes only (base64 over the bridge); MIME encoding is derived in main.
+// This travels inside SendEmailRequest, so a compose can attach, autosave,
+// and send with the exact same object: drafts.update replaces the raw
+// message wholesale, so attachments are message content, never a separate
+// store.
+export interface ComposeAttachment {
+  filename: string
+  size: number
+  // Standard base64 of the file bytes.
+  data: string
+}
+
+// One attachment a stored message carries, listed without content so a
+// detail fetch stays cheap. The draft-editor round trip resolves each ref
+// to a ComposeAttachment through gmail:get-attachment before it autosaves,
+// because a drafts.update without the data would strip the draft's files.
+export interface MessageAttachmentRef {
+  filename: string
+  size: number
+  attachmentId: string
+}
+
+// One guard for both sides: 20 MB of decoded attachment bytes per message,
+// comfortably inside Gmail's 25 MB encoded-message cap. The picker rejects
+// an over-budget selection and main re-asks at the trust boundary; both
+// share this constant so the number can't drift apart.
+export const ATTACHMENTS_TOTAL_LIMIT_BYTES = 20 * 1024 * 1024
+
+// The sentence every over-limit path says, built here so the pick-time
+// refusal, the boundary re-ask, and the renderer's cumulative check stay
+// word-identical.
+export function attachmentsLimitError(totalBytes: number): string {
+  return `Attachments are too large to send (${Math.floor(totalBytes / (1024 * 1024))} MB). Gmail's limit is 25 MB per message.`
+}
+
 export interface SendEmailRequest {
   to: string
   // Optional carbon lists in the same comma-separated address-line shape as
@@ -149,6 +187,9 @@ export interface SendEmailRequest {
   threadId?: string
   inReplyTo?: string
   references?: string
+  // Absent means "not this field" for the boundary check; an empty array
+  // is legal but pointless, so the senders emit only non-empty lists.
+  attachments?: ComposeAttachment[]
 }
 
 // A draft send is exactly a normal send plus the draft to consume; keeping

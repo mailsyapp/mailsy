@@ -355,6 +355,52 @@ button {
   background: #fff;
 }
 
+/* Attachment bar: picker button left, one chip per file with its size and
+   the remove control, matching the composer's own box style. */
+.attachmentBar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.attachmentBar button,
+.attachmentChip button {
+  font: inherit;
+  cursor: pointer;
+}
+
+.attachmentChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  background: #f8f9fa;
+  font-size: 12px;
+  max-width: 100%;
+}
+
+.attachmentChip-size {
+  color: #5f6368;
+  white-space: nowrap;
+}
+
+.attachmentChip button {
+  border: none;
+  background: none;
+  padding: 0 2px;
+  color: #5f6368;
+  line-height: 1;
+}
+
+.attachmentBar-error {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: 12px;
+}
+
 /* User-label rail section: one chip per label in the Gmail label color,
    the body carrying the count that opens the view. */
 .user-label-chips {

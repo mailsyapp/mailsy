@@ -3,11 +3,13 @@ import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { signIn, signOut, isSignedIn } from './auth'
+import { pickAttachments } from './attachments'
 import {
   discardDraft,
   armSyncClock,
   createUserLabel,
   deleteUserLabel,
+  fetchAttachment,
   fetchFolder,
   fetchMessage,
   fetchThread,
@@ -93,6 +95,14 @@ app.whenReady().then(() => {
   ipcMain.handle('gmail:send-draft', (_event, request: SendDraftRequest) => sendDraft(request))
   ipcMain.handle('gmail:save-draft', (_event, request: SaveDraftRequest) => saveDraft(request))
   ipcMain.handle('gmail:discard-draft', (_event, draftId: string) => discardDraft(draftId))
+  // The composer's file picker. Files ride back fully in memory (base64),
+  // so a picked file is the record the send/autosave payloads carry; a
+  // failed read or an over-limit pick throws the picker's own sentence.
+  ipcMain.handle('attachments:pick', () => pickAttachments())
+  // One stored attachment's bytes for the draft-editor round trip.
+  ipcMain.handle('gmail:get-attachment', (_event, messageId: string, attachmentId: string) =>
+    fetchAttachment(messageId, attachmentId)
+  )
   ipcMain.handle('gmail:modify', (_event, request: ModifyLabelsRequest) => modifyLabels(request))
   ipcMain.handle('gmail:list-labels', () => listLabels())
   ipcMain.handle('gmail:create-label', (_event, name: string) => createUserLabel(name))

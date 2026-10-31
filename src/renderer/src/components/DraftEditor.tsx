@@ -3,6 +3,8 @@ import type { EmailDetail as EmailDetailData, ThreadSummary } from '../../../sha
 import { hasRecipient, type RecipientState } from '../../../shared/types'
 import { RecipientFields } from './RecipientFields'
 import { useDraftAutosave } from './useDraftAutosave'
+import { AttachmentChips } from './AttachmentChips'
+import { useComposerAttachments } from './useComposerAttachments'
 
 type DraftEditorProps = {
   // The draft row: subject plus the draftId/messageIds the send path needs.
@@ -54,16 +56,24 @@ function DraftForm({
   const [sendError, setSendError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [sent, setSent] = useState(false)
+  // The draft's stored files resolve back into composer state before the
+  // first autosave fires: drafts.update replaces the whole raw message, so
+  // writing without the data would strip them off the draft. `ready` gates
+  // the autosave until every ref has settled (resolved or failed).
+  const attach = useComposerAttachments(
+    detail.attachments.length ? { messageId: detail.id, refs: detail.attachments } : undefined
+  )
   // Editing an existing draft autosaves through drafts.update, so a
   // dismissed edit (row click, folder switch, reset) is not lost either.
-  // Threading rides along like the send below, so the stored draft keeps
-  // its linkage. Rows without a draft id keep today's no-autosave shape:
-  // they send fresh and cannot be updated anyway.
+  // Threading and the settled attachment list ride along, so the stored
+  // draft keeps what it already carried. Rows without a draft id keep
+  // today's no-autosave shape: they send fresh and cannot be updated.
   const autosave = useDraftAutosave(
     {
       ...recipients,
       subject,
       body,
+      ...attach.field,
       threadId: detail.threadId || undefined,
       // Same header set the atomic send writes: drafts.update replaces the
       // whole stored message, so an autosave without the draft's reply
@@ -72,7 +82,7 @@ function DraftForm({
       references: detail.references || undefined
     },
     draftId,
-    draftId !== undefined
+    draftId !== undefined && attach.ready
   )
 
   async function handleSend(event: React.FormEvent<HTMLFormElement>): Promise<void> {
@@ -98,6 +108,7 @@ function DraftForm({
             ...recipients,
             subject,
             body,
+            ...attach.field,
             threadId: detail.threadId || undefined,
             // The draft's own In-Reply-To header is the message it was a reply
             // to. detail.messageId is the draft's unsent Message-ID and would
@@ -109,7 +120,7 @@ function DraftForm({
           // No draft ID (shouldn't happen for rows from the Drafts folder):
           // send as a new message but do NOT report sent — the unknown draft
           // is still in Gmail, and dropping the row would hide that fact.
-          await window.api.sendEmail({ ...recipients, subject, body })
+          await window.api.sendEmail({ ...recipients, subject, body, ...attach.field })
           setNotice(
             'Sent as a new message; the original draft entry was left in place (unknown draft ID).'
           )
@@ -147,6 +158,14 @@ function DraftForm({
         <span>Message</span>
         <textarea value={body} onChange={(event) => setBody(event.target.value)} />
       </label>
+
+      <AttachmentChips
+        attachments={attach.attachments}
+        error={attach.error}
+        picking={attach.picking}
+        onPick={attach.pick}
+        onRemove={attach.remove}
+      />
 
       {sendError && <p role="alert">{sendError}</p>}
       {notice && <p role="status">{notice}</p>}
