@@ -1509,6 +1509,187 @@ try {
     await page.getByRole('complementary', { name: 'Inbox' }).waitFor({ timeout: 10000 })
     log('pass: the Inbox affordance opens its view again')
     await snapshot(page, 'sidebar')
+  } else if (FEATURE === 'sidebar-expanded') {
+    // The expanded sidebar: one control flips the icon rail to named rows
+    // and re-exposes the labels section the default view gates off. The
+    // state must survive a folder switch and collapse clean again.
+    const rail = page.getByRole('navigation', { name: 'Mail folders' })
+    const inbox = page.getByRole('complementary', { name: 'Inbox' })
+    await inbox.waitFor({ timeout: 10000 })
+    assert(
+      (await rail.getByRole('button', { name: 'New label', exact: true }).count()) === 0,
+      'the default view still gates the labels section off',
+      'New label affordance rendered before the sidebar was expanded'
+    )
+    const toggle = rail.getByRole('button', { name: 'Expand sidebar', exact: true })
+    assert(
+      (await toggle.count()) === 1,
+      'the rail carries exactly one expand control',
+      'expand control missing or duplicated'
+    )
+    // The drawer is an overlay: the mail column must keep its exact spot
+    // when the rail widens, so the list's own box is measured before and
+    // after the expansion and compared. The first folder icon's box is
+    // measured the same way: expanding must reveal names around the
+    // icons, never re-anchor the icons themselves.
+    const listBefore = await page.getByRole('complementary', { name: 'Inbox' }).boundingBox()
+    const iconBefore = await page
+      .locator('.folder-rail-button')
+      .first()
+      .locator('svg')
+      .first()
+      .boundingBox()
+    const pillBefore = await rail.locator('.folder-rail-button.active').first().boundingBox()
+    // The collapsed Tag reveal is the state expansion has to preserve:
+    // show the chips first, so the round trip ends where this journey began.
+    await rail.getByRole('button', { name: 'Labels', exact: true }).click()
+    assert(
+      (await rail.getByRole('button', { name: 'New label', exact: true }).count()) === 1,
+      'the collapsed Tag toggle reveals the labels surface',
+      'the Tag toggle did not reveal the labels surface'
+    )
+    await toggle.click()
+    await rail
+      .getByRole('button', { name: 'Collapse sidebar', exact: true })
+      .waitFor({ timeout: 10000 })
+    log('pass: expanding flips the control to Collapse sidebar')
+    assert(
+      (await rail.getByRole('button', { name: 'Labels', exact: true }).count()) === 0,
+      'the collapsed-only Tag toggle is gone while expanded',
+      'the Tag toggle survived the expansion'
+    )
+    const listAfter = await page.getByRole('complementary', { name: 'Inbox' }).boundingBox()
+    assert(
+      Math.abs(listAfter.x - listBefore.x) < 0.5 && Math.abs(listAfter.y - listBefore.y) < 0.5,
+      'the mail column keeps its exact spot while the drawer is open',
+      `expanding moved the mail column (measured at the list box: before x=${listBefore.x} y=${listBefore.y}, after x=${listAfter.x} y=${listAfter.y})`
+    )
+    const iconAfter = await page
+      .locator('.folder-rail-button')
+      .first()
+      .locator('svg')
+      .first()
+      .boundingBox()
+    assert(
+      Math.abs(iconAfter.x - iconBefore.x) < 0.5 &&
+        Math.abs(iconAfter.y - iconBefore.y) < 0.5 &&
+        Math.abs(iconAfter.width - iconBefore.width) < 0.5 &&
+        Math.abs(iconAfter.height - iconBefore.height) < 0.5,
+      'the folder icons keep their exact size and spot while the drawer is open',
+      `expanding moved the folder icon (measured: before x=${iconBefore.x} y=${iconBefore.y} w=${iconBefore.width} h=${iconBefore.height}, after x=${iconAfter.x} y=${iconAfter.y} w=${iconAfter.width} h=${iconAfter.height})`
+    )
+    // The highlight is the collapsed pill drawn longer, not a full-bleed
+    // bar: the active button's left edge stays where the collapsed square
+    // sat and its width stays at least a collapsed square short of the
+    // drawer's inner width (the 6px inset each side).
+    const drawerWidth = (await rail.boundingBox()).width
+    // The highlight is the collapsed pill drawn longer, not a full-bleed
+    // bar: the active button's left edge stays where the collapsed square
+    // sat and its width stays at least a collapsed square short of the
+    // drawer's inner width (the 6px inset each side).
+    const pillAfter = await rail.locator('.folder-rail-button.active').first().boundingBox()
+    assert(
+      pillAfter !== null &&
+        pillBefore !== null &&
+        Math.abs(pillAfter.x - pillBefore.x) < 0.5 &&
+        pillAfter.width < drawerWidth - 12,
+      'the active highlight renders the collapsed pill shape inset in the open drawer',
+      `the active highlight is not the collapsed pill in the open drawer (before x=${pillBefore?.x} w=${pillBefore?.width}, after x=${pillAfter?.x} w=${pillAfter?.width}, drawer width=${drawerWidth})`
+    )
+    const FOLDERS = [
+      'Inbox',
+      'Starred',
+      'Snoozed',
+      'Important',
+      'Social',
+      'Promotions',
+      'Updates',
+      'Forums',
+      'Drafts',
+      'Sent',
+      'Spam',
+      'Trash',
+      'All Mail'
+    ]
+    for (const name of FOLDERS) {
+      const count = await rail.getByRole('button', { name, exact: true }).count()
+      assert(
+        count === 1,
+        `the ${name} row is unique while expanded`,
+        `expanded rail affordance for ${name} missing or duplicated (count ${count})`
+      )
+    }
+    assert(
+      (await rail.getByText('Labels', { exact: true }).count()) === 1,
+      'the expanded rail shows one Labels section heading',
+      'Labels section heading missing or duplicated while expanded'
+    )
+    // The seeded user label re-exposed as the section the default view
+    // hides: chip rows show the label's name, New label opens the create
+    // form the collapsed Tag toggle used to reveal.
+    await rail.getByText('Receipts', { exact: true }).waitFor({ timeout: 10000 })
+    log('pass: the labels section re-exposes the seeded label by name')
+    // The labels surface draws from the same shape: the chip plate stays
+    // the pill (its left edge where the highlight's is, inset, not
+    // full-bleed) while the drawer is open.
+    const chipBox = await rail.locator('.user-label-chip').first().boundingBox()
+    assert(
+      chipBox !== null &&
+        pillAfter !== null &&
+        Math.abs(chipBox.x - pillAfter.x) < 0.5 &&
+        chipBox.width < drawerWidth - 12,
+      'the label chip plate renders the same inset pill as the highlight',
+      `the chip plate is not the inset pill (chip x=${chipBox?.x} w=${chipBox?.width}, pill x=${pillAfter?.x}, drawer width=${drawerWidth})`
+    )
+    await rail.getByRole('button', { name: 'New label', exact: true }).click()
+    await rail.getByRole('textbox', { name: 'Label name' }).waitFor({ timeout: 10000 })
+    log('pass: New label opens its inline form while expanded')
+    await rail.getByRole('textbox', { name: 'Label name' }).press('Escape')
+    // A label selection folds the drawer too, and the collapsed rail
+    // answers "which label" with a tile in the label's own color where
+    // the Tag toggle otherwise sits (Spark-style). The tile click is the
+    // way back to the labels surface.
+    await rail.getByRole('button', { name: 'Receipts', exact: true }).click()
+    await rail.getByRole('button', { name: 'Expand sidebar', exact: true }).waitFor({ timeout: 10000 })
+    log('pass: selecting a label collapses the open drawer')
+    const tile = rail.getByRole('button', { name: 'Labels: Receipts', exact: true })
+    assert(
+      (await tile.count()) === 1,
+      'the collapsed rail shows the active label as its own tile',
+      'the active label tile is missing or duplicated in the collapsed rail'
+    )
+    await tile.click()
+    assert(
+      (await rail.getByRole('button', { name: 'New label', exact: true }).count()) === 1,
+      'the tile click reveals the labels surface the Tag toggle would',
+      'clicking the active label tile did not reveal the labels surface'
+    )
+    log('pass: the active label tile opens the labels surface')
+    // Selecting a view folds the drawer: it is an overlay, so the chosen
+    // folder gets its full width back at once and the rails' chips state
+    // rides the collapse unchanged.
+    await rail.getByRole('button', { name: 'Trash', exact: true }).click()
+    await page.getByRole('complementary', { name: 'Trash' }).waitFor({ timeout: 10000 })
+    assert(
+      (await rail.getByRole('button', { name: 'Expand sidebar', exact: true }).count()) === 1,
+      'selecting a folder collapses the open drawer',
+      'the rail stayed expanded after a folder selection'
+    )
+    assert(
+      (await rail.getByRole('button', { name: 'New label', exact: true }).count()) === 1,
+      'the chips the Tag toggle left are still on screen after the collapse',
+      'the chips-shown state was lost when the drawer collapsed'
+    )
+    await rail.getByRole('button', { name: 'Hide labels', exact: true }).click()
+    assert(
+      (await rail.getByRole('button', { name: 'New label', exact: true }).count()) === 0,
+      'the default view is restored after collapsing and hiding',
+      'the labels surface stayed open in the default view'
+    )
+    await rail.getByRole('button', { name: 'Inbox', exact: true }).click()
+    await page.getByRole('complementary', { name: 'Inbox' }).waitFor({ timeout: 10000 })
+    log('pass: collapsing returns the default view and folder browsing works')
+    await snapshot(page, 'sidebar-expanded')
   } else if (FEATURE === 'labels') {
     // The detail pane's Labels menu applies and removes labels on the
     // open thread. The rail's chips and New label affordance are the
