@@ -703,10 +703,11 @@ button {
   border-color: #b00020;
 }
 
-/* Spark-style collapsed indicator: a label view active while the chips
-   are tucked away renders the label itself — a 32px tile in the label's
-   color with a tiny tag glyph and its first three letters — exactly
-   where the Tag toggle sits when no label is active. */
+/* The collapsed rail's answer to a selected label: a 32px white tile
+   where the Tag toggle sits when no label is active, the label's tab
+   glyph rising out of it with the label's short name knocked into the
+   tab's body — an app icon for the label, neutral plate so the label's
+   own color stays on the icon. */
 .active-label-tile {
   position: relative;
   display: flex;
@@ -718,12 +719,14 @@ button {
   padding: 0;
   border: 1px solid rgba(0, 0, 0, 0.2);
   border-radius: 8px;
+  background: #fff;
 }
 
 /* The glyph is the folded-label tab the drawer rows draw, at tile
-   scale: the tile is the label's color, the tab rises in the contrast
-   color, and the short name is knocked into the tab's body (the label's
-   own color showing through), like an app icon. */
+   scale: the tile stays neutral (a white plate like the app's inputs —
+   the label's color belongs to the tab, not the tile), the tab rises in
+   the label's color pair, and the short name is knocked into the tab's
+   body, like an app icon. */
 .active-label-tile-glyph {
   flex: none;
   width: 20px;

@@ -278,17 +278,16 @@ export function FolderRail({
             data-tip={`Labels: ${activeLabel.name}`}
             aria-label={`Labels: ${activeLabel.name}`}
             aria-expanded={false}
-            style={{ background: activeLabel.color?.background ?? '#d9d9d9' }}
             onClick={() => setLabelsShown(true)}
           >
             <span
               className="active-label-tile-glyph"
               aria-hidden="true"
-              style={{ background: activeLabel.color?.text ?? '#000000' }}
+              style={{ background: activeLabel.color?.background ?? '#d9d9d9' }}
             />
             <span
               className="active-label-tile-text"
-              style={{ color: activeLabel.color?.background ?? '#ffffff' }}
+              style={{ color: activeLabel.color?.text ?? '#000000' }}
             >
               {activeLabel.name.slice(0, 3).toUpperCase()}
             </span>
