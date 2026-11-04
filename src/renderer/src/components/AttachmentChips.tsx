@@ -1,13 +1,5 @@
 import type { ComposeAttachment } from '../../../shared/types'
-
-// Reads as bytes under 1 KB, kilobytes under 1 MB, one decimal for MB.
-// Gmail's ref sizes report the raw base64 payload, so these are close
-// enough at chip scale and never claimed to be exact.
-function sizeLabel(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-}
+import { sizeLabel } from '../lib/format'
 
 // The composer's chip row: one chip per file, the picker button always
 // present. An empty set renders just the button, so a composer without

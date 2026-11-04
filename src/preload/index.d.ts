@@ -31,6 +31,7 @@ declare global {
       discardDraft(draftId: string): Promise<void>
       pickAttachments(): Promise<import('../shared/types').ComposeAttachment[]>
       getAttachment(messageId: string, attachmentId: string): Promise<string>
+      saveAttachment(messageId: string, attachmentId: string, filename: string): Promise<boolean>
       modifyLabels(request: ModifyLabelsRequest): Promise<void>
       snoozeThread(threadId: string, restoreAt: number): Promise<void>
       restoreThread(threadId: string): Promise<void>

@@ -139,7 +139,11 @@ function DraftForm({
     }
   }
   return (
-    <form className="composer composer-fill" onSubmit={handleSend}>
+    <form
+      className={`composer composer-fill${attach.dropping ? ' composer-dragging' : ''}`}
+      onSubmit={handleSend}
+      {...attach.drop}
+    >
       <h2 id="draft-editor-title">Draft</h2>
 
       <RecipientFields

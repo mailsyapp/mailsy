@@ -17,6 +17,7 @@ import { hasRecipient } from '../../../shared/types'
 import { SNOOZE_PRESETS } from '../lib/snooze'
 import { RecipientFields } from './RecipientFields'
 import { AttachmentChips } from './AttachmentChips'
+import { MessageAttachments } from './MessageAttachments'
 import { useComposerAttachments } from './useComposerAttachments'
 
 // Folders where report spam makes sense: drafts and sent (mail you own),
@@ -223,6 +224,10 @@ function ThreadMessage({
           ) : (
             <div className="snippet">{message.snippet}</div>
           )}
+
+          {/* The message's own files, below the body like Gmail's read
+              view; each chip saves itself through the native dialog. */}
+          <MessageAttachments message={message} />
         </div>
       )}
     </article>
@@ -802,7 +807,11 @@ export function EmailDetail({
       {readError && <p role="alert">{readError}</p>}
       {starError && <p role="alert">{starError}</p>}
       {draft && (
-        <form className="composer" onSubmit={handleSend}>
+        <form
+          className={`composer${attach.dropping ? ' composer-dragging' : ''}`}
+          onSubmit={handleSend}
+          {...attach.drop}
+        >
           <h2 id="composer-title">Compose email</h2>
 
           <RecipientFields

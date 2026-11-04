@@ -91,7 +91,11 @@ export function ComposeEditor({ onClose }: ComposeEditorProps): React.JSX.Elemen
   }
 
   return (
-    <form className="composer composer-fill" onSubmit={handleSend}>
+    <form
+      className={`composer composer-fill${attach.dropping ? ' composer-dragging' : ''}`}
+      onSubmit={handleSend}
+      {...attach.drop}
+    >
       <h2>New email</h2>
 
       <RecipientFields

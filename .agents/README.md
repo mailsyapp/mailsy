@@ -14,6 +14,12 @@ Drives and proves the Mailsy Electron mail client. Scripted verification runs th
 
 Start with [`skills/verify-mailsy/SKILL.md`](skills/verify-mailsy/SKILL.md).
 
+### `skills/composer-parity/`
+
+The rule for composer features: anything added to a composer lands on all three surfaces (new compose, draft editor, reply/forward) in one change, shares the one hook/component that owns the state, and reaches the harness in the same commit. This is the committed enforcement of "this should apply everywhere".
+
+Start with [`skills/composer-parity/SKILL.md`](skills/composer-parity/SKILL.md).
+
 ## Using the skills
 
 Point your agent harness at this directory (e.g. OpenCode reads skill dirs that contain `SKILL.md`), or invoke the scripts directly from the repo:
@@ -22,7 +28,7 @@ Point your agent harness at this directory (e.g. OpenCode reads skill dirs that 
 export RUN_ID="run-$(date +%s)"
 export VERIFY_MAILSY_PORT=4317   # pick a free port per concurrent run
 cd .agents/skills/verify-mailsy
-npm --prefix drive install       # Playwright + Chromium, once
+npm install                   # Playwright + Chromium, once (skill root, not drive/)
 mkdir -p "artifacts/$RUN_ID"     # evidence dir; helpers stay read-only
 ./scripts/doctor.sh              # preflight, read-only
 ./scripts/serve.sh start         # serves the renderer on the scaffold config

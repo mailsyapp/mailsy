@@ -98,8 +98,14 @@
   // refs point at. Keyed `messageId~attachmentId`, answered by the
   // getAttachment verb the draft-editor round trip calls. The compose
   // picker answers a canned file so the same record shape flows down the
-  // bridge without a native dialog in headless runs.
-  const attachmentStore = new Map([['msg-draft-q4~att-q4', 'UTQgcGxhbm5pbmcgZGF0YQ==']])
+  // bridge without a native dialog in headless runs. The receipts thread's
+  // two stored files are the read-view seed: their chips render in the
+  // conversation view and their records answer the save verb.
+  const attachmentStore = new Map([
+    ['msg-draft-q4~att-q4', 'UTQgcGxhbm5pbmcgZGF0YQ=='],
+    ['msg-receipts-1~att-receipts-1', 'UmVjZWlwdCBBIGNvbnRlbnQ='],
+    ['msg-receipts-1~att-receipts-2', 'UmVjZWlwdCBCIGNvbnRlbnQ=']
+  ])
   const FIXTURE_PICK = [{ filename: 'fixture-file.pdf', size: 7, data: 'Zml4dHVyZQ==' }]
 
   // Reply-all fixture: one message carrying multi-recipient To plus Cc, so
@@ -332,7 +338,11 @@
     bodyText: 'Two receipts attached from the March travel batch.',
     bodyHtml: '<p>Two receipts attached from the March travel batch.</p>',
     folder: 'inbox',
-    labelIds: ['INBOX', 'label-receipts']
+    labelIds: ['INBOX', 'label-receipts'],
+    attachments: [
+      { filename: 'receipt-a.pdf', size: 17, attachmentId: 'att-receipts-1' },
+      { filename: 'receipt-b.pdf', size: 17, attachmentId: 'att-receipts-2' }
+    ]
   })
 
   const byId = new Map(seed.map((m) => [m.id, m]))
@@ -356,6 +366,7 @@
   }
   const sent = []
   const mods = []
+  const saves = []
   const deletedDrafts = []
   // Recorded draft writes and discards for the autosave proof: each save
   // carries the resolved draft id (created on the first write), each
@@ -436,6 +447,7 @@
 
   window.__sent = sent
   window.__mods = mods
+  window.__saves = saves
   window.__seedIds = seed.map((m) => m.id)
   window.__draftSaves = draftSaves
   window.__draftDiscards = draftDiscards
@@ -576,6 +588,18 @@
       const key = `${messageId}~${attachmentId}`
       if (!attachmentStore.has(key)) throw new Error(`mock: no attachment ${key}`)
       return attachmentStore.get(key)
+    },
+    // Mirrors attachments:save in main: the native save dialog collapses
+    // to 'yes' here — the chosen path is not observable, but the id/name
+    // contract is the proof the read view's chip called this verb.
+    saveAttachment: async (messageId, attachmentId, filename) => {
+      ensureSignedIn()
+      if (!messageId?.trim() || !attachmentId?.trim()) throw new Error('Attachment ID is required')
+      if (!filename?.trim()) throw new Error('Attachment name is required')
+      const key = `${messageId}~${attachmentId}`
+      if (!attachmentStore.has(key)) throw new Error(`mock: no attachment ${key}`)
+      saves.push({ messageId, attachmentId, filename })
+      return true
     },
     // Mirrors drafts.update + drafts.send: the sent content is recorded and
     // the draft disappears from the Drafts folder in one step. Throws on an

@@ -51,6 +51,10 @@ const api = {
   // One stored attachment's bytes, standard base64 (see fetchAttachment).
   getAttachment: (messageId: string, attachmentId: string): Promise<string> =>
     ipcRenderer.invoke('gmail:get-attachment', messageId, attachmentId),
+  // Saving a listed attachment to a local file; false means the dialog
+  // was cancelled.
+  saveAttachment: (messageId: string, attachmentId: string, filename: string): Promise<boolean> =>
+    ipcRenderer.invoke('attachments:save', messageId, attachmentId, filename),
   modifyLabels: (request: ModifyLabelsRequest): Promise<void> =>
     ipcRenderer.invoke('gmail:modify', request),
   snoozeThread: (threadId: string, restoreAt: number): Promise<void> =>

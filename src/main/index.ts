@@ -3,7 +3,7 @@ import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { signIn, signOut, isSignedIn } from './auth'
-import { pickAttachments } from './attachments'
+import { pickAttachments, saveAttachmentFile } from './attachments'
 import {
   discardDraft,
   armSyncClock,
@@ -102,6 +102,13 @@ app.whenReady().then(() => {
   // One stored attachment's bytes for the draft-editor round trip.
   ipcMain.handle('gmail:get-attachment', (_event, messageId: string, attachmentId: string) =>
     fetchAttachment(messageId, attachmentId)
+  )
+  // Saving a listed attachment to a chosen local file; resolves false on
+  // a cancelled dialog.
+  ipcMain.handle(
+    'attachments:save',
+    (_event, messageId: string, attachmentId: string, filename: string) =>
+      saveAttachmentFile(messageId, attachmentId, filename)
   )
   ipcMain.handle('gmail:modify', (_event, request: ModifyLabelsRequest) => modifyLabels(request))
   ipcMain.handle('gmail:list-labels', () => listLabels())
