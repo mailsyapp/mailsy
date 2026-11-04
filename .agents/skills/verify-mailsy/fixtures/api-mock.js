@@ -94,6 +94,20 @@
     }
   ].map((m) => ({ folder: 'inbox', labelIds: ['INBOX'], ...m }))
 
+  // Attachment content, the way Gmail stores every message part: bytes the
+  // refs point at. Keyed `messageId~attachmentId`, answered by the
+  // getAttachment verb the draft-editor round trip calls. The compose
+  // picker answers a canned file so the same record shape flows down the
+  // bridge without a native dialog in headless runs. The receipts thread's
+  // two stored files are the read-view seed: their chips render in the
+  // conversation view and their records answer the save verb.
+  const attachmentStore = new Map([
+    ['msg-draft-q4~att-q4', 'UTQgcGxhbm5pbmcgZGF0YQ=='],
+    ['msg-receipts-1~att-receipts-1', 'UmVjZWlwdCBBIGNvbnRlbnQ='],
+    ['msg-receipts-1~att-receipts-2', 'UmVjZWlwdCBCIGNvbnRlbnQ=']
+  ])
+  const FIXTURE_PICK = [{ filename: 'fixture-file.pdf', size: 7, data: 'Zml4dHVyZQ==' }]
+
   // Reply-all fixture: one message carrying multi-recipient To plus Cc, so
   // the To line after reply all covers author + To + Cc with me dropped.
   seed.push({
@@ -113,6 +127,32 @@
     bodyHtml: '<p>Notes from today, agenda for Friday plus an updated release hour.</p>',
     folder: 'inbox',
     labelIds: ['INBOX']
+  })
+
+  // Attachment round-trip draft: refs only, exactly what a messages.get
+  // full response carries for a draft with files; content answers per
+  // attachment from the store above. Its body must render so the journey
+  // can open the draft editor and prove the chips resolve before send.
+  seed.push({
+    id: 'msg-draft-q4',
+    threadId: 'thread-draft-q4',
+    from: 'me@example.com',
+    subject: 'Draft: Q4 attachments',
+    date: 'Tue, 15 Oct 2026 08:00:00 +0000',
+    snippet: 'Draft that carries a stored attachment.',
+    to: 'team@example.com',
+    cc: '',
+    bcc: '',
+    replyTo: '',
+    messageId: '<draft-q4@example.com>',
+    inReplyTo: '',
+    references: '',
+    bodyText: 'Draft that carries a stored attachment.',
+    bodyHtml: '<p>Draft that carries a stored attachment.</p>',
+    folder: 'drafts',
+    labelIds: ['DRAFT'],
+    draftId: 'draft-q4',
+    attachments: [{ filename: 'q4.xlsx', size: 16, attachmentId: 'att-q4' }]
   })
 
   // Spam fixture: one message carrying only the SPAM label, so the Spam
@@ -298,7 +338,11 @@
     bodyText: 'Two receipts attached from the March travel batch.',
     bodyHtml: '<p>Two receipts attached from the March travel batch.</p>',
     folder: 'inbox',
-    labelIds: ['INBOX', 'label-receipts']
+    labelIds: ['INBOX', 'label-receipts'],
+    attachments: [
+      { filename: 'receipt-a.pdf', size: 17, attachmentId: 'att-receipts-1' },
+      { filename: 'receipt-b.pdf', size: 17, attachmentId: 'att-receipts-2' }
+    ]
   })
 
   const byId = new Map(seed.map((m) => [m.id, m]))
@@ -322,6 +366,7 @@
   }
   const sent = []
   const mods = []
+  const saves = []
   const deletedDrafts = []
   // Recorded draft writes and discards for the autosave proof: each save
   // carries the resolved draft id (created on the first write), each
@@ -402,6 +447,7 @@
 
   window.__sent = sent
   window.__mods = mods
+  window.__saves = saves
   window.__seedIds = seed.map((m) => m.id)
   window.__draftSaves = draftSaves
   window.__draftDiscards = draftDiscards
@@ -488,11 +534,14 @@
       ensureSignedIn()
       const m = byId.get(id)
       if (!m) throw new Error(`mock: no message ${id}`)
-      return { ...m }
+      // The attachment ref list is a boundary contract now: the detail
+      // always carries it (empty for plain messages) the way toEmailDetail
+      // does.
+      return { attachments: [], ...m }
     },
     getThread: async (threadId) => {
       ensureSignedIn()
-      const messages = seed.filter((m) => m.threadId === threadId).map((m) => ({ ...m }))
+      const messages = seed.filter((m) => m.threadId === threadId).map((m) => ({ attachments: [], ...m }))
       if (messages.length === 0) throw new Error(`mock: no thread ${threadId}`)
       // The thread's full label id set, deduped, mirroring the boundary
       // contract EmailThread now carries for the labels menu.
@@ -522,6 +571,35 @@
         throw new Error('Recipient is required')
       }
       sent.push({ ...request })
+    },
+    // The composer's file picker: the canned file stands in for the native
+    // dialog plus fs read, returning the same full record shape the real
+    // bridge builds. Recorded so the driver can prove the composer picked.
+    pickAttachments: async () => {
+      ensureSignedIn()
+      window.__pickCalls = (window.__pickCalls ?? 0) + 1
+      return FIXTURE_PICK.map((a) => ({ ...a }))
+    },
+    // One stored attachment's bytes (standard base64), keyed
+    // messageId~attachmentId. Unknown keys throw like the live 404 would,
+    // so a ref/text mismatch fails loudly instead of sending empty parts.
+    getAttachment: async (messageId, attachmentId) => {
+      ensureSignedIn()
+      const key = `${messageId}~${attachmentId}`
+      if (!attachmentStore.has(key)) throw new Error(`mock: no attachment ${key}`)
+      return attachmentStore.get(key)
+    },
+    // Mirrors attachments:save in main: the native save dialog collapses
+    // to 'yes' here — the chosen path is not observable, but the id/name
+    // contract is the proof the read view's chip called this verb.
+    saveAttachment: async (messageId, attachmentId, filename) => {
+      ensureSignedIn()
+      if (!messageId?.trim() || !attachmentId?.trim()) throw new Error('Attachment ID is required')
+      if (!filename?.trim()) throw new Error('Attachment name is required')
+      const key = `${messageId}~${attachmentId}`
+      if (!attachmentStore.has(key)) throw new Error(`mock: no attachment ${key}`)
+      saves.push({ messageId, attachmentId, filename })
+      return true
     },
     // Mirrors drafts.update + drafts.send: the sent content is recorded and
     // the draft disappears from the Drafts folder in one step. Throws on an
@@ -602,6 +680,27 @@
         seed.push(message)
         byId.set(id, message)
       }
+      // drafts.update replaces the whole raw message, so the stored refs
+      // follow the request file set exactly: the inbox content store drops
+      // stale entries and registers the current bytes per new ref.
+      const stored = seed.find((m) => m.draftId === draftId)
+      stored.attachments = (request.attachments ?? []).map(
+        ({ filename, size }, i) => ({
+          filename,
+          size,
+          attachmentId: `att-${draftId}-${i}`
+        })
+      )
+      const msgId = stored.id
+      const keep = new Set(
+        stored.attachments.map((a) => `${msgId}~${a.attachmentId}`)
+      )
+      for (const key of [...attachmentStore.keys()]) {
+        if (key.startsWith(`${msgId}~`) && !keep.has(key)) attachmentStore.delete(key)
+      }
+      ;(request.attachments ?? []).forEach((a, i) => {
+        attachmentStore.set(`${msgId}~att-${draftId}-${i}`, a.data)
+      })
       draftSaves.push({ ...request, draftId })
       return draftId
     },

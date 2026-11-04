@@ -286,6 +286,148 @@ try {
       'fresh send was misshapen as a reply or draft'
     )
     await snapshot(page, 'compose-new')
+  } else if (FEATURE === 'attachments') {
+    // Compose flow: two entrances into the same set. A drag drops in first
+    // (a real DragEvent carrying a constructed File — the same handler a
+    // Finder drag lands in), then the picker through the mock's canned
+    // file. Send carries both. Then chip removal, then the draft round
+    // trip, then the read view.
+    const inbox = page.getByRole('complementary', { name: 'Inbox' })
+    await inbox.waitFor({ timeout: 10000 })
+    await page.getByRole('button', { name: 'Compose', exact: true }).click()
+    const content = page.getByRole('region', { name: 'Email content' })
+    await content.getByRole('heading', { name: 'New email' }).waitFor({ timeout: 10000 })
+    // Drag entrance, hover state first: the form draws the dashed outline
+    // while a file drag hovers over the whole composer box.
+    await page.evaluate(() => {
+      const form = document.querySelector('form.composer')
+      const dt = new DataTransfer()
+      dt.items.add(new File(['dropped note'], 'meeting-notes.txt', { type: 'text/plain' }))
+      form.dispatchEvent(new DragEvent('dragenter', { dataTransfer: dt, bubbles: true }))
+      form.dispatchEvent(new DragEvent('dragover', { dataTransfer: dt, bubbles: true }))
+    })
+    await content.locator('form.composer-dragging').waitFor({ timeout: 10000 })
+    await page.evaluate(() => {
+      const form = document.querySelector('form.composer')
+      const dt = new DataTransfer()
+      dt.items.add(new File(['dropped note'], 'meeting-notes.txt', { type: 'text/plain' }))
+      form.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true }))
+    })
+    const dropChip = content.locator('.attachmentChip', { hasText: 'meeting-notes.txt' })
+    await dropChip.waitFor({ timeout: 10000 })
+    const dropSize = (await dropChip.locator('.attachmentChip-size').textContent())?.trim()
+    assert(
+      dropSize === '12 B',
+      'the dropped file joins the set like a picked one',
+      `dropped chip wrong (${dropSize})`
+    )
+    await content.getByRole('button', { name: 'Attach files' }).click()
+    const chip = content.locator('.attachmentChip', { hasText: 'fixture-file.pdf' })
+    await chip.waitFor({ timeout: 10000 })
+    const chipSize = (await chip.locator('.attachmentChip-size').textContent())?.trim()
+    assert(
+      chipSize === '7 B',
+      'chip labels the picked file size',
+      `chip size label wrong (${chipSize})`
+    )
+    await content.locator('.composerField input').first().fill('ada@example.com')
+    await content.locator('.composerField input').nth(1).fill('Report attached')
+    await content.locator('.composerField textarea').fill('The report is attached.')
+    await content.getByRole('button', { name: 'Send', exact: true }).click()
+    await content.getByText('Message sent.').waitFor({ timeout: 10000 })
+    const sent = await page.evaluate(() => window.__sent)
+    const withFile = sent[sent.length - 1]
+    assert(
+      sent.length === 1 &&
+        withFile.subject === 'Report attached' &&
+        withFile.attachments?.length === 2 &&
+        withFile.attachments[0].filename === 'meeting-notes.txt' &&
+        withFile.attachments[0].data === 'ZHJvcHBlZCBub3Rl' &&
+        withFile.attachments[1].filename === 'fixture-file.pdf' &&
+        withFile.attachments[1].data === 'Zml4dHVyZQ==',
+      `outbox carries the drop and the pick ${JSON.stringify(withFile)}`,
+      'send lost an attachment'
+    )
+    // Chip removal: close the retired pane like a user would, open a fresh
+    // compose, pick, remove, and send — no bytes ride the second send.
+    await content.getByRole('button', { name: 'Close', exact: true }).click()
+    await page.getByRole('button', { name: 'Compose', exact: true }).click()
+    await content.getByRole('heading', { name: 'New email' }).waitFor({ timeout: 10000 })
+    await content.getByRole('button', { name: 'Attach files' }).click()
+    await chip.waitFor({ timeout: 10000 })
+    await chip.getByRole('button').click()
+    assert(
+      (await content.locator('.attachmentChip').count()) === 0,
+      'the chip row drops the removed file',
+      'chip survived the remove control'
+    )
+    await content.locator('.composerField input').first().fill('ada@example.com')
+    await content.locator('.composerField input').nth(1).fill('No file now')
+    await content.locator('.composerField textarea').fill('Nothing attached.')
+    await content.getByRole('button', { name: 'Send', exact: true }).click()
+    await content.getByText('Message sent.').waitFor({ timeout: 10000 })
+    const sentTwo = await page.evaluate(() => window.__sent)
+    assert(
+      sentTwo.length === 2 && sentTwo[1].attachments === undefined,
+      'stripped send carries no attachments',
+      'removed file still rode the send'
+    )
+    // Draft round trip: the seeded draft carries a ref, so reopening
+    // resolves it through getAttachment before the autosave arms.
+    await page.getByRole('button', { name: 'Drafts' }).click()
+    const drafts = page.getByRole('complementary', { name: 'Drafts' })
+    await drafts.waitFor({ timeout: 10000 })
+    await drafts.getByText('Draft: Q4 attachments').first().click()
+    const draftForm = page.getByRole('region', { name: 'Email content' })
+    await draftForm.getByRole('heading', { name: 'Draft', exact: true }).waitFor({ timeout: 10000 })
+    const storedChip = draftForm.locator('.attachmentChip', { hasText: 'q4.xlsx' })
+    await storedChip.waitFor({ timeout: 10000 })
+    assert(true, 'reopened draft resolves its stored attachment', 'stored draft attachment chip missing')
+    const beforeSends = await page.evaluate(() => (window.__sent ?? []).length)
+    await draftForm.getByRole('button', { name: 'Send', exact: true }).click()
+    await draftForm.getByText('Message sent.').waitFor({ timeout: 10000 })
+    const sentThree = await page.evaluate(() => window.__sent)
+    const draftRecord = sentThree[sentThree.length - 1]
+    assert(
+      sentThree.length === beforeSends + 1 &&
+        draftRecord.attachments?.length === 1 &&
+        draftRecord.attachments[0].filename === 'q4.xlsx' &&
+        draftRecord.attachments[0].data === 'UTQgcGxhbm5pbmcgZGF0YQ==',
+      `draft send carries the resolved bytes ${JSON.stringify(draftRecord)}`,
+      'draft send lost or reshaped the stored attachment'
+    )
+    // Read view: the message's own files render under the body of the
+    // conversation view, listed from the refs a boundary fetch carries.
+    await page.getByRole('button', { name: 'Inbox', exact: true }).click()
+    const inboxRows = page.getByRole('complementary', { name: 'Inbox' })
+    await inboxRows.waitFor({ timeout: 10000 })
+    await inboxRows.getByText('Receipts for March travel').first().click()
+    const detail = page.getByRole('region', { name: 'Email content' })
+    const readChips = detail.locator('.attachmentChip-save')
+    await readChips.first().waitFor({ timeout: 10000 })
+    assert(
+      (await readChips.count()) === 2 &&
+        (await readChips.nth(0).textContent())?.includes('receipt-a.pdf') &&
+        (await readChips.nth(1).textContent())?.includes('receipt-b.pdf'),
+      `the read view lists the stored files (count ${await readChips.count()})`,
+      'read-view chips missing or wrong'
+    )
+    // A chip is its save affordance: clicking it drives the save verb with
+    // the ref's ids and name, the record the real main would dialog from.
+    await readChips.nth(0).click()
+    await page.waitForFunction(() => (window.__saves ?? []).length >= 1, undefined, {
+      timeout: 10000
+    })
+    const saves = await page.evaluate(() => window.__saves)
+    assert(
+      saves.length === 1 &&
+        saves[0].messageId === 'msg-receipts-1' &&
+        saves[0].attachmentId === 'att-receipts-1' &&
+        saves[0].filename === 'receipt-a.pdf',
+      `the chip click saves the file ${JSON.stringify(saves)}`,
+      'the read-view chip did not drive the save verb'
+    )
+    await snapshot(page, 'attachments')
   } else if (FEATURE === 'drafts') {
     await page.getByRole('button', { name: 'Drafts' }).click()
     const drafts = page.getByRole('complementary', { name: 'Drafts' })
