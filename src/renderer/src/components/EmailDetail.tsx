@@ -1,6 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import DOMPurify from 'dompurify'
-import { AutoGrowTextarea } from './AutoGrowTextarea'
 import type {
   ThreadSummary,
   EmailDetail as EmailDetailData,
@@ -18,7 +16,9 @@ import { SNOOZE_PRESETS } from '../lib/snooze'
 import { RecipientFields } from './RecipientFields'
 import { AttachmentChips } from './AttachmentChips'
 import { MessageAttachments } from './MessageAttachments'
+import { BodyEditor, type BodyEditorHandle } from './BodyEditor'
 import { useComposerAttachments } from './useComposerAttachments'
+import { buildQuoteHtml, sanitizeEmailHtml } from '../lib/emailHtml'
 
 // Folders where report spam makes sense: drafts and sent (mail you own),
 // spam itself, and Trash are the excluded rest. A user-label view behaves
@@ -79,36 +79,24 @@ function escapeHtml(value: string): string {
   })
 }
 
-function plainTextToHtml(value: string): string {
-  return escapeHtml(value).replace(/\r?\n/g, '<br>')
-}
-
-function sanitizeEmailHtml(html: string): string {
-  return DOMPurify.sanitize(html, {
-    USE_PROFILES: { html: true },
-    FORBID_TAGS: [
-      'iframe',
-      'frame',
-      'object',
-      'embed',
-      'form',
-      'input',
-      'button',
-      'textarea',
-      'select'
-    ]
-  })
-}
-
 // Gmail renders the elided-quote affordance only for its own native quote
 // markup: a gmail_quote_container div holding a gmail_attr attribution line
-// and a gmail_quote blockquote. Anything else shows as literal text.
-const QUOTE_BLOCKQUOTE_STYLE =
-  'margin:0px 0px 0px 0.8ex;border-left:1px solid rgb(204,204,204);padding-left:1ex'
-
-function buildQuoteHtml(attrHtml: string, originalHtml: string, originalText: string): string {
-  const inner = originalHtml || plainTextToHtml(originalText)
-  return `<div class="gmail_quote gmail_quote_container"><div class="gmail_attr">${attrHtml}</div><blockquote class="gmail_quote" style="${QUOTE_BLOCKQUOTE_STYLE}">${inner}</blockquote></div>`
+// and a gmail_quote blockquote. Anything else shows as literal text. That
+// builder lives in lib/emailHtml.
+function quoteHtmlFor(target: EmailDetailData, originalText: string, isForward: boolean): string {
+  const forwardHeader = [
+    '---------- Forwarded message ---------',
+    `From: ${target.from}`,
+    `To: ${target.to}`,
+    `Date: ${target.date}`,
+    `Subject: ${target.subject}`
+  ]
+    .map(escapeHtml)
+    .join('<br>')
+  const attrHtml = isForward
+    ? forwardHeader.concat('<br><br>')
+    : `On ${escapeHtml(gmailDateOf(target.date))}, ${escapeHtml(target.from)} wrote:<br>`
+  return `<br><br>${buildQuoteHtml(attrHtml, target.bodyHtml ? sanitizeEmailHtml(target.bodyHtml) : '', originalText)}`
 }
 
 function gmailDateOf(value: string): string {
@@ -122,18 +110,6 @@ function gmailDateOf(value: string): string {
     hour: 'numeric',
     minute: '2-digit'
   }).format(parsed)
-}
-
-function formatDraftHtml(body: string, quoteText: string, quoteHtml: string): string {
-  if (!quoteText) return plainTextToHtml(body)
-
-  const quoteStart = body.indexOf(quoteText)
-  if (quoteStart === -1) return plainTextToHtml(body)
-
-  const quoteEnd = quoteStart + quoteText.length
-  return (
-    plainTextToHtml(body.slice(0, quoteStart)) + quoteHtml + plainTextToHtml(body.slice(quoteEnd))
-  )
 }
 
 function fitFrame(frame: HTMLIFrameElement): void {
@@ -252,15 +228,26 @@ export function EmailDetail({
   // Set only when a reply-all opened without the account address; the
   // arrival effect clears it after its at-most-once rewrite.
   const pendingReplyRef = useRef<{ target: EmailDetailData; prefilledTo: string } | null>(null)
-  const [quotedContent, setQuotedContent] = useState<{ text: string; html: string } | null>(null)
+  // The rich body the editor starts with: the quote markup of the current
+  // reply/forward. The editor is uncontrolled past this point — typed
+  // content lives there, and its onChange keeps the draft payload synced.
+  const [quotedContent, setQuotedContent] = useState<{ html: string } | null>(null)
+  // Bumped by every reply/forward open, so a new quote remounts the editor
+  // even for the same message twice in a row.
+  const [composerSeq, setComposerSeq] = useState(0)
+  const editorRef = useRef<BodyEditorHandle | null>(null)
   const [sending, setSending] = useState(false)
   const [sendError, setSendError] = useState<string | null>(null)
   const [sent, setSent] = useState(false)
   // The reply/forward form's own file set, separate from `draft` so the
   // typed-text payload state keeps being exactly a SendEmailRequest and
   // the files join only when the bridge call leaves. Cancel clears them
-  // with the text; the form remounts per thread via key in App.
-  const attach = useComposerAttachments()
+  // with the text; the form remounts per thread via key in App. Image files
+  // route into the rich body instead of the chip list.
+  const attach = useComposerAttachments(
+    undefined,
+    (files) => void editorRef.current?.insertImages(files)
+  )
 
   const [archiving, setArchiving] = useState(false)
   const [archiveError, setArchiveError] = useState<string | null>(null)
@@ -424,24 +411,18 @@ export function EmailDetail({
     // earlier reply's picked files must not ride into this one.
     attach.clear()
     const originalText = target.bodyText || target.snippet || thread.snippet
-    const quotedText = `On ${target.date}, ${target.from} wrote:\n${originalText
-      .split('\n')
-      .map((line) => `> ${line}`)
-      .join('\n')}`
-    const quotedHtml = buildQuoteHtml(
-      `On ${escapeHtml(gmailDateOf(target.date))}, ${escapeHtml(target.from)} wrote:<br>`,
-      target.bodyHtml ? sanitizeEmailHtml(target.bodyHtml) : '',
-      originalText
-    )
 
-    setQuotedContent({ text: quotedText, html: quotedHtml })
+    setQuotedContent({ html: quoteHtmlFor(target, originalText, false) })
+    setComposerSeq((prev) => prev + 1)
     setDraft({
       to: toLine,
       // An empty carbon line stays unset: an absent field is the payload's
       // "no carbon recipients", never an empty header.
       ...(ccLine ? { cc: ccLine } : {}),
       subject: /^re:/i.test(target.subject) ? target.subject : `Re: ${target.subject}`,
-      body: `\n\n${quotedText}`,
+      // The typed body starts empty; the quote markup lives in the editor's
+      // own prefill (quotedContent above), not in the text state.
+      body: '',
       threadId: target.threadId || undefined,
       inReplyTo: target.messageId || undefined,
       references: [target.references, target.messageId].filter(Boolean).join(' ') || undefined
@@ -476,35 +457,16 @@ export function EmailDetail({
     setSent(false)
     attach.clear()
     const originalText = target.bodyText || target.snippet || thread.snippet
-    const forwardHeader = [
-      '---------- Forwarded message ----------',
-      `From: ${target.from}`,
-      `To: ${target.to}`,
-      `Date: ${target.date}`,
-      `Subject: ${target.subject}`
-    ].join('\n')
-    const quotedText = `${forwardHeader}\n\n${originalText}`
-    const forwardAttrHtml = [
-      '---------- Forwarded message ---------',
-      `From: ${target.from}`,
-      `To: ${target.to}`,
-      `Date: ${target.date}`,
-      `Subject: ${target.subject}`
-    ]
-      .map(escapeHtml)
-      .join('<br>')
-      .concat('<br><br>')
-    const quotedHtml = buildQuoteHtml(
-      forwardAttrHtml,
-      target.bodyHtml ? sanitizeEmailHtml(target.bodyHtml) : '',
-      originalText
-    )
 
-    setQuotedContent({ text: quotedText, html: quotedHtml })
+    setQuotedContent({ html: quoteHtmlFor(target, originalText, true) })
+    setComposerSeq((prev) => prev + 1)
     setDraft({
       to: '',
       subject: /^fwd:/i.test(target.subject) ? target.subject : `Fwd: ${target.subject}`,
-      body: `\n\n${quotedText}`,
+      // Same as the reply: empty typed body, the forwarded content lives in
+      // the editor's prefill. The forward header inside the quote keeps the
+      // same "---------- Forwarded message ---------" Gmail layout.
+      body: '',
       // Keep the forward in the same Gmail thread so it shows up in the
       // conversation view alongside the original + replies.
       threadId: target.threadId || undefined,
@@ -523,13 +485,7 @@ export function EmailDetail({
     setSendError(null)
     setSent(false)
     try {
-      await window.api.sendEmail({
-        ...draft,
-        ...attach.field,
-        ...(quotedContent
-          ? { bodyHtml: formatDraftHtml(draft.body, quotedContent.text, quotedContent.html) }
-          : {})
-      })
+      await window.api.sendEmail({ ...draft, ...attach.field })
       setDraft(null)
       setQuotedContent(null)
       setSent(true)
@@ -831,10 +787,20 @@ export function EmailDetail({
 
           <label className="composerField">
             <span>Message</span>
-            <AutoGrowTextarea
-              rows={5}
-              value={draft.body}
-              onChange={(event) => setDraft({ ...draft, body: event.target.value })}
+            {/* Remounts per reply/forward open (composerSeq): the quote
+                prefill is the only programmatic content, and typed content
+                lives in the uncontrolled editor between opens. */}
+            <BodyEditor
+              key={String(composerSeq)}
+              ref={editorRef}
+              initialHtml={quotedContent?.html ?? ''}
+              placeholder="Type your message..."
+              onNonImageFiles={(files) => void attach.addFiles(files)}
+              onChange={(content) =>
+                setDraft((prev) =>
+                  prev ? { ...prev, body: content.text, bodyHtml: content.html || undefined } : prev
+                )
+              }
             />
           </label>
 

@@ -1,8 +1,9 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { RecipientFields } from './RecipientFields'
 import { hasRecipient, type RecipientState } from '../../../shared/types'
 import { useDraftAutosave } from './useDraftAutosave'
 import { AttachmentChips } from './AttachmentChips'
+import { BodyEditor, type BodyEditorHandle } from './BodyEditor'
 import { useComposerAttachments } from './useComposerAttachments'
 
 type ComposeEditorProps = {
@@ -24,7 +25,10 @@ export function ComposeEditor({ onClose }: ComposeEditorProps): React.JSX.Elemen
   // spread and the send payloads reuse the object as-is.
   const [recipients, setRecipients] = useState<RecipientState>({ to: '', cc: '', bcc: '' })
   const [subject, setSubject] = useState('')
-  const [body, setBody] = useState('')
+  // The body lives in two forms from the one editor: the rich html the
+  // send/autosave carries and the plain-text fallback with it.
+  const [body, setBody] = useState<{ html: string; text: string }>({ html: '', text: '' })
+  const editorRef = useRef<BodyEditorHandle | null>(null)
   const [sending, setSending] = useState(false)
   const [sendError, setSendError] = useState<string | null>(null)
   // Once sent, the form retires instead of re-arming: a second send would
@@ -33,9 +37,15 @@ export function ComposeEditor({ onClose }: ComposeEditorProps): React.JSX.Elemen
   // Local files picked with the native dialog; the records ride every
   // autosave and send payload below like the text fields do, so a restored
   // draft reopens with them.
-  const attach = useComposerAttachments()
+  const attach = useComposerAttachments(
+    undefined,
+    (files) =>
+      // Image files dropped on the composer chrome route into the rich body;
+      // the editor's own surface handles its drops at the caret instead.
+      void editorRef.current?.insertImages(files)
+  )
   const autosave = useDraftAutosave(
-    { ...recipients, subject, body, ...attach.field },
+    { ...recipients, subject, body: body.text, bodyHtml: body.html || undefined, ...attach.field },
     undefined,
     true
   )
@@ -74,9 +84,22 @@ export function ComposeEditor({ onClose }: ComposeEditorProps): React.JSX.Elemen
       autosave.suspend()
       try {
         if (draftId) {
-          await window.api.sendDraft({ draftId, ...recipients, subject, body, ...attach.field })
+          await window.api.sendDraft({
+            draftId,
+            ...recipients,
+            subject,
+            body: body.text,
+            bodyHtml: body.html || undefined,
+            ...attach.field
+          })
         } else {
-          await window.api.sendEmail({ ...recipients, subject, body, ...attach.field })
+          await window.api.sendEmail({
+            ...recipients,
+            subject,
+            body: body.text,
+            bodyHtml: body.html || undefined,
+            ...attach.field
+          })
         }
       } finally {
         autosave.resume()
@@ -112,7 +135,13 @@ export function ComposeEditor({ onClose }: ComposeEditorProps): React.JSX.Elemen
 
       <label className="composerField composerField-grow">
         <span>Message</span>
-        <textarea value={body} onChange={(event) => setBody(event.target.value)} />
+        <BodyEditor
+          ref={editorRef}
+          initialHtml=""
+          placeholder="Type your message..."
+          onNonImageFiles={(files) => void attach.addFiles(files)}
+          onChange={setBody}
+        />
       </label>
 
       <AttachmentChips

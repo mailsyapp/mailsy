@@ -6,6 +6,7 @@ import {
   type MessageAttachmentRef,
   type SendEmailRequest
 } from '../../../shared/types'
+import { dragsFiles, fileToAttachment, looksLikeImageFile } from '../lib/attachmentFile'
 
 // One composer's attachment set, shared by the three composer surfaces
 // (new compose, draft edit, reply/forward). State lives here; the content
@@ -33,6 +34,9 @@ export interface ComposerAttachments {
   dropping: boolean
   drop: DragHandlers
   pick: () => Promise<void>
+  // Also the editor's handoff for non-image files dropped into the body:
+  // the same chip entry point the form-level drop uses.
+  addFiles: (files: File[]) => Promise<void>
   remove: (index: number) => void
   // The composer's own abandon verb: Cancel throws the files away the way
   // it discards the text, so they never leak into the next form this
@@ -60,26 +64,14 @@ function decodedBytes(attachment: ComposeAttachment): number {
   return Math.floor(attachment.data.length * 0.75)
 }
 
-// A dropped File carries its own bytes; renderers have no Buffer, so the
-// chunked btoa walk is the standard-browser equivalent of main's
-// fs.readFile + toString('base64'). Chunks stay under the argument-size
-// that makes String.fromCharCode overflow.
-async function fileToAttachment(file: File): Promise<ComposeAttachment> {
-  const bytes = new Uint8Array(await file.arrayBuffer())
-  let binary = ''
-  for (let start = 0; start < bytes.length; start += 0x8000) {
-    binary += String.fromCharCode(...bytes.subarray(start, start + 0x8000))
-  }
-  return { filename: file.name, size: file.size, data: btoa(binary) }
-}
-
-// Only file drags count: text and url drags (a selection dragged between
-// fields, a dragged link) must behave as they always did.
-function dragsFiles(event: React.DragEvent): boolean {
-  return event.dataTransfer?.types.includes('Files') ?? false
-}
-
-export function useComposerAttachments(prefill?: AttachmentPrefill): ComposerAttachments {
+export function useComposerAttachments(
+  prefill?: AttachmentPrefill,
+  // Image files deliberately dropped on the composer chrome (outside the
+  // rich body) route here — the editor's own surface handles its drops
+  // directly. Files-on-chips and images-in-text stay separated by type,
+  // never by where the drag happened to land.
+  onImageFiles?: (files: File[]) => void
+): ComposerAttachments {
   const [attachments, setAttachments] = useState<ComposeAttachment[]>([])
   const [error, setError] = useState<string | null>(null)
   const [picking, setPicking] = useState(false)
@@ -89,6 +81,13 @@ export function useComposerAttachments(prefill?: AttachmentPrefill): ComposerAtt
   // hovering, and the counter beats per-element leave events that fire
   // while moving across children.
   const dropDepth = useRef(0)
+  // The routing callback at handler time, not hook time: composers can
+  // provide it after the hook's first render without a stale closure.
+  // Synced in an effect, not at render, per the refs rule.
+  const imageRouteRef = useRef(onImageFiles)
+  useEffect(() => {
+    imageRouteRef.current = onImageFiles
+  }, [onImageFiles])
 
   useEffect(() => {
     if (!prefill || prefill.refs.length === 0) return
@@ -151,7 +150,9 @@ export function useComposerAttachments(prefill?: AttachmentPrefill): ComposerAtt
 
   // The drag entrance. The dropped File objects are read right here in
   // the renderer: their bytes are already on this side of the bridge, so
-  // no main-process round trip exists to add one.
+  // no main-process round trip exists to add one. Image files route to
+  // the rich body instead of the chip list, so the same drag onto the
+  // composer behaves Gmail-shaped regardless of where it lands.
   const addFiles = useCallback(
     async (files: File[]): Promise<void> => {
       if (files.length === 0) return
@@ -163,7 +164,8 @@ export function useComposerAttachments(prefill?: AttachmentPrefill): ComposerAtt
         return
       }
       setError(null)
-      push(await Promise.all(files.map(fileToAttachment)))
+      const loaded = await Promise.all(files.map(fileToAttachment))
+      push(loaded.filter((entry): entry is ComposeAttachment => entry !== null))
     },
     [push, ready]
   )
@@ -192,7 +194,11 @@ export function useComposerAttachments(prefill?: AttachmentPrefill): ComposerAtt
         event.preventDefault()
         dropDepth.current = 0
         setDropping(false)
-        void addFiles(Array.from(event.dataTransfer.files))
+        const files = Array.from(event.dataTransfer.files)
+        const images = files.filter((file) => looksLikeImageFile(file))
+        const others = files.filter((file) => !looksLikeImageFile(file))
+        if (images.length) imageRouteRef.current?.(images)
+        void addFiles(others)
       }
     }),
     [addFiles]
@@ -209,5 +215,17 @@ export function useComposerAttachments(prefill?: AttachmentPrefill): ComposerAtt
 
   const field: Pick<SendEmailRequest, 'attachments'> = attachments.length > 0 ? { attachments } : {}
 
-  return { attachments, field, error, ready, picking, dropping, drop, pick, remove, clear }
+  return {
+    attachments,
+    field,
+    error,
+    ready,
+    picking,
+    dropping,
+    drop,
+    pick,
+    addFiles,
+    remove,
+    clear
+  }
 }

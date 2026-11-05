@@ -94,17 +94,23 @@
     }
   ].map((m) => ({ folder: 'inbox', labelIds: ['INBOX'], ...m }))
 
+  // A real (tiny) PNG: 1×1 transparent pixel. Enough for the read view to
+  // render a preview and for an editor drop to carry genuine bytes.
+  const TINY_PNG =
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='
+
   // Attachment content, the way Gmail stores every message part: bytes the
   // refs point at. Keyed `messageId~attachmentId`, answered by the
   // getAttachment verb the draft-editor round trip calls. The compose
   // picker answers a canned file so the same record shape flows down the
   // bridge without a native dialog in headless runs. The receipts thread's
-  // two stored files are the read-view seed: their chips render in the
-  // conversation view and their records answer the save verb.
+  // stored files are the read-view seed: their records answer the save
+  // verb, and the image one previews inline instead of a save chip.
   const attachmentStore = new Map([
     ['msg-draft-q4~att-q4', 'UTQgcGxhbm5pbmcgZGF0YQ=='],
     ['msg-receipts-1~att-receipts-1', 'UmVjZWlwdCBBIGNvbnRlbnQ='],
-    ['msg-receipts-1~att-receipts-2', 'UmVjZWlwdCBCIGNvbnRlbnQ=']
+    ['msg-receipts-1~att-receipts-2', 'UmVjZWlwdCBCIGNvbnRlbnQ='],
+    ['msg-receipts-1~att-receipts-img', TINY_PNG]
   ])
   const FIXTURE_PICK = [{ filename: 'fixture-file.pdf', size: 7, data: 'Zml4dHVyZQ==' }]
 
@@ -341,7 +347,8 @@
     labelIds: ['INBOX', 'label-receipts'],
     attachments: [
       { filename: 'receipt-a.pdf', size: 17, attachmentId: 'att-receipts-1' },
-      { filename: 'receipt-b.pdf', size: 17, attachmentId: 'att-receipts-2' }
+      { filename: 'receipt-b.pdf', size: 17, attachmentId: 'att-receipts-2' },
+      { filename: 'cal-shot.png', size: TINY_PNG.length, attachmentId: 'att-receipts-img' }
     ]
   })
 
@@ -653,7 +660,11 @@
         target.bcc = request.bcc || ''
         target.subject = request.subject
         target.bodyText = request.body
-        delete target.bodyHtml
+        // drafts.update replaces the raw message wholesale, so the stored
+        // body html follows the request exactly: present only when the
+        // composer carried a rich body (inline images ride it).
+        if (request.bodyHtml !== undefined) target.bodyHtml = request.bodyHtml
+        else delete target.bodyHtml
         target.snippet = request.body
       } else {
         draftId = `draft-save-${draftSaves.length + 1}`
@@ -673,6 +684,7 @@
           inReplyTo: request.inReplyTo || '',
           references: request.references || '',
           bodyText: request.body,
+          bodyHtml: request.bodyHtml,
           folder: 'drafts',
           labelIds: ['DRAFT'],
           draftId

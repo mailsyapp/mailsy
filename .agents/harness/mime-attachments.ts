@@ -58,4 +58,36 @@ const plain = await buildRawMessage('me@example.com', {
 })
 assert.equal(Buffer.from(base64UrlToBuffer(plain)).toString('utf-8').includes('multipart/mixed'), false, 'plain message stays single part')
 
+// Inline body images: a composed rich body carries data URLs; the raw
+// message carries them as cid parts grouped with the html (multipart/
+// related), the text fallback unchanged.
+const imageBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+const inline = await buildRawMessage('me@example.com', {
+  to: 'you@example.com',
+  subject: 'inline test',
+  body: 'around the picture',
+  bodyHtml: '<p>before</p><img src="data:image/png;base64,' + imageBytes.toString('base64') + '"><p>after</p>'
+})
+const inlineMime = base64UrlToBuffer(inline).toString('utf-8')
+assert.match(inlineMime, /multipart\/related/, 'inline images build a related group with the html')
+assert.match(inlineMime, /Content-ID: <inline-1@mailsy>/, 'the inline image gets its cid')
+assert.match(
+  inlineMime,
+  /Content-Type: text\/html[\s\S]*cid:inline-1@mailsy[\s\S]*Content-Type: image\/png/,
+  'the html references the image part by cid'
+)
+assert.ok(!inlineMime.includes('data:image'), 'no data URL survives into the raw message')
+
+// An inline image plus a real file attachment keeps both dispositions.
+const both = await buildRawMessage('me@example.com', {
+  to: 'you@example.com',
+  subject: 'both test',
+  body: 'both',
+  bodyHtml: '<p>x</p><img src="data:image/png;base64,' + imageBytes.toString('base64') + '">',
+  attachments: [{ filename: 'doc.pdf', size: bytes.length, data: bytes.toString('base64') }]
+})
+const bothMime = base64UrlToBuffer(both).toString('utf-8')
+assert.match(bothMime, /Content-Disposition: attachment; filename=doc\.pdf/, 'the file stays an attachment part')
+assert.match(bothMime, /Content-ID: <inline-1@mailsy>/, 'the inline image rides besides it')
+
 console.log('mime attachment harness: ok')

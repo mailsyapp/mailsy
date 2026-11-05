@@ -1,10 +1,12 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import type { EmailDetail as EmailDetailData, ThreadSummary } from '../../../shared/types'
 import { hasRecipient, type RecipientState } from '../../../shared/types'
 import { RecipientFields } from './RecipientFields'
 import { useDraftAutosave } from './useDraftAutosave'
 import { AttachmentChips } from './AttachmentChips'
+import { BodyEditor, type BodyEditorHandle } from './BodyEditor'
 import { useComposerAttachments } from './useComposerAttachments'
+import { plainTextToHtml } from '../lib/emailHtml'
 
 type DraftEditorProps = {
   // The draft row: subject plus the draftId/messageIds the send path needs.
@@ -51,7 +53,14 @@ function DraftForm({
     bcc: detail.bcc || ''
   })
   const [subject, setSubject] = useState(detail.subject || '')
-  const [body, setBody] = useState(detail.bodyText || detail.snippet || '')
+  // The draft's stored content, in the editor's two forms: the rich html
+  // the detail carries (cid images already resolved to data URLs by the
+  // boundary) with the plain-text fallback beside it.
+  const [body, setBody] = useState<{ html: string; text: string }>(() => ({
+    html: detail.bodyHtml ?? plainTextToHtml(detail.bodyText || detail.snippet || ''),
+    text: detail.bodyText || detail.snippet || ''
+  }))
+  const editorRef = useRef<BodyEditorHandle | null>(null)
   const [sending, setSending] = useState(false)
   const [sendError, setSendError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
@@ -61,7 +70,8 @@ function DraftForm({
   // writing without the data would strip them off the draft. `ready` gates
   // the autosave until every ref has settled (resolved or failed).
   const attach = useComposerAttachments(
-    detail.attachments.length ? { messageId: detail.id, refs: detail.attachments } : undefined
+    detail.attachments.length ? { messageId: detail.id, refs: detail.attachments } : undefined,
+    (files) => void editorRef.current?.insertImages(files)
   )
   // Editing an existing draft autosaves through drafts.update, so a
   // dismissed edit (row click, folder switch, reset) is not lost either.
@@ -72,7 +82,8 @@ function DraftForm({
     {
       ...recipients,
       subject,
-      body,
+      body: body.text,
+      bodyHtml: body.html || undefined,
       ...attach.field,
       threadId: detail.threadId || undefined,
       // Same header set the atomic send writes: drafts.update replaces the
@@ -107,7 +118,8 @@ function DraftForm({
             draftId,
             ...recipients,
             subject,
-            body,
+            body: body.text,
+            bodyHtml: body.html || undefined,
             ...attach.field,
             threadId: detail.threadId || undefined,
             // The draft's own In-Reply-To header is the message it was a reply
@@ -120,7 +132,13 @@ function DraftForm({
           // No draft ID (shouldn't happen for rows from the Drafts folder):
           // send as a new message but do NOT report sent — the unknown draft
           // is still in Gmail, and dropping the row would hide that fact.
-          await window.api.sendEmail({ ...recipients, subject, body, ...attach.field })
+          await window.api.sendEmail({
+            ...recipients,
+            subject,
+            body: body.text,
+            bodyHtml: body.html || undefined,
+            ...attach.field
+          })
           setNotice(
             'Sent as a new message; the original draft entry was left in place (unknown draft ID).'
           )
@@ -160,7 +178,13 @@ function DraftForm({
 
       <label className="composerField composerField-grow">
         <span>Message</span>
-        <textarea value={body} onChange={(event) => setBody(event.target.value)} />
+        <BodyEditor
+          ref={editorRef}
+          initialHtml={detail.bodyHtml ?? plainTextToHtml(detail.bodyText || detail.snippet || '')}
+          placeholder="Type your message..."
+          onNonImageFiles={(files) => void attach.addFiles(files)}
+          onChange={setBody}
+        />
       </label>
 
       <AttachmentChips
