@@ -34,3 +34,22 @@ Preconditions:
 - The drop is synthetic at the editor element: a real Finder drag is the manual tier, adding nothing the handler path does not already cover.
 - The outbox record shows the renderer's html (data URLs); the data-URL-into-MIME-cid rewriting happens in the real main process when the message is built and is covered by the MIME harness, not by this journey.
 - After a send the retired composer stays until `Close`, as everywhere else; the journey uses `Close` before switching folders.
+
+## The rich-body UI pass (probe)
+
+`drive/ui-pass-probe.mjs` runs the regression set for the composed body itself — borders/outline parity with the other fields, the backspace family, Enter shape, caret edits around an image, select-all delete, the one-image-per-drop + chip handoff, fill-mode scroll containment, and the reply-quote wipe. Usage: `node drive/ui-pass-probe.mjs <port>` (Playwright resolves from `drive/node_modules`; snapshot lands in `artifacts/ui-pass-probe.png`). It must end `PROBE: all pass` before any body-editor change ships.
+
+Two isolation probes pin the engine facts the fix relies on:
+
+- `drive/edit-engine-probe.mjs` — vanilla contenteditable: Chromium deletes text and `<br>`s fine, and based on it, a synchronous `innerText` read during the input event aborts a pending `deleteContentBackward` (the reason `reportLater` defers the React report out of the keystroke's task).
+- `drive/block-delete-probe.mjs` — vanilla contenteditable at block boundaries: Backspace genuinely no-ops there (caret at the box start with a block ahead; blanks between markers and a block). Engine behavior, not our editor's.
+
+## Gotchas from the UI pass
+
+- Chromium's Backspace stalls at block boundaries and right behind marker `<br>`s (measured on vanilla contenteditable too). `BodyEditor`'s keydown handler claims Backspace only in those stall states and performs the engine's own missing delete: eat the marker, merge across the block seam, unwrap beside text, or — at the box's very start with only a block ahead (a reply quote's opening `<br><br><div class=gmail_quote…>`) — eat the marker then the block, one visible unit per press.
+- The "eat ahead" scan at the box's start MUST stop at the editor element. Climbing past it sights the composer chrome (`.attachmentBar`, actions) as "content ahead" — the body's keystrokes deleted React's own attachment bar in testing. This is the sharpest edge in `eatAheadUnit`; the probe's drop/chip scenario catches it.
+- The engine eats one unit per press but in its own order: after `a<br>b` the presses give `b`, `a`, then the break — the break survives until the line above it is empty. Probe assertions check progress, not a particular order.
+- Manual (claimed) deletions do not feed the engine's undo stack: Ctrl+Z may step over them. Acceptable — the stall states are exactly where the engine had nothing to undo anyway — do not restructure the handler casually.
+- `data-empty` (placeholder) is imperative, React never writes it: every DOM-changing path outside `input` (drop, paste, `insertImages`) must run `reportNow`, or the placeholder lingers over content.
+- Do not give `.body-editor img` `display: block` — inline images must sit among words; the read-view previews (`readAttachment-preview`) are the only block-shaped ones.
+- Fill mode keeps the box scroll-contained (`overflow-y: auto`): long bodies with images never spill under the Send row.

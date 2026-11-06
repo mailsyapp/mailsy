@@ -732,27 +732,55 @@ button {
   color: #5f6368;
 }
 
-/* The compose body: a rich field, not a plain box. Min height keeps an
-   empty composer clickable; the placeholder shows through an empty
-   contenteditable via :empty. */
+/* The compose body: a rich field styled like the plaintext fields beside
+   it (inputs carry the UA's 2px inset grey). Min height keeps an empty
+   composer clickable; the placeholder shows when the box is visually
+   empty — `:empty` alone cannot, because the engine keeps a marker <br>
+   after the last character is deleted. */
 .body-editor {
   min-height: 120px;
-  outline: none;
+  border: 2px inset rgb(118, 118, 118);
+  border-radius: 2px;
+  box-sizing: border-box;
+  padding: 8px;
   white-space: pre-wrap;
   overflow-wrap: break-word;
+  word-break: break-word;
   cursor: text;
+  background: #fff;
+  color: rgb(0, 0, 0);
 }
 
-.body-editor:empty::before {
+.body-editor:focus {
+  outline: 2px auto rgb(0, 95, 204);
+  outline-offset: -2px;
+}
+
+.body-editor:empty::before,
+.body-editor[data-empty]::before {
   content: attr(data-placeholder);
   color: #9aa0a6;
   pointer-events: none;
 }
 
 .body-editor img {
+  /* Inline, not block: an image sits among the words as Gmail's do;
+     only the read-view previews go on their own line. */
   max-width: 100%;
   max-height: 420px;
   border-radius: 4px;
+}
+
+/* Fill mode (fresh compose, draft editor): the Message row owns exactly
+   the space between the fields above and Send below, exactly like the
+   textarea it replaced — the box stretches into it and scrolls within
+   itself, so long bodies with inline images never spill under the
+   action row. */
+.composer-fill .composerField-grow .body-editor {
+  flex: 1;
+  min-height: 8rem;
+  height: auto;
+  overflow-y: auto;
 }
 
 /* User-label rail section: one chip per label in the Gmail label color,
