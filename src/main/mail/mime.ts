@@ -84,11 +84,66 @@ type RawMessageFields = Pick<
   'to' | 'cc' | 'bcc' | 'subject' | 'body' | 'bodyHtml' | 'inReplyTo' | 'references' | 'attachments'
 >
 
+// The rich body's inline images: the renderer composes with data URLs
+// (the only form a contenteditable can show), but a message carries them
+// as multipart/related cid parts — what Gmail does and what the detail
+// view's bodyHtml round trip already understands. Each `src="data:image/...
+// ;base64,..."` becomes a `cid:` reference with its byte part emitted as a
+// nodemailer attachment; nodemailer builds the related group when the html
+// references them. Content-ids are generated here (deterministic per
+// build), so nothing in the request needs to anticipate them.
+interface InlineBodyImage {
+  cid: string
+  filename: string
+  content: Buffer
+  contentType: string
+}
+
+function extractInlineImages(html: string): { html: string; images: InlineBodyImage[] } {
+  const images: InlineBodyImage[] = []
+  const replaced = html.replace(
+    /src="data:(image\/[a-z0-9.+-]+);base64,([A-Za-z0-9+/=]+)"/gi,
+    (match, mimeType: string, base64: string) => {
+      // A match with bytes that decode to nothing still becomes a part
+      // (nodemailer would embed an empty one) — an empty data URL is
+      // markup junk, not an image, so it stays literal text instead.
+      if (base64.length === 0) return match
+      const index = images.length + 1
+      const extension = (mimeType.split('/')[1] ?? 'png').replace(/[^a-z0-9]/gi, '') || 'png'
+      images.push({
+        cid: `inline-${index}@mailsy`,
+        filename: `image-${index}.${extension}`,
+        content: Buffer.from(base64, 'base64'),
+        contentType: mimeType.toLowerCase()
+      })
+      return `src="cid:inline-${index}@mailsy"`
+    }
+  )
+  return { html: replaced, images }
+}
+
 export async function buildRawMessage(from: string, request: RawMessageFields): Promise<string> {
   const transport = createTransport({
     streamTransport: true,
     newline: 'unix'
   })
+  // The html's inline images split off into their own parts first, so the
+  // body carries only the same cid references the receiving side replaces
+  // with data URLs on the way back out.
+  const inlineBody =
+    request.bodyHtml === undefined ? undefined : extractInlineImages(request.bodyHtml)
+  // Nodemailer infers each part's content type and disposition: plain
+  // named records become Content-Disposition: attachment parts (the way
+  // Gmail expects to store and send composer files), and the extracted
+  // inline images carry a cid each, so the html+images group builds as
+  // multipart/related. Empty lists stay absent, never an empty multipart.
+  const attachments = [
+    ...(request.attachments ?? []).map((attachment) => ({
+      filename: attachment.filename,
+      content: Buffer.from(attachment.data, 'base64')
+    })),
+    ...(inlineBody?.images ?? [])
+  ]
   const message = await transport.sendMail({
     from,
     to: request.to,
@@ -98,21 +153,10 @@ export async function buildRawMessage(from: string, request: RawMessageFields): 
     ...(request.bcc ? { bcc: request.bcc } : {}),
     subject: request.subject,
     text: request.body,
-    ...(request.bodyHtml !== undefined ? { html: request.bodyHtml } : {}),
+    ...(inlineBody !== undefined ? { html: inlineBody.html } : {}),
     ...(request.inReplyTo ? { inReplyTo: request.inReplyTo } : {}),
     ...(request.references ? { references: request.references } : {}),
-    // Nodemailer infers each part's content type from the filename and
-    // emits Content-Disposition: attachment parts, so the decoded bytes
-    // ride the raw MIME exactly the way Gmail expects to store and send
-    // them. Empty lists are absent (never an empty multipart block).
-    ...(request.attachments?.length
-      ? {
-          attachments: request.attachments.map((attachment) => ({
-            filename: attachment.filename,
-            content: Buffer.from(attachment.data, 'base64')
-          }))
-        }
-      : {})
+    ...(attachments.length ? { attachments } : {})
   })
   const raw = await toBuffer(message.message)
   return raw.toString('base64url')
