@@ -143,6 +143,13 @@ function ThreadMessage({
         overflow: hidden;
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,"Helvetica Neue", Arial, sans-serif;
       }
+      /* Sender markup often carries huge intrinsic or authored sizes; like
+         Gmail, cap images to the pane width and keep their aspect ratio,
+         but never upscale small ones. */
+      img {
+        max-width: 100%;
+        height: auto;
+      }
     </style>
     <meta
       http-equiv="Content-Security-Policy"

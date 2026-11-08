@@ -352,6 +352,42 @@
     ]
   })
 
+  // Read-view image seed (features/inline-images.md gotcha): real mail
+  // carries images far wider than the reading pane, authored large or
+  // intrinsic large. Its body must shrink-fit like Gmail's read view
+  // (max-width cap, aspect kept, small images never upscaled) instead of
+  // rendering at natural size and clipping at the pane edge. SVG so the
+  // intrinsic size is exact and the bytes stay tiny; read mail, so
+  // opening it never adds a stray auto-read modify call.
+  seed.push({
+    id: 'msg-wide-img',
+    threadId: 'thread-wide-img',
+    from: 'Ben Franklin <ben@example.com>',
+    subject: 'Beluga whale photo',
+    date: 'Wed, 14 Oct 2026 15:00:00 +0000',
+    snippet: 'Spotted from the ferry, the widest shot I have.',
+    to: 'me@example.com',
+    cc: '',
+    bcc: '',
+    replyTo: '',
+    messageId: '<wide-img@example.com>',
+    references: '',
+    bodyText: 'Spotted from the ferry, the widest shot I have. beluga whale its a beluga whale lol',
+    bodyHtml: [
+      '<p>Spotted from the ferry, the widest shot I have.</p>',
+      // Authoring attributes this huge reproduce the reported bug: the
+      // element wants 3000px regardless of pane width.
+      '<img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIzMDAwIiBoZWlnaHQ9IjE1MDAiPjxyZWN0IHdpZHRoPSIzMDAwIiBoZWlnaHQ9IjE1MDAiIGZpbGw9IiNiZGQ3ZWEiLz48ZWxsaXBzZSBjeD0iMTUwMCIgY3k9IjkwMCIgcng9Ijk1MCIgcnk9IjMzMCIgZmlsbD0iI2YxZjVmOCIvPjxlbGxpcHNlIGN4PSIyMzAwIiBjeT0iNzIwIiByeD0iMTkwIiByeT0iMTUwIiBmaWxsPSIjZjFmNWY4Ii8+PGVsbGlwc2UgY3g9IjIzNDAiIGN5PSI3MDAiIHJ4PSIxOCIgcnk9IjIyIiBmaWxsPSIjMjU0NzZhIi8+PC9zdmc+" width="3000" height="1500" alt="beluga whale swimming">',
+      // A small image in the same body pins the no-upscale half of the
+      // rule: max-width only shrinks, it never enlarges.
+      '<img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI2MCIgaGVpZ2h0PSIzMCI+PHJlY3Qgd2lkdGg9IjYwIiBoZWlnaHQ9IjMwIiBmaWxsPSIjMjU0NzZhIi8+PC9zdmc+" width="60" height="30" alt="small stamp">',
+      '<p>beluga whale</p>',
+      '<p>its a beluga whale lol</p>'
+    ].join(''),
+    folder: 'inbox',
+    labelIds: ['INBOX']
+  })
+
   const byId = new Map(seed.map((m) => [m.id, m]))
   // Mailsy's own parking label: the emulated snooze writes it plus INBOX
   // removal (main's snooze module), and it is a real Gmail-side user label,

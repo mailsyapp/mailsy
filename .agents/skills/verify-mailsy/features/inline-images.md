@@ -44,6 +44,10 @@ Two isolation probes pin the engine facts the fix relies on:
 - `drive/edit-engine-probe.mjs` — vanilla contenteditable: Chromium deletes text and `<br>`s fine, and based on it, a synchronous `innerText` read during the input event aborts a pending `deleteContentBackward` (the reason `reportLater` defers the React report out of the keystroke's task).
 - `drive/block-delete-probe.mjs` — vanilla contenteditable at block boundaries: Backspace genuinely no-ops there (caret at the box start with a block ahead; blanks between markers and a block). Engine behavior, not our editor's.
 
+## The read-view fit (probe)
+
+`drive/read-image-probe.mjs` pins how the read view sizes body images — the reported Gmail-vs-Mailsy divergence: real mail ships images authored at 3000px wide, and without the iframe's `img { max-width: 100%; height: auto }` rule they render at natural size and clip at the pane edge (body scrollWidth overrun = the crop). The probe opens the seeded `Beluga whale photo` thread and asserts the fit (≤ pane width), the kept aspect ratio, no horizontal overflow, text still below, and that a small authored image is never upscaled. Usage: `node drive/read-image-probe.mjs <port>` (snapshot in `artifacts/read-image-probe.png`). It must end `PROBE: all pass` before any EmailDetail iframe style change ships.
+
 ## Gotchas from the UI pass
 
 - Chromium's Backspace stalls at block boundaries and right behind marker `<br>`s (measured on vanilla contenteditable too). `BodyEditor`'s keydown handler claims Backspace only in those stall states and performs the engine's own missing delete: eat the marker, merge across the block seam, unwrap beside text, or — at the box's very start with only a block ahead (a reply quote's opening `<br><br><div class=gmail_quote…>`) — eat the marker then the block, one visible unit per press.
