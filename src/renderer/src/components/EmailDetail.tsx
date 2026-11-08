@@ -145,10 +145,16 @@ function ThreadMessage({
       }
       /* Sender markup often carries huge intrinsic or authored sizes; like
          Gmail, cap images to the pane width and keep their aspect ratio,
-         but never upscale small ones. */
+         but never upscale small ones. !important beats sender styling,
+         and tables are capped too: a layout table wants its authored
+         width, which sizes the cell the img cap resolves against —
+         without it a 3000px table still rendered the image at 3000px. */
       img {
-        max-width: 100%;
-        height: auto;
+        max-width: 100% !important;
+        height: auto !important;
+      }
+      table {
+        max-width: 100% !important;
       }
     </style>
     <meta

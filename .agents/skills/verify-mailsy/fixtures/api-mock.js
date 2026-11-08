@@ -388,6 +388,49 @@
     labelIds: ['INBOX']
   })
 
+  // Markup-family variants of the same divergence, for the fit probe:
+  // real sender html wraps images in structures the plain img cap can
+  // lose to. Same whale SVG, different wrappers.
+  const WHALE = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIzMDAwIiBoZWlnaHQ9IjE1MDAiPjxyZWN0IHdpZHRoPSIzMDAwIiBoZWlnaHQ9IjE1MDAiIGZpbGw9IiNiZGQ3ZWEiLz48ZWxsaXBzZSBjeD0iMTUwMCIgY3k9IjkwMCIgcng9Ijk1MCIgcnk9IjMzMCIgZmlsbD0iI2YxZjVmOCIvPjxlbGxpcHNlIGN4PSIyMzAwIiBjeT0iNzIwIiByeD0iMTkwIiByeT0iMTUwIiBmaWxsPSIjZjFmNWY4Ii8+PGVsbGlwc2UgY3g9IjIzNDAiIGN5PSI3MDAiIHJ4PSIxOCIgcnk9IjIyIiBmaWxsPSIjMjU0NzZhIi8+PC9zdmc+'
+  const pushWideVariant = (id, subject, bodyHtml) =>
+    seed.push({
+      id,
+      threadId: `thread-${id}`,
+      from: 'Ben Franklin <ben@example.com>',
+      subject,
+      date: 'Wed, 14 Oct 2026 16:00:00 +0000',
+      snippet: `Wide-image markup family: ${subject}.`,
+      to: 'me@example.com',
+      cc: '',
+      bcc: '',
+      replyTo: '',
+      messageId: `<${id}@example.com>`,
+      references: '',
+      bodyText: `Wide-image markup family: ${subject}.`,
+      bodyHtml,
+      folder: 'inbox',
+      labelIds: ['INBOX']
+    })
+  // Styling beats a plain stylesheet cap: inline width…
+  pushWideVariant(
+    'msg-wide-inline',
+    'Wide inline style',
+    `<p>family: inline style</p><img src="${WHALE}" style="width: 3000px; height: 1500px;" alt="inline style whale"><p>tail text</p>`
+  )
+  // …fixed-width layout tables (the img cap resolves against the td,
+  // which the table sized)…
+  pushWideVariant(
+    'msg-wide-table',
+    'Wide table layout',
+    `<p>family: table</p><table width="3000" cellpadding="0" cellspacing="0" border="0"><tr><td><img src="${WHALE}" width="3000" height="1500" alt="table whale"></td></tr></table><p>tail text</p>`
+  )
+  // …and sender stylesheet rules with !important.
+  pushWideVariant(
+    'msg-wide-important',
+    'Wide important style',
+    `<p>family: important</p><style>img { width: 3000px !important; height: auto !important; }</style><img src="${WHALE}" width="3000" height="1500" alt="important whale"><p>tail text</p>`
+  )
+
   const byId = new Map(seed.map((m) => [m.id, m]))
   // Mailsy's own parking label: the emulated snooze writes it plus INBOX
   // removal (main's snooze module), and it is a real Gmail-side user label,

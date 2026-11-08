@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 // Read-view image probe. Drives the scaffold server like drive.mjs (mock
 // via addInitScript) and exercises the reported Gmail-vs-Mailsy
-// divergence: a body image authored at 3000px must shrink-fit the
-// reading pane with its aspect ratio kept, text must flow below it, and
-// a small image in the same body must never upscale.
-// Usage: node drive/read-image-probe.mjs [port]
+// divergence: body images authored far wider than the reading pane must
+// shrink-fit it (like Gmail) with the aspect ratio kept, whatever the
+// sender markup family — plain attributes, inline styling, fixed-width
+// layout tables, sender stylesheets — and a small authored image must
+// never upscale. Usage: node drive/read-image-probe.mjs [port]
 import { chromium } from 'playwright'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -27,63 +28,74 @@ function check(ok, label, detail = '') {
 await page.goto(`http://127.0.0.1:${PORT}/`)
 const inbox = page.getByRole('complementary', { name: 'Inbox' })
 await inbox.waitFor({ timeout: 10000 })
-await inbox.getByText('Beluga whale photo').first().click()
-const frame = page.frameLocator('iframe[title="Email content msg-wide-img"]')
-const wide = frame.locator('img[alt="beluga whale swimming"]')
-await wide.waitFor({ timeout: 10000 })
-// Give the images a beat to decode so widths reflect real layout.
-await page.waitForTimeout(300)
 
-// Pane width: the iframe's own client box is the reading pane the image
-// must fit, so measure it once and reuse it for the crop check.
-const layout = await page.evaluate(() => {
-  const frame = document.querySelector('iframe[title="Email content msg-wide-img"]')
-  const doc = frame?.contentDocument
-  if (!doc) return null
-  const wide = doc.querySelector('img[alt="beluga whale swimming"]')
-  const small = doc.querySelector('img[alt="small stamp"]')
-  const ratio = (a, b) => Number((a / b).toFixed(3))
-  return {
-    pane: frame.clientWidth,
-    wide: wide ? { w: wide.clientWidth, h: wide.clientHeight, natural: ratio(wide.naturalWidth, wide.naturalHeight) } : null,
-    small: small ? { w: small.clientWidth } : null,
-    scrollW: doc.documentElement.scrollWidth,
-    bodyScrollW: doc.body.scrollWidth,
-    text: doc.body.innerText
-  }
-})
-check(layout !== null, 'the message iframe exposes its document', 'contentDocument was null')
-if (layout) {
-  check(
-    layout.wide !== null && layout.wide.w <= layout.pane + 1,
-    'the 3000px image shrink-fits the pane width',
-    `img=${layout.wide?.w} pane=${layout.pane}`
-  )
-  check(
-    layout.wide !== null &&
-      Math.abs(ratioOf(layout.wide.w, layout.wide.h) - layout.wide.natural) < 0.05,
-    'the fit keeps the image aspect ratio',
-    `rendered ${(layout.wide.w / layout.wide.h).toFixed(3)} vs natural ${layout.wide.natural}`
-  )
-  check(
-    layout.scrollW <= layout.pane + 1 && layout.bodyScrollW <= layout.pane + 1,
-    'nothing overflows horizontally, so no edge crop like the report',
-    `scroll=document:${layout.scrollW} body:${layout.bodyScrollW} pane=${layout.pane}`
-  )
-  check(
-    layout.text.includes('beluga whale') && layout.text.includes('its a beluga whale lol'),
-    'text below the image still renders',
-    JSON.stringify(layout.text.slice(0, 120))
-  )
-  check(
-    layout.small !== null && layout.small.w === 60,
-    'the small image keeps its authored size instead of upscaling',
-    `small=${layout.small?.w}`
-  )
+// The base thread pins the exact reported scenario plus the text-flow
+// and no-upscale halves; every other family only needs the fit itself,
+// because one rule styles the one iframe all of them render through.
+async function measure(subject) {
+  await inbox.getByText(subject, { exact: true }).first().click()
+  const frame = page.locator('iframe[title^="Email content"]').last()
+  await frame.waitFor({ timeout: 10000 })
+  // Give the images a beat to decode so widths reflect real layout.
+  await page.waitForTimeout(400)
+  const m = await page.evaluate(() => {
+    const frame = [...document.querySelectorAll('iframe[title^="Email content"]')].pop()
+    const doc = frame?.contentDocument
+    if (!doc) return null
+    const img = doc.querySelector('img')
+    return {
+      pane: frame.clientWidth,
+      imgW: img?.clientWidth ?? -1,
+      imgH: img?.clientHeight ?? -1,
+      natural: img?.naturalWidth && img?.naturalHeight ? img.naturalWidth / img.naturalHeight : 0,
+      smallW: doc.querySelector('img[alt="small stamp"]')?.clientWidth ?? null,
+      scrollW: doc.body.scrollWidth,
+      text: doc.body.innerText
+    }
+  })
+  await page.getByRole('button', { name: 'Inbox', exact: true }).click()
+  await inbox.waitFor({ timeout: 10000 })
+  return m
 }
 
-function ratioOf(a, b) {
-  return b === 0 ? 0 : a / b
+const families = [
+  ['Beluga whale photo', 'img authored 3000x1500 with plain attributes'],
+  ['Wide inline style', 'img with inline width styling'],
+  ['Wide table layout', 'img inside a fixed-width table cell'],
+  ['Wide important style', 'img with sender stylesheet width rules']
+]
+const previews = []
+for (const [subject, family] of families) {
+  const m = await measure(subject)
+  const tag = m ? `img=${m.imgW} pane=${m.pane}` : 'no iframe document'
+  check(m !== null, `${family}: the iframe exposes its document`, tag)
+  if (!m) continue
+  check(
+    m.imgW <= m.pane + 1 && m.scrollW <= m.pane + 1,
+    `${family}: the wide image shrink-fits the pane without edge crop (the report's signature)`,
+    tag + ` scroll=${m.scrollW}`
+  )
+  const ratio = m.imgH === 0 ? 0 : m.imgW / m.imgH
+  check(
+    Math.abs(ratio - m.natural) < 0.05,
+    `${family}: the fit keeps the image aspect ratio`,
+    `rendered ${ratio.toFixed(3)} vs natural ${m.natural.toFixed(3)}`
+  )
+  previews.push({ subject, m })
+}
+
+const base = previews.find((p) => p.subject === 'Beluga whale photo')
+if (base) {
+  check(
+    base.m.text.includes('beluga whale') && base.m.text.includes('its a beluga whale lol'),
+    'text below the image still renders',
+    JSON.stringify(base.m.text.slice(0, 120))
+  )
+  check(
+    base.m.smallW === 60,
+    'the small image keeps its authored size instead of upscaling',
+    `small=${base.m.smallW}`
+  )
 }
 
 console.log(failures === 0 ? 'PROBE: all pass' : `PROBE: ${failures} failing`)
