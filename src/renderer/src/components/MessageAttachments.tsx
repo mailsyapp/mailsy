@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { EmailDetail } from '../../../shared/types'
-import { sizeLabel } from '../lib/format'
+import { errorMessage, sizeLabel } from '../lib/format'
 import { imageMimeOf, looksLikeImageName } from '../lib/attachmentFile'
 
 // A message's own attachment files, shown wherever the message renders:
@@ -60,7 +60,7 @@ export function MessageAttachments({
     try {
       await window.api.saveAttachment(message.id, ref.attachmentId, ref.filename)
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      setError(errorMessage(e))
     } finally {
       setSavingName(null)
     }

@@ -2,6 +2,7 @@ import { getAccountEmail, getGmailClient } from '../auth'
 import {
   attachmentsLimitError,
   ATTACHMENTS_TOTAL_LIMIT_BYTES,
+  decodedAttachmentBytes,
   type SaveDraftRequest,
   type SendDraftRequest,
   type SendEmailRequest
@@ -61,9 +62,10 @@ function attachmentsShaped(request: SendEmailRequest): boolean {
 // request can arrive with anything, so main re-asks before building MIME.
 function attachmentsBytes(request: SendEmailRequest): number {
   if (!request.attachments) return 0
-  let total = 0
-  for (const attachment of request.attachments) total += Math.floor(attachment.data.length * 0.75)
-  return total
+  return request.attachments.reduce(
+    (sum, attachment) => sum + decodedAttachmentBytes(attachment),
+    0
+  )
 }
 
 export async function sendEmail(request: SendEmailRequest): Promise<void> {

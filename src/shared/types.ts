@@ -165,6 +165,14 @@ export interface MessageAttachmentRef {
 // share this constant so the number can't drift apart.
 export const ATTACHMENTS_TOTAL_LIMIT_BYTES = 20 * 1024 * 1024
 
+// Decoded byte size of one record's base64 data — the unit the budget rule
+// counts. Every armored check (picker total, renderer totals across
+// entrances, boundary re-ask) calls this one, so "MB" means the same bytes
+// on both sides of the bridge.
+export function decodedAttachmentBytes(attachment: ComposeAttachment): number {
+  return Math.floor(attachment.data.length * 0.75)
+}
+
 // The sentence every over-limit path says, built here so the pick-time
 // refusal, the boundary re-ask, and the renderer's cumulative check stay
 // word-identical.

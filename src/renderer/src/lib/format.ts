@@ -11,6 +11,12 @@ export function sizeLabel(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
+// One unknown-catch shape for every bridge call's `.catch`: the Error
+// keeps its message; anything else stringifies.
+export function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
 // "Ada Lovelace <ada@example.com>" renders as "Ada Lovelace"; the address
 // stays for unparseable or bare sender strings.
 export function senderNameOf(from: string): string {

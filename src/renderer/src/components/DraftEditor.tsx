@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react'
+import { errorMessage } from '../lib/format'
 import type { EmailDetail as EmailDetailData, ThreadSummary } from '../../../shared/types'
 import { hasRecipient, type RecipientState } from '../../../shared/types'
 import { RecipientFields } from './RecipientFields'
@@ -151,7 +152,7 @@ function DraftForm({
       setSent(true)
       onSent(messageId)
     } catch (error) {
-      setSendError(error instanceof Error ? error.message : String(error))
+      setSendError(errorMessage(error))
     } finally {
       setSending(false)
     }

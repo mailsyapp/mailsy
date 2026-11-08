@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { errorMessage } from './lib/format'
 import { RefreshCw } from 'lucide-react'
 import type {
   ThreadSummary,
@@ -31,7 +32,7 @@ const DRAFT_PRUNE_DELAY_MS = 2000
 const SNOOZE_TICK_MS = 30_000
 
 function formatFetchError(e: unknown): string {
-  const message = e instanceof Error ? e.message : String(e)
+  const message = errorMessage(e)
   if (/quota|rate.?limit|429|userRateLimitExceeded/i.test(message)) {
     return 'Gmail rate limit hit — wait about a minute, then press Enter to retry your search.'
   }
@@ -371,7 +372,7 @@ function App(): React.JSX.Element {
         handleThreadRemoved(row.id)
       })
       .catch((e: unknown) => {
-        setDraftDiscard({ rowId: row.id, error: e instanceof Error ? e.message : String(e) })
+        setDraftDiscard({ rowId: row.id, error: errorMessage(e) })
         recordError(e)
       })
   }

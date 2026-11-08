@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react'
+import { errorMessage } from '../lib/format'
 import { RecipientFields } from './RecipientFields'
 import { hasRecipient, type RecipientState } from '../../../shared/types'
 import { useDraftAutosave } from './useDraftAutosave'
@@ -107,7 +108,7 @@ export function ComposeEditor({ onClose }: ComposeEditorProps): React.JSX.Elemen
       autosave.stop()
       setSent(true)
     } catch (error) {
-      setSendError(error instanceof Error ? error.message : String(error))
+      setSendError(errorMessage(error))
     } finally {
       setSending(false)
     }

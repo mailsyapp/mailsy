@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { errorMessage } from '../lib/format'
 import {
   ATTACHMENTS_TOTAL_LIMIT_BYTES,
   attachmentsLimitError,
+  decodedAttachmentBytes,
   type ComposeAttachment,
   type MessageAttachmentRef,
   type SendEmailRequest
@@ -59,10 +61,8 @@ export type AttachmentPrefill = {
   refs: MessageAttachmentRef[]
 }
 
-// Decoded bytes, the same accounting the send boundary does.
-function decodedBytes(attachment: ComposeAttachment): number {
-  return Math.floor(attachment.data.length * 0.75)
-}
+// The decoded-bytes accounting is shared/types' rule (same unit the send
+// boundary and the picker count). Here it sums over the hook's own set.
 
 export function useComposerAttachments(
   prefill?: AttachmentPrefill,
@@ -122,8 +122,8 @@ export function useComposerAttachments(
     (incoming: ComposeAttachment[]): void => {
       if (incoming.length === 0) return
       const joinedBytes =
-        attachments.reduce((sum, attachment) => sum + decodedBytes(attachment), 0) +
-        incoming.reduce((sum, attachment) => sum + decodedBytes(attachment), 0)
+        attachments.reduce((sum, attachment) => sum + decodedAttachmentBytes(attachment), 0) +
+        incoming.reduce((sum, attachment) => sum + decodedAttachmentBytes(attachment), 0)
       if (joinedBytes > ATTACHMENTS_TOTAL_LIMIT_BYTES) {
         setError(attachmentsLimitError(joinedBytes))
         return
@@ -142,7 +142,7 @@ export function useComposerAttachments(
       // cumulative total across several picks is the renderer's own rule.
       push(await window.api.pickAttachments())
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      setError(errorMessage(e))
     } finally {
       setPicking(false)
     }

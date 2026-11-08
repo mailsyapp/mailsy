@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { errorMessage } from '../lib/format'
 import type { SendEmailRequest } from '../../../shared/types'
 
 // The composer fields the bridge persists. The optional send fields ride
@@ -92,7 +93,7 @@ export function useDraftAutosave(
       })
       .catch((e: unknown) => {
         setStatus('idle')
-        setError(e instanceof Error ? e.message : String(e))
+        setError(errorMessage(e))
       })
       .finally(() => {
         // A newer save owns the flushPending handle from here.

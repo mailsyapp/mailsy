@@ -9,7 +9,7 @@ import type {
 } from '../../../shared/types'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { AlarmClockIcon } from '@hugeicons/core-free-icons'
-import { senderNameOf } from '../lib/format'
+import { errorMessage, senderNameOf } from '../lib/format'
 import { replyAllRecipients } from '../lib/recipients'
 import { hasRecipient } from '../../../shared/types'
 import { SNOOZE_PRESETS } from '../lib/snooze'
@@ -315,7 +315,7 @@ export function EmailDetail({
       })
       onThreadReadChanged(thread.id, !unread)
     } catch (error) {
-      setReadError(error instanceof Error ? error.message : String(error))
+      setReadError(errorMessage(error))
     } finally {
       setTogglingRead(false)
     }
@@ -333,7 +333,7 @@ export function EmailDetail({
       })
       onThreadStarChanged(thread.id, !thread.starred)
     } catch (error) {
-      setStarError(error instanceof Error ? error.message : String(error))
+      setStarError(errorMessage(error))
     } finally {
       setTogglingStar(false)
     }
@@ -366,7 +366,7 @@ export function EmailDetail({
       )
       onThreadLabelChanged(thread.id, label.id, !applied)
     } catch (error) {
-      setLabelError(error instanceof Error ? error.message : String(error))
+      setLabelError(errorMessage(error))
     } finally {
       setTogglingLabel(null)
     }
@@ -383,7 +383,7 @@ export function EmailDetail({
       const latestId = result.messages[result.messages.length - 1]?.id
       setExpandedIds(new Set(latestId ? [latestId] : []))
     } catch (error) {
-      setThreadError(error instanceof Error ? error.message : String(error))
+      setThreadError(errorMessage(error))
     } finally {
       if (!silent) setThreadLoading(false)
     }
@@ -506,7 +506,7 @@ export function EmailDetail({
       const threadId = latestMessage?.threadId ?? thread.id
       if (threadId) await loadThread(threadId, true)
     } catch (error) {
-      setSendError(error instanceof Error ? error.message : String(error))
+      setSendError(errorMessage(error))
     } finally {
       setSending(false)
     }
@@ -524,7 +524,7 @@ export function EmailDetail({
       })
       onThreadRemoved(thread.id)
     } catch (error) {
-      setArchiveError(error instanceof Error ? error.message : String(error))
+      setArchiveError(errorMessage(error))
     } finally {
       setArchiving(false)
     }
@@ -547,7 +547,7 @@ export function EmailDetail({
       })
       onThreadRemoved(thread.id)
     } catch (error) {
-      setDeleteError(error instanceof Error ? error.message : String(error))
+      setDeleteError(errorMessage(error))
     } finally {
       setDeleting(false)
     }
@@ -570,7 +570,7 @@ export function EmailDetail({
       })
       onThreadRemoved(thread.id)
     } catch (error) {
-      setSpamError(error instanceof Error ? error.message : String(error))
+      setSpamError(errorMessage(error))
     } finally {
       setChangingSpam(false)
     }
@@ -596,7 +596,7 @@ export function EmailDetail({
       }
       onThreadRemoved(thread.id)
     } catch (error) {
-      setSnoozeError(error instanceof Error ? error.message : String(error))
+      setSnoozeError(errorMessage(error))
     } finally {
       setChangingSnooze(false)
     }
@@ -614,7 +614,7 @@ export function EmailDetail({
       await window.api.snoozeThread(thread.id, restoreAt)
       onThreadRemoved(thread.id)
     } catch (error) {
-      setSnoozeError(error instanceof Error ? error.message : String(error))
+      setSnoozeError(errorMessage(error))
     } finally {
       setChangingSnooze(false)
     }
