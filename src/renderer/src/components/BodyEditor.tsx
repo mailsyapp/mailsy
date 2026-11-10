@@ -1,5 +1,5 @@
 import { forwardRef, useImperativeHandle, useEffect, useRef } from 'react'
-import { imageToPayload } from '../lib/attachmentFile'
+import { imageToPayload, looksLikeImageFile } from '../lib/attachmentFile'
 
 // The compose body across all three composer surfaces: one rich-text field
 // where a line of text, a dropped screenshot, and another line of text all
@@ -293,11 +293,33 @@ function insertDataUrlAtCaret(editor: HTMLDivElement, dataUrl: string): void {
   selection?.addRange(after)
 }
 
+// One insertion path for every way an image file enters this box: dropped
+// at the caret, pasted, or inserted through the imperative handle from the
+// composer chrome. Each image becomes an <img> with its data URL where the
+// caret sits; anything not an image comes back to the caller for its chip
+// routing.
+async function insertImageFiles(editor: HTMLDivElement, files: File[]): Promise<File[]> {
+  const leftovers: File[] = []
+  for (const file of files) {
+    const payload = await imageToPayload(file)
+    if (payload) insertDataUrlAtCaret(editor, `data:${payload.mimeType};base64,${payload.base64}`)
+    else leftovers.push(file)
+  }
+  return leftovers
+}
+
 export const BodyEditor = forwardRef<BodyEditorHandle, BodyEditorProps>(function BodyEditor(
   { initialHtml, placeholder, onChange, onNonImageFiles },
   ref
 ) {
   const editorRef = useRef<HTMLDivElement | null>(null)
+  // The imperative handle reads the current callback through this ref: the
+  // handle installs once, so a stale `onChange` closure would silently
+  // report into a previous render's setter otherwise.
+  const onChangeRef = useRef(onChange)
+  useEffect(() => {
+    onChangeRef.current = onChange
+  })
 
   // One-time prefill only: the uncontrolled box must not be rewritten on
   // re-render (caret death). Composers remount via key when prefill changes.
@@ -322,16 +344,12 @@ export const BodyEditor = forwardRef<BodyEditorHandle, BodyEditorProps>(function
       insertImages: async (files: File[]) => {
         const editor = editorRef.current
         if (!editor) return
-        for (const file of files) {
-          const payload = await imageToPayload(file)
-          if (payload)
-            insertDataUrlAtCaret(editor, `data:${payload.mimeType};base64,${payload.base64}`)
-        }
+        await insertImageFiles(editor, files)
         editor.focus()
-        reportNow(editor, onChange)
+        reportNow(editor, onChangeRef.current)
       }
     }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+
     []
   )
 
@@ -352,12 +370,7 @@ export const BodyEditor = forwardRef<BodyEditorHandle, BodyEditorProps>(function
       }
     }
     const files = Array.from(event.dataTransfer.files)
-    const leftovers: File[] = []
-    for (const file of files) {
-      const payload = await imageToPayload(file)
-      if (payload) insertDataUrlAtCaret(editor, `data:${payload.mimeType};base64,${payload.base64}`)
-      else leftovers.push(file)
-    }
+    const leftovers = await insertImageFiles(editor, files)
     // Non-image files keep their chip routing through the composer's own
     // addFiles; the synchronous stopPropagation above is what makes this
     // handoff necessary.
@@ -378,21 +391,17 @@ export const BodyEditor = forwardRef<BodyEditorHandle, BodyEditorProps>(function
       suppressContentEditableWarning
       onInput={(event) => reportLater(event.currentTarget, onChange)}
       onDrop={(event) => void handleDrop(event)}
-      // A pasted screenshot is the same image-in-text the drop is.
+      // A pasted screenshot is the same image-in-text the drop is; the file
+      // classifier is the shared module's image rule, the same one the drop
+      // and the composer routing speak.
       onPaste={(event) => {
         const editor = event.currentTarget
-        const files = Array.from(event.clipboardData.files).filter((file) =>
-          file.type.startsWith('image/')
-        )
+        const files = Array.from(event.clipboardData.files).filter(looksLikeImageFile)
         if (files.length === 0) return
         event.preventDefault()
-        void Promise.all(files.map(imageToPayload)).then((payloads) => {
-          for (const payload of payloads) {
-            if (payload)
-              insertDataUrlAtCaret(editor, `data:${payload.mimeType};base64,${payload.base64}`)
-          }
+        void insertImageFiles(editor, files).then(() => {
           editor.focus()
-          reportNow(editor, onChange)
+          reportNow(editor, onChangeRef.current)
         })
       }}
       // A plain Enter inserts a line break node, not a new div; the html

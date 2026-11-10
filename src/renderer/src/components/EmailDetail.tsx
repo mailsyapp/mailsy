@@ -18,8 +18,7 @@ import { AttachmentChips } from './AttachmentChips'
 import { MessageAttachments } from './MessageAttachments'
 import { BodyEditor, type BodyEditorHandle } from './BodyEditor'
 import { useComposerAttachments } from './useComposerAttachments'
-import { buildQuoteHtml, sanitizeEmailHtml } from '../lib/emailHtml'
-
+import { quoteHtmlFor, sanitizeEmailHtml } from '../lib/emailHtml'
 // Folders where report spam makes sense: drafts and sent (mail you own),
 // spam itself, and Trash are the excluded rest. A user-label view behaves
 // like All Mail: spam reporting is a valid action there.
@@ -64,52 +63,6 @@ type EmailDetailProps = {
   // Reports a user-label apply/remove on the open thread so App can refresh
   // the rail's totals and drop a row the active label view lost.
   onThreadLabelChanged: (threadId: string, labelId: string, applied: boolean) => void
-}
-
-function escapeHtml(value: string): string {
-  return value.replace(/[&<>"']/g, (character) => {
-    const entities: Record<string, string> = {
-      '&': '&amp;',
-      '<': '&lt;',
-      '>': '&gt;',
-      '"': '&quot;',
-      "'": '&#39;'
-    }
-    return entities[character] ?? character
-  })
-}
-
-// Gmail renders the elided-quote affordance only for its own native quote
-// markup: a gmail_quote_container div holding a gmail_attr attribution line
-// and a gmail_quote blockquote. Anything else shows as literal text. That
-// builder lives in lib/emailHtml.
-function quoteHtmlFor(target: EmailDetailData, originalText: string, isForward: boolean): string {
-  const forwardHeader = [
-    '---------- Forwarded message ---------',
-    `From: ${target.from}`,
-    `To: ${target.to}`,
-    `Date: ${target.date}`,
-    `Subject: ${target.subject}`
-  ]
-    .map(escapeHtml)
-    .join('<br>')
-  const attrHtml = isForward
-    ? forwardHeader.concat('<br><br>')
-    : `On ${escapeHtml(gmailDateOf(target.date))}, ${escapeHtml(target.from)} wrote:<br>`
-  return `<br><br>${buildQuoteHtml(attrHtml, target.bodyHtml ? sanitizeEmailHtml(target.bodyHtml) : '', originalText)}`
-}
-
-function gmailDateOf(value: string): string {
-  const parsed = new Date(value)
-  if (Number.isNaN(parsed.getTime())) return value
-  return new Intl.DateTimeFormat('en-US', {
-    weekday: 'short',
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit'
-  }).format(parsed)
 }
 
 function fitFrame(frame: HTMLIFrameElement): void {

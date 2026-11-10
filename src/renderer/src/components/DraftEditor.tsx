@@ -54,13 +54,14 @@ function DraftForm({
     bcc: detail.bcc || ''
   })
   const [subject, setSubject] = useState(detail.subject || '')
-  // The draft's stored content, in the editor's two forms: the rich html
+  // The draft's stored content in the editor's two forms: the rich html
   // the detail carries (cid images already resolved to data URLs by the
-  // boundary) with the plain-text fallback beside it.
-  const [body, setBody] = useState<{ html: string; text: string }>(() => ({
-    html: detail.bodyHtml ?? plainTextToHtml(detail.bodyText || detail.snippet || ''),
-    text: detail.bodyText || detail.snippet || ''
-  }))
+  // boundary) with the plain-text fallback beside it. One derivation
+  // feeds both the initial state and the editor prefill; the editor's
+  // mount report re-derives the exact editor view from this same content.
+  const initialHtml = detail.bodyHtml ?? plainTextToHtml(detail.bodyText || detail.snippet || '')
+  const initialText = detail.bodyText || detail.snippet || ''
+  const [body, setBody] = useState(() => ({ html: initialHtml, text: initialText }))
   const editorRef = useRef<BodyEditorHandle | null>(null)
   const [sending, setSending] = useState(false)
   const [sendError, setSendError] = useState<string | null>(null)
@@ -181,7 +182,7 @@ function DraftForm({
         <span>Message</span>
         <BodyEditor
           ref={editorRef}
-          initialHtml={detail.bodyHtml ?? plainTextToHtml(detail.bodyText || detail.snippet || '')}
+          initialHtml={initialHtml}
           placeholder="Type your message..."
           onNonImageFiles={(files) => void attach.addFiles(files)}
           onChange={setBody}
