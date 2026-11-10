@@ -4,20 +4,15 @@ import type {
   EmailDetail as EmailDetailData,
   EmailThread,
   MailLabel,
-  SendEmailRequest,
   MailFolder
 } from '../../../shared/types'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { AlarmClockIcon } from '@hugeicons/core-free-icons'
 import { errorMessage, senderNameOf } from '../lib/format'
-import { replyAllRecipients } from '../lib/recipients'
-import { hasRecipient } from '../../../shared/types'
 import { SNOOZE_PRESETS } from '../lib/snooze'
-import { RecipientFields } from './RecipientFields'
-import { ComposerBody, type ComposerBodyHandle } from './ComposerBody'
+import { ThreadReplyComposer, type ThreadReplyComposerHandle } from './ThreadReplyComposer'
 import { MessageAttachments } from './MessageAttachments'
-import { useComposerAttachments } from './useComposerAttachments'
-import { quoteHtmlFor, sanitizeEmailHtml } from '../lib/emailHtml'
+import { sanitizeEmailHtml } from '../lib/emailHtml'
 
 // Folders where report spam makes sense: drafts and sent (mail you own),
 // spam itself, and Trash are the excluded rest. A user-label view behaves
@@ -192,28 +187,9 @@ export function EmailDetail({
   const [threadError, setThreadError] = useState<string | null>(null)
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
 
-  const [draft, setDraft] = useState<SendEmailRequest | null>(null)
-  // Set only when a reply-all opened without the account address; the
-  // arrival effect clears it after its at-most-once rewrite.
-  const pendingReplyRef = useRef<{ target: EmailDetailData; prefilledTo: string } | null>(null)
-  // The rich body the editor starts with: the quote markup of the current
-  // reply/forward. The editor is uncontrolled past this point — typed
-  // content lives there, and its onChange keeps the draft payload synced.
-  const [quotedContent, setQuotedContent] = useState<{ html: string } | null>(null)
-  // Bumped by every reply/forward open, so a new quote remounts the editor
-  // even for the same message twice in a row.
-  const [composerSeq, setComposerSeq] = useState(0)
-  const bodyRef = useRef<ComposerBodyHandle | null>(null)
-  const [sending, setSending] = useState(false)
-  const [sendError, setSendError] = useState<string | null>(null)
-  const [sent, setSent] = useState(false)
-  // The reply/forward form's own file set, separate from `draft` so the
-  // typed-text payload state keeps being exactly a SendEmailRequest and
-  // the files join only when the bridge call leaves. Cancel clears them
-  // with the text; the form remounts per thread via key in App. Image files
-  // route into the rich body instead of the chip list, through the body
-  // ref the hook holds.
-  const attach = useComposerAttachments(undefined, bodyRef)
+  // The reply/forward composer lives in ThreadReplyComposer below; EmailDetail
+  // holds only its handle for the toolbar's three entry points.
+  const replyApi = useRef<ThreadReplyComposerHandle | null>(null)
 
   const [archiving, setArchiving] = useState(false)
   const [archiveError, setArchiveError] = useState<string | null>(null)
@@ -351,119 +327,7 @@ export function EmailDetail({
     void loadThread(thread.id)
   }, [thread.id])
 
-  const accountEmail = threadData?.userEmail
-  useEffect(() => {
-    const pending = pendingReplyRef.current
-    if (!accountEmail || !pending) return
-    pendingReplyRef.current = null
-    // Only the exact prefill the unknown address produced is rewritten; an
-    // edited To line means the user already took the list from here.
-    setDraft((prev) => {
-      if (!prev || prev.to !== pending.prefilledTo) return prev
-      const targets = replyAllRecipients(pending.target, accountEmail)
-      return { ...prev, to: targets.to, cc: targets.cc }
-    })
-  }, [accountEmail])
-
   const messages: EmailDetailData[] = threadData?.messages ?? []
-
-  const latestMessage: EmailDetailData | null = messages[messages.length - 1] ?? null
-
-  function openReplyComposer(target: EmailDetailData, toLine: string, ccLine = ''): void {
-    setSendError(null)
-    setSent(false)
-    // A fresh reply starts from a clean file set the way it starts from a
-    // clean body: the hook instance survives the pane, so an abandoned
-    // earlier reply's picked files must not ride into this one.
-    attach.clear()
-    const originalText = target.bodyText || target.snippet || thread.snippet
-
-    setQuotedContent({ html: quoteHtmlFor(target, originalText, false) })
-    setComposerSeq((prev) => prev + 1)
-    setDraft({
-      to: toLine,
-      // An empty carbon line stays unset: an absent field is the payload's
-      // "no carbon recipients", never an empty header.
-      ...(ccLine ? { cc: ccLine } : {}),
-      subject: /^re:/i.test(target.subject) ? target.subject : `Re: ${target.subject}`,
-      // The typed body starts empty; the quote markup lives in the editor's
-      // own prefill (quotedContent above), not in the text state.
-      body: '',
-      threadId: target.threadId || undefined,
-      inReplyTo: target.messageId || undefined,
-      references: [target.references, target.messageId].filter(Boolean).join(' ') || undefined
-    })
-  }
-
-  function replyToEmail(): void {
-    const target = latestMessage
-    if (!target) return
-    openReplyComposer(
-      target,
-      target.replyTo.trim() || target.from.trim() || thread.participants[0] || ''
-    )
-  }
-
-  function replyAllToEmail(): void {
-    const target = latestMessage
-    if (!target) return
-    const userEmail = threadData?.userEmail ?? ''
-    const { to, cc } = replyAllRecipients(target, userEmail)
-    openReplyComposer(target, to, cc)
-    // A reply-all opened before the account address landed prefilters
-    // nothing: when it arrives, an untouched To line gets one rewrite.
-    pendingReplyRef.current = userEmail ? null : { target, prefilledTo: to }
-  }
-
-  function forwardEmail(): void {
-    const target = latestMessage
-    if (!target) return
-
-    setSendError(null)
-    setSent(false)
-    attach.clear()
-    const originalText = target.bodyText || target.snippet || thread.snippet
-
-    setQuotedContent({ html: quoteHtmlFor(target, originalText, true) })
-    setComposerSeq((prev) => prev + 1)
-    setDraft({
-      to: '',
-      subject: /^fwd:/i.test(target.subject) ? target.subject : `Fwd: ${target.subject}`,
-      // Same as the reply: empty typed body, the forwarded content lives in
-      // the editor's prefill. The forward header inside the quote keeps the
-      // same "---------- Forwarded message ---------" Gmail layout.
-      body: '',
-      // Keep the forward in the same Gmail thread so it shows up in the
-      // conversation view alongside the original + replies.
-      threadId: target.threadId || undefined,
-      inReplyTo: target.messageId || undefined,
-      references: [target.references, target.messageId].filter(Boolean).join(' ') || undefined
-    })
-  }
-
-  async function handleSend(event: React.FormEvent<HTMLFormElement>): Promise<void> {
-    event.preventDefault()
-    // The Enter key submits the form even with the Send button disabled, so
-    // the receipt test lives here, not only on the button.
-    if (!draft || sending || !hasRecipient(draft)) return
-
-    setSending(true)
-    setSendError(null)
-    setSent(false)
-    try {
-      await window.api.sendEmail({ ...draft, ...attach.field })
-      setDraft(null)
-      setQuotedContent(null)
-      setSent(true)
-      // Refresh the conversation so the just-sent reply/forward is visible.
-      const threadId = latestMessage?.threadId ?? thread.id
-      if (threadId) await loadThread(threadId, true)
-    } catch (error) {
-      setSendError(errorMessage(error))
-    } finally {
-      setSending(false)
-    }
-  }
 
   async function handleArchive(): Promise<void> {
     if (archiving) return
@@ -660,9 +524,9 @@ export function EmailDetail({
       </div>
       {labelError && <p role="alert">{labelError}</p>}
 
-      <button onClick={replyToEmail}>reply</button>
-      <button onClick={replyAllToEmail}>reply all</button>
-      <button onClick={forwardEmail}>forward</button>
+      <button onClick={() => replyApi.current?.reply()}>reply</button>
+      <button onClick={() => replyApi.current?.replyAll()}>reply all</button>
+      <button onClick={() => replyApi.current?.forward()}>forward</button>
       <button onClick={handleToggleRead} disabled={togglingRead}>
         {thread.unreadCount > 0 ? 'mark as read' : 'mark as unread'}
       </button>
@@ -728,64 +592,17 @@ export function EmailDetail({
       {snoozeError && <p role="alert">{snoozeError}</p>}
       {readError && <p role="alert">{readError}</p>}
       {starError && <p role="alert">{starError}</p>}
-      {draft && (
-        <form
-          className={`composer${attach.dropping ? ' composer-dragging' : ''}`}
-          onSubmit={handleSend}
-          {...attach.drop}
-        >
-          <h2 id="composer-title">Compose email</h2>
-
-          <RecipientFields
-            to={draft.to}
-            cc={draft.cc ?? ''}
-            bcc={draft.bcc ?? ''}
-            onChange={(patch) => setDraft({ ...draft, ...patch })}
-          />
-
-          <label className="composerField">
-            <span>Subject</span>
-            <input
-              value={draft.subject}
-              onChange={(event) => setDraft({ ...draft, subject: event.target.value })}
-            />
-          </label>
-
-          {/* Remounts per reply/forward open (composerSeq): the quote
-              prefill is the only programmatic content, and typed content
-              lives in the uncontrolled editor between opens. */}
-          <ComposerBody
-            ref={bodyRef}
-            attach={attach}
-            remountKey={composerSeq}
-            initialHtml={quotedContent?.html ?? ''}
-            onBodyChange={(content) =>
-              setDraft((prev) =>
-                prev ? { ...prev, body: content.text, bodyHtml: content.html || undefined } : prev
-              )
-            }
-          />
-
-          {sendError && <p role="alert">{sendError}</p>}
-
-          <div className="composerActions">
-            <button
-              type="button"
-              onClick={() => {
-                setDraft(null)
-                setQuotedContent(null)
-                attach.clear()
-              }}
-            >
-              Cancel
-            </button>
-            <button type="submit" disabled={sending || !hasRecipient(draft)}>
-              {sending ? 'Sending...' : 'Send'}
-            </button>
-          </div>
-        </form>
-      )}
-      {sent && <p role="status">Message sent.</p>}
+      {/* The reply/forward composer. Remounts per thread via key in App, so
+          its state (including the file set) resets with the conversation. */}
+      <ThreadReplyComposer
+        ref={replyApi}
+        thread={thread}
+        messages={messages}
+        userEmail={threadData?.userEmail ?? ''}
+        onSent={(threadId) => {
+          if (threadId) void loadThread(threadId, true)
+        }}
+      />
     </div>
   )
 }
