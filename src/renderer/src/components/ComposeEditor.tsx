@@ -1,7 +1,15 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
+import { errorMessage } from '../lib/format'
 import { RecipientFields } from './RecipientFields'
-import { hasRecipient, type RecipientState } from '../../../shared/types'
+import {
+  composeRequest,
+  hasRecipient,
+  type ComposeBody,
+  type RecipientState
+} from '../../../shared/types'
 import { useDraftAutosave } from './useDraftAutosave'
+import { ComposerBody, type ComposerBodyHandle } from './ComposerBody'
+import { useComposerAttachments } from './useComposerAttachments'
 
 type ComposeEditorProps = {
   // Closes the composer without sending. App owns the content pane (an open
@@ -22,15 +30,25 @@ export function ComposeEditor({ onClose }: ComposeEditorProps): React.JSX.Elemen
   // spread and the send payloads reuse the object as-is.
   const [recipients, setRecipients] = useState<RecipientState>({ to: '', cc: '', bcc: '' })
   const [subject, setSubject] = useState('')
-  const [body, setBody] = useState('')
+  // The body lives in two forms from the one editor: the rich html the
+  // send/autosave carries and the plain-text fallback with it.
+  const [body, setBody] = useState<ComposeBody>({ html: '', text: '' })
+  const bodyRef = useRef<ComposerBodyHandle | null>(null)
   const [sending, setSending] = useState(false)
   const [sendError, setSendError] = useState<string | null>(null)
   // Once sent, the form retires instead of re-arming: a second send would
   // be a real second message, not a retry (there is no draft to consume).
   const [sent, setSent] = useState(false)
-  // The carbon lists ride the same autosave payload as everything else, so
-  // a restored draft reopens with them.
-  const autosave = useDraftAutosave({ ...recipients, subject, body }, undefined, true)
+  // Local files picked with the native dialog; the records ride every
+  // autosave and send payload below like the text fields do, so a restored
+  // draft reopens with them. The body ref is where image files dropped on
+  // the composer chrome insert: the hook routes them into the editor's
+  // handle; the editor's own surface handles its drops at the caret.
+  const attach = useComposerAttachments(undefined, bodyRef)
+  // One payload for the autosave and every send path: identical field list,
+  // built in the shared composer shape.
+  const request = composeRequest({ recipients, subject, body, attachments: attach.attachments })
+  const autosave = useDraftAutosave(request, undefined, true)
 
   async function handleCancel(): Promise<void> {
     // Cancel is today's discard action: let any in-flight or queued write
@@ -66,9 +84,9 @@ export function ComposeEditor({ onClose }: ComposeEditorProps): React.JSX.Elemen
       autosave.suspend()
       try {
         if (draftId) {
-          await window.api.sendDraft({ draftId, ...recipients, subject, body })
+          await window.api.sendDraft({ draftId, ...request })
         } else {
-          await window.api.sendEmail({ ...recipients, subject, body })
+          await window.api.sendEmail(request)
         }
       } finally {
         autosave.resume()
@@ -76,14 +94,18 @@ export function ComposeEditor({ onClose }: ComposeEditorProps): React.JSX.Elemen
       autosave.stop()
       setSent(true)
     } catch (error) {
-      setSendError(error instanceof Error ? error.message : String(error))
+      setSendError(errorMessage(error))
     } finally {
       setSending(false)
     }
   }
 
   return (
-    <form className="composer composer-fill" onSubmit={handleSend}>
+    <form
+      className={`composer composer-fill${attach.dropping ? ' composer-dragging' : ''}`}
+      onSubmit={handleSend}
+      {...attach.drop}
+    >
       <h2>New email</h2>
 
       <RecipientFields
@@ -98,10 +120,7 @@ export function ComposeEditor({ onClose }: ComposeEditorProps): React.JSX.Elemen
         <input value={subject} onChange={(event) => setSubject(event.target.value)} />
       </label>
 
-      <label className="composerField composerField-grow">
-        <span>Message</span>
-        <textarea value={body} onChange={(event) => setBody(event.target.value)} />
-      </label>
+      <ComposerBody ref={bodyRef} attach={attach} onBodyChange={setBody} />
 
       {sendError && <p role="alert">{sendError}</p>}
       {autosave.error && <p role="alert">Draft not saved: {autosave.error}</p>}

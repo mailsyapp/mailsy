@@ -94,6 +94,26 @@
     }
   ].map((m) => ({ folder: 'inbox', labelIds: ['INBOX'], ...m }))
 
+  // A real (tiny) PNG: 1×1 transparent pixel. Enough for the read view to
+  // render a preview and for an editor drop to carry genuine bytes.
+  const TINY_PNG =
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='
+
+  // Attachment content, the way Gmail stores every message part: bytes the
+  // refs point at. Keyed `messageId~attachmentId`, answered by the
+  // getAttachment verb the draft-editor round trip calls. The compose
+  // picker answers a canned file so the same record shape flows down the
+  // bridge without a native dialog in headless runs. The receipts thread's
+  // stored files are the read-view seed: their records answer the save
+  // verb, and the image one previews inline instead of a save chip.
+  const attachmentStore = new Map([
+    ['msg-draft-q4~att-q4', 'UTQgcGxhbm5pbmcgZGF0YQ=='],
+    ['msg-receipts-1~att-receipts-1', 'UmVjZWlwdCBBIGNvbnRlbnQ='],
+    ['msg-receipts-1~att-receipts-2', 'UmVjZWlwdCBCIGNvbnRlbnQ='],
+    ['msg-receipts-1~att-receipts-img', TINY_PNG]
+  ])
+  const FIXTURE_PICK = [{ filename: 'fixture-file.pdf', size: 7, data: 'Zml4dHVyZQ==' }]
+
   // Reply-all fixture: one message carrying multi-recipient To plus Cc, so
   // the To line after reply all covers author + To + Cc with me dropped.
   seed.push({
@@ -113,6 +133,32 @@
     bodyHtml: '<p>Notes from today, agenda for Friday plus an updated release hour.</p>',
     folder: 'inbox',
     labelIds: ['INBOX']
+  })
+
+  // Attachment round-trip draft: refs only, exactly what a messages.get
+  // full response carries for a draft with files; content answers per
+  // attachment from the store above. Its body must render so the journey
+  // can open the draft editor and prove the chips resolve before send.
+  seed.push({
+    id: 'msg-draft-q4',
+    threadId: 'thread-draft-q4',
+    from: 'me@example.com',
+    subject: 'Draft: Q4 attachments',
+    date: 'Tue, 15 Oct 2026 08:00:00 +0000',
+    snippet: 'Draft that carries a stored attachment.',
+    to: 'team@example.com',
+    cc: '',
+    bcc: '',
+    replyTo: '',
+    messageId: '<draft-q4@example.com>',
+    inReplyTo: '',
+    references: '',
+    bodyText: 'Draft that carries a stored attachment.',
+    bodyHtml: '<p>Draft that carries a stored attachment.</p>',
+    folder: 'drafts',
+    labelIds: ['DRAFT'],
+    draftId: 'draft-q4',
+    attachments: [{ filename: 'q4.xlsx', size: 16, attachmentId: 'att-q4' }]
   })
 
   // Spam fixture: one message carrying only the SPAM label, so the Spam
@@ -298,8 +344,92 @@
     bodyText: 'Two receipts attached from the March travel batch.',
     bodyHtml: '<p>Two receipts attached from the March travel batch.</p>',
     folder: 'inbox',
-    labelIds: ['INBOX', 'label-receipts']
+    labelIds: ['INBOX', 'label-receipts'],
+    attachments: [
+      { filename: 'receipt-a.pdf', size: 17, attachmentId: 'att-receipts-1' },
+      { filename: 'receipt-b.pdf', size: 17, attachmentId: 'att-receipts-2' },
+      { filename: 'cal-shot.png', size: TINY_PNG.length, attachmentId: 'att-receipts-img' }
+    ]
   })
+
+  // Read-view image seed (features/inline-images.md gotcha): real mail
+  // carries images far wider than the reading pane, authored large or
+  // intrinsic large. Its body must shrink-fit like Gmail's read view
+  // (max-width cap, aspect kept, small images never upscaled) instead of
+  // rendering at natural size and clipping at the pane edge. SVG so the
+  // intrinsic size is exact and the bytes stay tiny; read mail, so
+  // opening it never adds a stray auto-read modify call.
+  seed.push({
+    id: 'msg-wide-img',
+    threadId: 'thread-wide-img',
+    from: 'Ben Franklin <ben@example.com>',
+    subject: 'Beluga whale photo',
+    date: 'Wed, 14 Oct 2026 15:00:00 +0000',
+    snippet: 'Spotted from the ferry, the widest shot I have.',
+    to: 'me@example.com',
+    cc: '',
+    bcc: '',
+    replyTo: '',
+    messageId: '<wide-img@example.com>',
+    references: '',
+    bodyText: 'Spotted from the ferry, the widest shot I have. beluga whale its a beluga whale lol',
+    bodyHtml: [
+      '<p>Spotted from the ferry, the widest shot I have.</p>',
+      // Authoring attributes this huge reproduce the reported bug: the
+      // element wants 3000px regardless of pane width.
+      '<img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIzMDAwIiBoZWlnaHQ9IjE1MDAiPjxyZWN0IHdpZHRoPSIzMDAwIiBoZWlnaHQ9IjE1MDAiIGZpbGw9IiNiZGQ3ZWEiLz48ZWxsaXBzZSBjeD0iMTUwMCIgY3k9IjkwMCIgcng9Ijk1MCIgcnk9IjMzMCIgZmlsbD0iI2YxZjVmOCIvPjxlbGxpcHNlIGN4PSIyMzAwIiBjeT0iNzIwIiByeD0iMTkwIiByeT0iMTUwIiBmaWxsPSIjZjFmNWY4Ii8+PGVsbGlwc2UgY3g9IjIzNDAiIGN5PSI3MDAiIHJ4PSIxOCIgcnk9IjIyIiBmaWxsPSIjMjU0NzZhIi8+PC9zdmc+" width="3000" height="1500" alt="beluga whale swimming">',
+      // A small image in the same body pins the no-upscale half of the
+      // rule: max-width only shrinks, it never enlarges.
+      '<img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI2MCIgaGVpZ2h0PSIzMCI+PHJlY3Qgd2lkdGg9IjYwIiBoZWlnaHQ9IjMwIiBmaWxsPSIjMjU0NzZhIi8+PC9zdmc+" width="60" height="30" alt="small stamp">',
+      '<p>beluga whale</p>',
+      '<p>its a beluga whale lol</p>'
+    ].join(''),
+    folder: 'inbox',
+    labelIds: ['INBOX']
+  })
+
+  // Markup-family variants of the same divergence, for the fit probe:
+  // real sender html wraps images in structures the plain img cap can
+  // lose to. Same whale SVG, different wrappers.
+  const WHALE = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIzMDAwIiBoZWlnaHQ9IjE1MDAiPjxyZWN0IHdpZHRoPSIzMDAwIiBoZWlnaHQ9IjE1MDAiIGZpbGw9IiNiZGQ3ZWEiLz48ZWxsaXBzZSBjeD0iMTUwMCIgY3k9IjkwMCIgcng9Ijk1MCIgcnk9IjMzMCIgZmlsbD0iI2YxZjVmOCIvPjxlbGxpcHNlIGN4PSIyMzAwIiBjeT0iNzIwIiByeD0iMTkwIiByeT0iMTUwIiBmaWxsPSIjZjFmNWY4Ii8+PGVsbGlwc2UgY3g9IjIzNDAiIGN5PSI3MDAiIHJ4PSIxOCIgcnk9IjIyIiBmaWxsPSIjMjU0NzZhIi8+PC9zdmc+'
+  const pushWideVariant = (id, subject, bodyHtml) =>
+    seed.push({
+      id,
+      threadId: `thread-${id}`,
+      from: 'Ben Franklin <ben@example.com>',
+      subject,
+      date: 'Wed, 14 Oct 2026 16:00:00 +0000',
+      snippet: `Wide-image markup family: ${subject}.`,
+      to: 'me@example.com',
+      cc: '',
+      bcc: '',
+      replyTo: '',
+      messageId: `<${id}@example.com>`,
+      references: '',
+      bodyText: `Wide-image markup family: ${subject}.`,
+      bodyHtml,
+      folder: 'inbox',
+      labelIds: ['INBOX']
+    })
+  // Styling beats a plain stylesheet cap: inline width…
+  pushWideVariant(
+    'msg-wide-inline',
+    'Wide inline style',
+    `<p>family: inline style</p><img src="${WHALE}" style="width: 3000px; height: 1500px;" alt="inline style whale"><p>tail text</p>`
+  )
+  // …fixed-width layout tables (the img cap resolves against the td,
+  // which the table sized)…
+  pushWideVariant(
+    'msg-wide-table',
+    'Wide table layout',
+    `<p>family: table</p><table width="3000" cellpadding="0" cellspacing="0" border="0"><tr><td><img src="${WHALE}" width="3000" height="1500" alt="table whale"></td></tr></table><p>tail text</p>`
+  )
+  // …and sender stylesheet rules with !important.
+  pushWideVariant(
+    'msg-wide-important',
+    'Wide important style',
+    `<p>family: important</p><style>img { width: 3000px !important; height: auto !important; }</style><img src="${WHALE}" width="3000" height="1500" alt="important whale"><p>tail text</p>`
+  )
 
   const byId = new Map(seed.map((m) => [m.id, m]))
   // Mailsy's own parking label: the emulated snooze writes it plus INBOX
@@ -322,6 +452,7 @@
   }
   const sent = []
   const mods = []
+  const saves = []
   const deletedDrafts = []
   // Recorded draft writes and discards for the autosave proof: each save
   // carries the resolved draft id (created on the first write), each
@@ -402,6 +533,7 @@
 
   window.__sent = sent
   window.__mods = mods
+  window.__saves = saves
   window.__seedIds = seed.map((m) => m.id)
   window.__draftSaves = draftSaves
   window.__draftDiscards = draftDiscards
@@ -488,11 +620,14 @@
       ensureSignedIn()
       const m = byId.get(id)
       if (!m) throw new Error(`mock: no message ${id}`)
-      return { ...m }
+      // The attachment ref list is a boundary contract now: the detail
+      // always carries it (empty for plain messages) the way toEmailDetail
+      // does.
+      return { attachments: [], ...m }
     },
     getThread: async (threadId) => {
       ensureSignedIn()
-      const messages = seed.filter((m) => m.threadId === threadId).map((m) => ({ ...m }))
+      const messages = seed.filter((m) => m.threadId === threadId).map((m) => ({ attachments: [], ...m }))
       if (messages.length === 0) throw new Error(`mock: no thread ${threadId}`)
       // The thread's full label id set, deduped, mirroring the boundary
       // contract EmailThread now carries for the labels menu.
@@ -522,6 +657,35 @@
         throw new Error('Recipient is required')
       }
       sent.push({ ...request })
+    },
+    // The composer's file picker: the canned file stands in for the native
+    // dialog plus fs read, returning the same full record shape the real
+    // bridge builds. Recorded so the driver can prove the composer picked.
+    pickAttachments: async () => {
+      ensureSignedIn()
+      window.__pickCalls = (window.__pickCalls ?? 0) + 1
+      return FIXTURE_PICK.map((a) => ({ ...a }))
+    },
+    // One stored attachment's bytes (standard base64), keyed
+    // messageId~attachmentId. Unknown keys throw like the live 404 would,
+    // so a ref/text mismatch fails loudly instead of sending empty parts.
+    getAttachment: async (messageId, attachmentId) => {
+      ensureSignedIn()
+      const key = `${messageId}~${attachmentId}`
+      if (!attachmentStore.has(key)) throw new Error(`mock: no attachment ${key}`)
+      return attachmentStore.get(key)
+    },
+    // Mirrors attachments:save in main: the native save dialog collapses
+    // to 'yes' here — the chosen path is not observable, but the id/name
+    // contract is the proof the read view's chip called this verb.
+    saveAttachment: async (messageId, attachmentId, filename) => {
+      ensureSignedIn()
+      if (!messageId?.trim() || !attachmentId?.trim()) throw new Error('Attachment ID is required')
+      if (!filename?.trim()) throw new Error('Attachment name is required')
+      const key = `${messageId}~${attachmentId}`
+      if (!attachmentStore.has(key)) throw new Error(`mock: no attachment ${key}`)
+      saves.push({ messageId, attachmentId, filename })
+      return true
     },
     // Mirrors drafts.update + drafts.send: the sent content is recorded and
     // the draft disappears from the Drafts folder in one step. Throws on an
@@ -575,7 +739,11 @@
         target.bcc = request.bcc || ''
         target.subject = request.subject
         target.bodyText = request.body
-        delete target.bodyHtml
+        // drafts.update replaces the raw message wholesale, so the stored
+        // body html follows the request exactly: present only when the
+        // composer carried a rich body (inline images ride it).
+        if (request.bodyHtml !== undefined) target.bodyHtml = request.bodyHtml
+        else delete target.bodyHtml
         target.snippet = request.body
       } else {
         draftId = `draft-save-${draftSaves.length + 1}`
@@ -595,6 +763,7 @@
           inReplyTo: request.inReplyTo || '',
           references: request.references || '',
           bodyText: request.body,
+          bodyHtml: request.bodyHtml,
           folder: 'drafts',
           labelIds: ['DRAFT'],
           draftId
@@ -602,6 +771,27 @@
         seed.push(message)
         byId.set(id, message)
       }
+      // drafts.update replaces the whole raw message, so the stored refs
+      // follow the request file set exactly: the inbox content store drops
+      // stale entries and registers the current bytes per new ref.
+      const stored = seed.find((m) => m.draftId === draftId)
+      stored.attachments = (request.attachments ?? []).map(
+        ({ filename, size }, i) => ({
+          filename,
+          size,
+          attachmentId: `att-${draftId}-${i}`
+        })
+      )
+      const msgId = stored.id
+      const keep = new Set(
+        stored.attachments.map((a) => `${msgId}~${a.attachmentId}`)
+      )
+      for (const key of [...attachmentStore.keys()]) {
+        if (key.startsWith(`${msgId}~`) && !keep.has(key)) attachmentStore.delete(key)
+      }
+      ;(request.attachments ?? []).forEach((a, i) => {
+        attachmentStore.set(`${msgId}~att-${draftId}-${i}`, a.data)
+      })
       draftSaves.push({ ...request, draftId })
       return draftId
     },

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { errorMessage } from '../lib/format'
 import type { SendEmailRequest } from '../../../shared/types'
 
 // The composer fields the bridge persists. The optional send fields ride
@@ -77,7 +78,10 @@ export function useDraftAutosave(
         // suspended (a send holds the bridge) means the queued write folds
         // into whatever the terminal action decided.
         if (retiredRef.current || suspendedRef.current) return
-        if (JSON.stringify(fieldsRef.current) === lastSavedRef.current) return
+        // Serialized once at dispatch: the content compare keeps a duplicate
+        // write away, and the same string records what was written below.
+        const written = JSON.stringify(fieldsRef.current)
+        if (written === lastSavedRef.current) return
         return window.api
           .saveDraft({
             ...fieldsRef.current,
@@ -85,14 +89,14 @@ export function useDraftAutosave(
           })
           .then((draftId) => {
             draftIdRef.current = draftId
-            lastSavedRef.current = JSON.stringify(fieldsRef.current)
+            lastSavedRef.current = written
             setStatus('saved')
             setError(null)
           })
       })
       .catch((e: unknown) => {
         setStatus('idle')
-        setError(e instanceof Error ? e.message : String(e))
+        setError(errorMessage(e))
       })
       .finally(() => {
         // A newer save owns the flushPending handle from here.
@@ -107,10 +111,16 @@ export function useDraftAutosave(
     fieldsRef.current = fields
     enabledRef.current = enabled
     if (!enabled || retiredRef.current) return
-    if (fieldsJson === lastSavedRef.current) return
+    // fieldsJson is the debounce key: field-object identity flips every
+    // render, but its content is what distinguishes a fresh edit from a
+    // rerender of unchanged values. This run's serialization stays the
+    // timer's evidence — if a newer render had produced new content, its
+    // own effect run would have cleared and replaced this timer, so at
+    // fire time `scheduledJson` is exactly the live content.
+    const scheduledJson = fieldsJson
     const timer = window.setTimeout(() => {
       timerRef.current = null
-      if (JSON.stringify(fieldsRef.current) === lastSavedRef.current) return
+      if (scheduledJson === lastSavedRef.current) return
       void save()
     }, AUTOSAVE_DEBOUNCE_MS)
     timerRef.current = timer
@@ -118,9 +128,6 @@ export function useDraftAutosave(
       window.clearTimeout(timer)
       timerRef.current = null
     }
-    // fieldsJson is the debounce key: field-object identity flips every
-    // render, but its content is what distinguishes a fresh edit from a
-    // rerender of unchanged values.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fieldsJson, enabled, save])
 

@@ -62,6 +62,40 @@ async function waitForChecked(box, expected, okMsg, failMsg, timeoutMs = 5000) {
   assert(false, okMsg, failMsg)
 }
 
+// The compose body is an uncontrolled contenteditable (.body-editor) since
+// the inline-images change: typing a prefix into a prefilled quote — or a
+// line after an inline image — needs the caret placed first, because
+// Playwright's fill replaces the whole rich content.
+async function typeAtStart(editor, text) {
+  await editor.evaluate((el) => {
+    const sel = window.getSelection()
+    sel.removeAllRanges()
+    const range = document.createRange()
+    range.selectNodeContents(el)
+    range.collapse(true)
+    sel.addRange(range)
+  })
+  await editor.pressSequentially(text)
+}
+
+async function typeAtEnd(editor, text) {
+  await editor.evaluate((el) => {
+    const sel = window.getSelection()
+    sel.removeAllRanges()
+    const range = document.createRange()
+    range.selectNodeContents(el)
+    range.collapse(false)
+    sel.addRange(range)
+  })
+  await editor.pressSequentially(text)
+}
+
+// The rich body's text as the composers see it: the editor's innerText,
+// not an input value — a contenteditable has none.
+async function bodyTextOf(editor) {
+  return (await editor.evaluate((el) => el.innerText)) ?? ''
+}
+
 async function snapshot(page, name) {
   const snap = await page.locator('body').ariaSnapshot()
   writeFileSync(resolve(ART, `${name}.aria.txt`), `feature: ${FEATURE}\nentry: http://127.0.0.1:${PORT}/\n${snap}\n`)
@@ -177,10 +211,9 @@ try {
     assert(true, 'reply opens composer', 'composer did not open')
     const toValue = await page.locator('.composerField input').first().inputValue()
     assert(toValue.includes('ada@example.com'), `reply To prefilled (${toValue})`, 'reply To not prefilled')
-    await page.locator('.composerField textarea').evaluate((el) => el.setSelectionRange(0, 0))
-    await page.locator('.composerField textarea').pressSequentially('On it — reviewing today.\n\n')
-    // The quote text stays in the composer body; deleting it would point the
-    // splice in formatDraftHtml at nothing and send a quote-less html part.
+    // The quote text stays in the rich body's prefill; typing ahead of it
+    // at the document start keeps the quote intact underneath.
+    await typeAtStart(page.locator('.body-editor'), 'On it — reviewing today.\n\n')
     await page.getByRole('button', { name: 'Send', exact: true }).click()
     await page.getByRole('status').getByText('Message sent.').waitFor({ timeout: 10000 })
     assert(true, '"Message sent." status appears', 'send status missing')
@@ -211,8 +244,7 @@ try {
     await page.getByRole('button', { name: 'forward', exact: true }).click()
     await page.getByRole('heading', { name: 'Compose email' }).waitFor({ timeout: 10000 })
     await page.locator('.composerField input').first().fill('ada@example.com')
-    await page.locator('.composerField textarea').evaluate((el) => el.setSelectionRange(0, 0))
-    await page.locator('.composerField textarea').pressSequentially('forwarding for the record.\n\n')
+    await typeAtStart(page.locator('.body-editor'), 'forwarding for the record.\n\n')
     await page.getByRole('button', { name: 'Send', exact: true }).click()
     await page.getByRole('status').getByText('Message sent.').waitFor({ timeout: 10000 })
     const sentForward = await page.evaluate(() => window.__sent)
@@ -263,7 +295,7 @@ try {
     assert(reopenedTo === '', `reopened composer starts blank (${reopenedTo})`, 'discarded fields survived into the fresh composer')
     await content.locator('.composerField input').first().fill('ada@example.com')
     await content.locator('.composerField input').nth(1).fill('Fresh note from Mailsy')
-    await content.locator('.composerField textarea').fill('First message sent from the fresh composer.\nTwo lines.')
+    await content.locator('.body-editor').fill('First message sent from the fresh composer.')
     await content.getByRole('button', { name: 'Send', exact: true }).click()
     await content.getByText('Message sent.').waitFor({ timeout: 10000 })
     assert(true, '"Message sent." status appears', 'send status missing')
@@ -286,6 +318,274 @@ try {
       'fresh send was misshapen as a reply or draft'
     )
     await snapshot(page, 'compose-new')
+  } else if (FEATURE === 'attachments') {
+    // Compose flow: two entrances into the same set. A drag drops in first
+    // (a real DragEvent carrying a constructed File — the same handler a
+    // Finder drag lands in), then the picker through the mock's canned
+    // file. Send carries both. Then chip removal, then the draft round
+    // trip, then the read view.
+    const inbox = page.getByRole('complementary', { name: 'Inbox' })
+    await inbox.waitFor({ timeout: 10000 })
+    await page.getByRole('button', { name: 'Compose', exact: true }).click()
+    const content = page.getByRole('region', { name: 'Email content' })
+    await content.getByRole('heading', { name: 'New email' }).waitFor({ timeout: 10000 })
+    // Drag entrance, hover state first: the form draws the dashed outline
+    // while a file drag hovers over the whole composer box.
+    await page.evaluate(() => {
+      const form = document.querySelector('form.composer')
+      const dt = new DataTransfer()
+      dt.items.add(new File(['dropped note'], 'meeting-notes.txt', { type: 'text/plain' }))
+      form.dispatchEvent(new DragEvent('dragenter', { dataTransfer: dt, bubbles: true }))
+      form.dispatchEvent(new DragEvent('dragover', { dataTransfer: dt, bubbles: true }))
+    })
+    await content.locator('form.composer-dragging').waitFor({ timeout: 10000 })
+    await page.evaluate(() => {
+      const form = document.querySelector('form.composer')
+      const dt = new DataTransfer()
+      dt.items.add(new File(['dropped note'], 'meeting-notes.txt', { type: 'text/plain' }))
+      form.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true }))
+    })
+    const dropChip = content.locator('.attachmentChip', { hasText: 'meeting-notes.txt' })
+    await dropChip.waitFor({ timeout: 10000 })
+    const dropSize = (await dropChip.locator('.attachmentChip-size').textContent())?.trim()
+    assert(
+      dropSize === '12 B',
+      'the dropped file joins the set like a picked one',
+      `dropped chip wrong (${dropSize})`
+    )
+    await content.getByRole('button', { name: 'Attach files' }).click()
+    const chip = content.locator('.attachmentChip', { hasText: 'fixture-file.pdf' })
+    await chip.waitFor({ timeout: 10000 })
+    const chipSize = (await chip.locator('.attachmentChip-size').textContent())?.trim()
+    assert(
+      chipSize === '7 B',
+      'chip labels the picked file size',
+      `chip size label wrong (${chipSize})`
+    )
+    await content.locator('.composerField input').first().fill('ada@example.com')
+    await content.locator('.composerField input').nth(1).fill('Report attached')
+    await content.locator('.body-editor').fill('The report is attached.')
+    await content.getByRole('button', { name: 'Send', exact: true }).click()
+    await content.getByText('Message sent.').waitFor({ timeout: 10000 })
+    const sent = await page.evaluate(() => window.__sent)
+    const withFile = sent[sent.length - 1]
+    assert(
+      sent.length === 1 &&
+        withFile.subject === 'Report attached' &&
+        withFile.attachments?.length === 2 &&
+        withFile.attachments[0].filename === 'meeting-notes.txt' &&
+        withFile.attachments[0].data === 'ZHJvcHBlZCBub3Rl' &&
+        withFile.attachments[1].filename === 'fixture-file.pdf' &&
+        withFile.attachments[1].data === 'Zml4dHVyZQ==',
+      `outbox carries the drop and the pick ${JSON.stringify(withFile)}`,
+      'send lost an attachment'
+    )
+    // Chip removal: close the retired pane like a user would, open a fresh
+    // compose, pick, remove, and send — no bytes ride the second send.
+    await content.getByRole('button', { name: 'Close', exact: true }).click()
+    await page.getByRole('button', { name: 'Compose', exact: true }).click()
+    await content.getByRole('heading', { name: 'New email' }).waitFor({ timeout: 10000 })
+    await content.getByRole('button', { name: 'Attach files' }).click()
+    await chip.waitFor({ timeout: 10000 })
+    await chip.getByRole('button').click()
+    assert(
+      (await content.locator('.attachmentChip').count()) === 0,
+      'the chip row drops the removed file',
+      'chip survived the remove control'
+    )
+    await content.locator('.composerField input').first().fill('ada@example.com')
+    await content.locator('.composerField input').nth(1).fill('No file now')
+    await content.locator('.body-editor').fill('Nothing attached.')
+    await content.getByRole('button', { name: 'Send', exact: true }).click()
+    await content.getByText('Message sent.').waitFor({ timeout: 10000 })
+    const sentTwo = await page.evaluate(() => window.__sent)
+    assert(
+      sentTwo.length === 2 && sentTwo[1].attachments === undefined,
+      'stripped send carries no attachments',
+      'removed file still rode the send'
+    )
+    // Draft round trip: the seeded draft carries a ref, so reopening
+    // resolves it through getAttachment before the autosave arms.
+    await page.getByRole('button', { name: 'Drafts' }).click()
+    const drafts = page.getByRole('complementary', { name: 'Drafts' })
+    await drafts.waitFor({ timeout: 10000 })
+    await drafts.getByText('Draft: Q4 attachments').first().click()
+    const draftForm = page.getByRole('region', { name: 'Email content' })
+    await draftForm.getByRole('heading', { name: 'Draft', exact: true }).waitFor({ timeout: 10000 })
+    const storedChip = draftForm.locator('.attachmentChip', { hasText: 'q4.xlsx' })
+    await storedChip.waitFor({ timeout: 10000 })
+    assert(true, 'reopened draft resolves its stored attachment', 'stored draft attachment chip missing')
+    const beforeSends = await page.evaluate(() => (window.__sent ?? []).length)
+    await draftForm.getByRole('button', { name: 'Send', exact: true }).click()
+    await draftForm.getByText('Message sent.').waitFor({ timeout: 10000 })
+    const sentThree = await page.evaluate(() => window.__sent)
+    const draftRecord = sentThree[sentThree.length - 1]
+    assert(
+      sentThree.length === beforeSends + 1 &&
+        draftRecord.attachments?.length === 1 &&
+        draftRecord.attachments[0].filename === 'q4.xlsx' &&
+        draftRecord.attachments[0].data === 'UTQgcGxhbm5pbmcgZGF0YQ==',
+      `draft send carries the resolved bytes ${JSON.stringify(draftRecord)}`,
+      'draft send lost or reshaped the stored attachment'
+    )
+    // Read view: the message's own files render under the body of the
+    // conversation view, listed from the refs a boundary fetch carries.
+    await page.getByRole('button', { name: 'Inbox', exact: true }).click()
+    const inboxRows = page.getByRole('complementary', { name: 'Inbox' })
+    await inboxRows.waitFor({ timeout: 10000 })
+    await inboxRows.getByText('Receipts for March travel').first().click()
+    const detail = page.getByRole('region', { name: 'Email content' })
+    const readChips = detail.locator('.attachmentChip-save')
+    await readChips.first().waitFor({ timeout: 10000 })
+    assert(
+      (await readChips.count()) === 2 &&
+        (await readChips.nth(0).textContent())?.includes('receipt-a.pdf') &&
+        (await readChips.nth(1).textContent())?.includes('receipt-b.pdf'),
+      `the read view lists the stored files (count ${await readChips.count()})`,
+      'read-view chips missing or wrong'
+    )
+    // A chip is its save affordance: clicking it drives the save verb with
+    // the ref's ids and name, the record the real main would dialog from.
+    await readChips.nth(0).click()
+    await page.waitForFunction(() => (window.__saves ?? []).length >= 1, undefined, {
+      timeout: 10000
+    })
+    const saves = await page.evaluate(() => window.__saves)
+    assert(
+      saves.length === 1 &&
+        saves[0].messageId === 'msg-receipts-1' &&
+        saves[0].attachmentId === 'att-receipts-1' &&
+        saves[0].filename === 'receipt-a.pdf',
+      `the chip click saves the file ${JSON.stringify(saves)}`,
+      'the read-view chip did not drive the save verb'
+    )
+    await snapshot(page, 'attachments')
+  } else if (FEATURE === 'inline-images') {
+    // The rich compose body: a dropped image lands inside the text like
+    // Gmail's inline images, with editable text above and below it, the
+    // send carries the html with the data URL, the draft autosave
+    // round-trips the image through the stored draft, and the read view
+    // previews a received image attachment inline instead of a save chip.
+    const inbox = page.getByRole('complementary', { name: 'Inbox' })
+    await inbox.waitFor({ timeout: 10000 })
+    await page.getByRole('button', { name: 'Compose', exact: true }).click()
+    const content = page.getByRole('region', { name: 'Email content' })
+    await content.getByRole('heading', { name: 'New email' }).waitFor({ timeout: 10000 })
+    await content.locator('.composerField input').first().fill('ada@example.com')
+    await content.locator('.composerField input').nth(1).fill('Inline shot sent')
+    // A typed line first: the image must land without eating it.
+    await content.locator('.body-editor').fill('Invoice snapshot below.')
+    // Synthetic drag onto the editor surface itself (not the composer
+    // form): an image file plus a non-image one in the same drop, so the
+    // routing rule shows in one gesture — image into the body, text file
+    // into the chips.
+    await page.evaluate(() => {
+      const editor = document.querySelector('.body-editor')
+      const dt = new DataTransfer()
+      // A real 1x1 PNG, matching the read-view seed's bytes.
+      const bytes = Uint8Array.from(
+        atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='),
+        (character) => character.charCodeAt(0)
+      )
+      dt.items.add(new File([bytes], 'shot.png', { type: 'image/png' }))
+      dt.items.add(new File(['note text'], 'keep-as-chip.txt', { type: 'text/plain' }))
+      editor.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true }))
+    })
+    const inlineImg = content.locator('.body-editor img')
+    await inlineImg.waitFor({ timeout: 10000 })
+    const imgSrc = await inlineImg.getAttribute('src')
+    assert(
+      imgSrc?.startsWith('data:image/png;base64,'),
+      `the dropped image sat in the body (${(imgSrc ?? '').slice(0, 30)}…...)`,
+      'dropped image did not land in the rich body'
+    )
+    const chip = content.locator('.attachmentChip', { hasText: 'keep-as-chip.txt' })
+    await chip.waitFor({ timeout: 10000 })
+    assert(true, 'the non-image file in the same drop stayed an attachment chip', 'non-image file lost its chip routing')
+    // Text types below the image too: the caret collapsed after it.
+    await typeAtEnd(content.locator('.body-editor'), '\nThen the packages arrived.')
+    const editorText = await bodyTextOf(content.locator('.body-editor'))
+    assert(
+      editorText.includes('Invoice snapshot below.') && editorText.includes('Then the packages arrived.'),
+      `text stays editable around the image (${editorText.slice(0, 80)})`,
+      'the image destroyed the editable text around it'
+    )
+    await content.getByRole('button', { name: 'Send', exact: true }).click()
+    await content.getByText('Message sent.').waitFor({ timeout: 10000 })
+    const sent = await page.evaluate(() => window.__sent)
+    const record = sent[sent.length - 1]
+    assert(
+      sent.length === 1 &&
+        record.subject === 'Inline shot sent' &&
+        String(record.bodyHtml ?? '').includes('data:image/png;base64,') &&
+        record.body.includes('Invoice snapshot below.') &&
+        record.body.includes('Then the packages arrived.'),
+      `outbox carries html with the data URL and the text ${JSON.stringify(record).slice(0, 160)}`,
+      'send lost the inline image or the body text'
+    )
+    // The non-image chip rides the send separately from the body html.
+    assert(
+      record.attachments?.length === 1 && record.attachments[0].filename === 'keep-as-chip.txt',
+      'the chip file rode the send next to the inline image',
+      'chip file not carried'
+    )
+    // Draft round trip: a separate compose that is never sent autosaves
+    // with the image inside; reopening the stored draft shows it again
+    // because the autosave carried the rich body html.
+    await content.getByRole('button', { name: 'Close', exact: true }).click()
+    await page.getByRole('button', { name: 'Compose', exact: true }).click()
+    await content.getByRole('heading', { name: 'New email' }).waitFor({ timeout: 10000 })
+    await content.locator('.composerField input').first().fill('brook@example.com')
+    await content.locator('.composerField input').nth(1).fill('Inline shot draft')
+    await page.evaluate(() => {
+      const editor = document.querySelector('.body-editor')
+      const dt = new DataTransfer()
+      const bytes = Uint8Array.from(
+        atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='),
+        (character) => character.charCodeAt(0)
+      )
+      dt.items.add(new File([bytes], 'shot.png', { type: 'image/png' }))
+      editor.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true }))
+    })
+    await content.locator('.body-editor img').waitFor({ timeout: 10000 })
+    // Close the pane without Send or Cancel: the autosave is the only
+    // carrier. A row click walks away the way an accidental close does.
+    await page.getByText('Launch checklist', { exact: true }).first().click()
+    await page.getByRole('heading', { name: 'Launch checklist' }).waitFor({ timeout: 10000 })
+    await page.getByRole('button', { name: 'Drafts' }).click()
+    const drafts = page.getByRole('complementary', { name: 'Drafts' })
+    await drafts.waitFor({ timeout: 10000 })
+    await drafts.getByText('Inline shot draft', { exact: true }).first().click()
+    await content.getByRole('heading', { name: 'Draft', exact: true }).waitFor({ timeout: 10000 })
+    const restoredImg = content.locator('.body-editor img')
+    await restoredImg.waitFor({ timeout: 10000 })
+    const restoredSrc = await restoredImg.getAttribute('src')
+    assert(
+      restoredSrc?.startsWith('data:image/png;base64,'),
+      'the inline image survived the draft round trip',
+      'draft reopen lost the inline image'
+    )
+    // Read view: a received image attachment previews inline, not as a
+    // save dialog, while the non-image chips keep their save affordance.
+    await page.getByRole('button', { name: 'Inbox', exact: true }).click()
+    await inbox.waitFor({ timeout: 10000 })
+    await inbox.getByText('Receipts for March travel').first().click()
+    const preview = content.locator('.readAttachment-preview img')
+    await preview.waitFor({ timeout: 10000 })
+    const previewSrc = await preview.getAttribute('src')
+    assert(
+      previewSrc?.startsWith('data:image/png;base64,'),
+      'received image previews inline with its bytes rendered',
+      'image attachment did not preview inline'
+    )
+    const readChips = content.locator('.attachmentChip-save')
+    await readChips.first().waitFor({ timeout: 10000 })
+    assert(
+      (await readChips.count()) === 2,
+      'non-image attachments keep their chips beside the preview',
+      'read-view chips changed alongside the preview'
+    )
+    await snapshot(page, 'inline-images')
   } else if (FEATURE === 'drafts') {
     await page.getByRole('button', { name: 'Drafts' }).click()
     const drafts = page.getByRole('complementary', { name: 'Drafts' })
@@ -392,7 +692,7 @@ try {
     await content.getByRole('heading', { name: 'New email' }).waitFor({ timeout: 10000 })
     await content.locator('.composerField input').first().fill('brook@example.com')
     await content.locator('.composerField input').nth(1).fill('Deleted mid-edit')
-    await content.locator('.composerField textarea').fill('A draft worth deleting.')
+    await content.locator('.body-editor').fill('A draft worth deleting.')
     await page.waitForFunction(() => (window.__draftSaves ?? []).length >= 1, undefined, {
       timeout: 10000
     })
@@ -441,7 +741,7 @@ try {
     await content.getByRole('heading', { name: 'New email' }).waitFor({ timeout: 10000 })
     await content.locator('.composerField input').first().fill('brook@example.com')
     await content.locator('.composerField input').nth(1).fill('Autosaved while typing')
-    await content.locator('.composerField textarea').fill('Half a thought saved before anything was sent.')
+    await content.locator('.body-editor').fill('Half a thought saved before anything was sent.')
     await page.waitForFunction(() => (window.__draftSaves ?? []).length >= 1, undefined, { timeout: 10000 })
     assert(true, 'compose autosave recorded by the boundary', 'no autosave save was recorded')
     await page.getByText('Launch checklist', { exact: true }).first().click()
@@ -463,7 +763,7 @@ try {
     await autosavedRow.first().click()
     await content.getByRole('heading', { name: 'Draft', exact: true }).waitFor({ timeout: 10000 })
     const restoredTo = await content.locator('.composerField input').first().inputValue()
-    const restoredBody = await content.locator('.composerField textarea').inputValue()
+    const restoredBody = await bodyTextOf(content.locator('.body-editor'))
     assert(
       restoredTo.includes('brook@example.com') &&
         restoredBody.includes('Half a thought saved before anything was sent.'),
@@ -502,10 +802,7 @@ try {
     // stored threading headers intact for the send after the round trip.
     await drafts.getByText('Draft: Q4 planning notes').first().click()
     await content.getByRole('heading', { name: 'Draft', exact: true }).waitFor({ timeout: 10000 })
-    await content.locator('.composerField textarea').evaluate((el) => {
-      el.setSelectionRange(el.value.length, el.value.length)
-    })
-    await content.locator('.composerField textarea').pressSequentially('\nAdding the Q4 agenda line.')
+    await typeAtEnd(content.locator('.body-editor'), '\nAdding the Q4 agenda line.')
     await page.waitForFunction(
       () => (window.__draftSaves ?? []).length >= 3 && window.__draftSaves[2]?.draftId === 'draft-1',
       undefined,
@@ -520,7 +817,7 @@ try {
     await drafts.waitFor({ timeout: 10000 })
     await drafts.getByText('Draft: Q4 planning notes').first().click()
     await content.getByRole('heading', { name: 'Draft', exact: true }).waitFor({ timeout: 10000 })
-    const reopenedBody = await content.locator('.composerField textarea').inputValue()
+    const reopenedBody = await bodyTextOf(content.locator('.body-editor'))
     assert(
       reopenedBody.includes('Adding the Q4 agenda line.'),
       `draft edit survived the close/reopen round trip (${reopenedBody.slice(0, 120)})`,
@@ -822,8 +1119,7 @@ try {
     // Send the reply-all and read the sent entry back from the outbox.
     await content.getByRole('button', { name: 'reply all', exact: true }).click()
     await page.getByRole('heading', { name: 'Compose email' }).waitFor({ timeout: 10000 })
-    await page.locator('.composerField textarea').evaluate((el) => el.setSelectionRange(0, 0))
-    await page.locator('.composerField textarea').pressSequentially('Agenda updated, see notes.\n\n')
+    await typeAtStart(page.locator('.body-editor'), 'Agenda updated, see notes.\n\n')
     await page.getByRole('button', { name: 'Send', exact: true }).click()
     await page.getByRole('status').getByText('Message sent.').waitFor({ timeout: 10000 })
     const sent = await page.evaluate(() => window.__sent)
@@ -891,7 +1187,7 @@ try {
     await content.locator('.composer').getByLabel('Bcc', { exact: true }).fill('secret@example.com')
     await content.locator('.composer').getByLabel('To').fill('ada@example.com')
     await content.locator('.composer').getByLabel('Subject').fill('Carbon note for the record')
-    await content.locator('.composer').getByLabel('Message').fill('Carbon recipients ride the send.')
+    await content.locator('.body-editor').fill('Carbon recipients ride the send.')
     await content.getByRole('button', { name: 'Send', exact: true }).click()
     await content.getByText('Message sent.').waitFor({ timeout: 10000 })
     const fresh = (await page.evaluate(() => window.__sent)).slice(-1)[0]

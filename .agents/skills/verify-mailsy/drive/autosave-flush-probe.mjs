@@ -75,7 +75,9 @@ try {
   await content.getByRole('heading', { name: 'New email' }).waitFor({ timeout: 10000 })
   await content.locator('.composerField input').first().fill('brook@example.com')
   await content.locator('.composerField input').nth(1).fill('Race window draft')
-  await content.locator('.composerField textarea').fill('Typed inside the autosave window, then sent.')
+  // The compose body is the rich editor (contenteditable); fill() seeds it
+  // and its input report starts the same ~1.2s debounce.
+  await content.locator('.body-editor').fill('Typed inside the autosave window, then sent.')
   await page.waitForFunction(() => window.__flushProbe.dispatched === 1, undefined, { timeout: 10000 })
   assert(
     (await page.evaluate(() => (window.__draftSaves ?? []).length)) === 0,

@@ -621,6 +621,168 @@ button {
   background: #fff;
 }
 
+/* Attachment bar: picker button left, one chip per file with its size and
+   the remove control, matching the composer's own box style. */
+.attachmentBar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.attachmentBar button,
+.attachmentChip button {
+  font: inherit;
+  cursor: pointer;
+}
+
+.attachmentChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  background: #f8f9fa;
+  font-size: 12px;
+  max-width: 100%;
+}
+
+.attachmentChip-size {
+  color: #5f6368;
+  white-space: nowrap;
+}
+
+.attachmentChip button {
+  border: none;
+  background: none;
+  padding: 0 2px;
+  color: #5f6368;
+  line-height: 1;
+}
+
+.attachmentBar-error {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: 12px;
+}
+
+/* Drop affordance: while a file drag hovers over the composer box the
+   whole form draws Gmail's "drop files here" outline. Children are
+   pointer-transparent while dragging so the hover highlight reads as one
+   box, not a flicker of sub-boxes. */
+.composer-dragging {
+  outline: 2px dashed #1a73e8;
+  outline-offset: -4px;
+  background: #f8fbff;
+}
+
+.composer-dragging > * {
+  pointer-events: none;
+}
+
+/* A hover hint: while a file drag is over the box the sentence under the
+   chips says where to let go. */
+.composer-dragging .attachmentBar::before {
+  content: 'Drop files to attach';
+  font-size: 12px;
+  color: #1a73e8;
+}
+
+/* Read-view attachment row: the message's own chips under the body; each
+   chip is the save affordance itself, so the cursor must say clickable —
+   the composer rules above target buttons inside a chip, not a chip
+   that is one. */
+.readAttachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.readAttachments .attachmentChip-save {
+  font: inherit;
+  cursor: pointer;
+}
+
+.readAttachments .attachmentChip-save:hover {
+  border-color: #1a73e8;
+  color: #1a73e8;
+}
+
+/* The message's own image files: an inline preview under the body, the
+   shape a received screenshot takes. Fitted inside the pane, never wider
+   than it. */
+.readAttachment-preview {
+  flex-basis: 100%;
+  margin: 0;
+}
+
+.readAttachment-preview img {
+  display: block;
+  max-width: 100%;
+  max-height: 420px;
+  width: auto;
+  border: 1px solid #eee;
+  border-radius: 8px;
+}
+
+.readAttachment-preview figcaption {
+  font-size: 12px;
+  color: #5f6368;
+}
+
+/* The compose body: a rich field styled like the plaintext fields beside
+   it (inputs carry the UA's 2px inset grey). Min height keeps an empty
+   composer clickable; the placeholder shows when the box is visually
+   empty — `:empty` alone cannot, because the engine keeps a marker <br>
+   after the last character is deleted. */
+.body-editor {
+  min-height: 120px;
+  border: 2px inset rgb(118, 118, 118);
+  border-radius: 2px;
+  box-sizing: border-box;
+  padding: 8px;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  word-break: break-word;
+  cursor: text;
+  background: #fff;
+  color: rgb(0, 0, 0);
+}
+
+.body-editor:focus {
+  outline: 2px auto rgb(0, 95, 204);
+  outline-offset: -2px;
+}
+
+.body-editor:empty::before,
+.body-editor[data-empty]::before {
+  content: attr(data-placeholder);
+  color: #9aa0a6;
+  pointer-events: none;
+}
+
+.body-editor img {
+  /* Inline, not block: an image sits among the words as Gmail's do;
+     only the read-view previews go on their own line. */
+  max-width: 100%;
+  max-height: 420px;
+  border-radius: 4px;
+}
+
+/* Fill mode (fresh compose, draft editor): the Message row owns exactly
+   the space between the fields above and Send below, exactly like the
+   textarea it replaced — the box stretches into it and scrolls within
+   itself, so long bodies with inline images never spill under the
+   action row. */
+.composer-fill .composerField-grow .body-editor {
+  flex: 1;
+  min-height: 8rem;
+  height: auto;
+  overflow-y: auto;
+}
+
 /* User-label rail section: one chip per label in the Gmail label color,
    the body carrying the count that opens the view. */
 .user-label-chips {

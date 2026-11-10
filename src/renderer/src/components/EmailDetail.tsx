@@ -1,21 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import DOMPurify from 'dompurify'
-import { AutoGrowTextarea } from './AutoGrowTextarea'
 import type {
   ThreadSummary,
   EmailDetail as EmailDetailData,
   EmailThread,
   MailLabel,
-  SendEmailRequest,
   MailFolder
 } from '../../../shared/types'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { AlarmClockIcon } from '@hugeicons/core-free-icons'
-import { senderNameOf } from '../lib/format'
-import { replyAllRecipients } from '../lib/recipients'
-import { hasRecipient } from '../../../shared/types'
+import { errorMessage, senderNameOf } from '../lib/format'
 import { SNOOZE_PRESETS } from '../lib/snooze'
-import { RecipientFields } from './RecipientFields'
+import { ThreadReplyComposer, type ThreadReplyComposerHandle } from './ThreadReplyComposer'
+import { MessageAttachments } from './MessageAttachments'
+import { sanitizeEmailHtml } from '../lib/emailHtml'
 
 // Folders where report spam makes sense: drafts and sent (mail you own),
 // spam itself, and Trash are the excluded rest. A user-label view behaves
@@ -63,76 +60,6 @@ type EmailDetailProps = {
   onThreadLabelChanged: (threadId: string, labelId: string, applied: boolean) => void
 }
 
-function escapeHtml(value: string): string {
-  return value.replace(/[&<>"']/g, (character) => {
-    const entities: Record<string, string> = {
-      '&': '&amp;',
-      '<': '&lt;',
-      '>': '&gt;',
-      '"': '&quot;',
-      "'": '&#39;'
-    }
-    return entities[character] ?? character
-  })
-}
-
-function plainTextToHtml(value: string): string {
-  return escapeHtml(value).replace(/\r?\n/g, '<br>')
-}
-
-function sanitizeEmailHtml(html: string): string {
-  return DOMPurify.sanitize(html, {
-    USE_PROFILES: { html: true },
-    FORBID_TAGS: [
-      'iframe',
-      'frame',
-      'object',
-      'embed',
-      'form',
-      'input',
-      'button',
-      'textarea',
-      'select'
-    ]
-  })
-}
-
-// Gmail renders the elided-quote affordance only for its own native quote
-// markup: a gmail_quote_container div holding a gmail_attr attribution line
-// and a gmail_quote blockquote. Anything else shows as literal text.
-const QUOTE_BLOCKQUOTE_STYLE =
-  'margin:0px 0px 0px 0.8ex;border-left:1px solid rgb(204,204,204);padding-left:1ex'
-
-function buildQuoteHtml(attrHtml: string, originalHtml: string, originalText: string): string {
-  const inner = originalHtml || plainTextToHtml(originalText)
-  return `<div class="gmail_quote gmail_quote_container"><div class="gmail_attr">${attrHtml}</div><blockquote class="gmail_quote" style="${QUOTE_BLOCKQUOTE_STYLE}">${inner}</blockquote></div>`
-}
-
-function gmailDateOf(value: string): string {
-  const parsed = new Date(value)
-  if (Number.isNaN(parsed.getTime())) return value
-  return new Intl.DateTimeFormat('en-US', {
-    weekday: 'short',
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit'
-  }).format(parsed)
-}
-
-function formatDraftHtml(body: string, quoteText: string, quoteHtml: string): string {
-  if (!quoteText) return plainTextToHtml(body)
-
-  const quoteStart = body.indexOf(quoteText)
-  if (quoteStart === -1) return plainTextToHtml(body)
-
-  const quoteEnd = quoteStart + quoteText.length
-  return (
-    plainTextToHtml(body.slice(0, quoteStart)) + quoteHtml + plainTextToHtml(body.slice(quoteEnd))
-  )
-}
-
 function fitFrame(frame: HTMLIFrameElement): void {
   const doc = frame.contentDocument
   if (!doc) return
@@ -163,6 +90,19 @@ function ThreadMessage({
         margin: 0;
         overflow: hidden;
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,"Helvetica Neue", Arial, sans-serif;
+      }
+      /* Sender markup often carries huge intrinsic or authored sizes; like
+         Gmail, cap images to the pane width and keep their aspect ratio,
+         but never upscale small ones. !important beats sender styling,
+         and tables are capped too: a layout table wants its authored
+         width, which sizes the cell the img cap resolves against —
+         without it a 3000px table still rendered the image at 3000px. */
+      img {
+        max-width: 100% !important;
+        height: auto !important;
+      }
+      table {
+        max-width: 100% !important;
       }
     </style>
     <meta
@@ -221,6 +161,12 @@ function ThreadMessage({
           ) : (
             <div className="snippet">{message.snippet}</div>
           )}
+
+          {/* The message's own files, below the body like Gmail's read
+              view; each chip saves itself through the native dialog. The
+              key remounts per message, so the preview map stays that
+              message's fetch-once state. */}
+          <MessageAttachments key={message.id} message={message} />
         </div>
       )}
     </article>
@@ -241,14 +187,9 @@ export function EmailDetail({
   const [threadError, setThreadError] = useState<string | null>(null)
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
 
-  const [draft, setDraft] = useState<SendEmailRequest | null>(null)
-  // Set only when a reply-all opened without the account address; the
-  // arrival effect clears it after its at-most-once rewrite.
-  const pendingReplyRef = useRef<{ target: EmailDetailData; prefilledTo: string } | null>(null)
-  const [quotedContent, setQuotedContent] = useState<{ text: string; html: string } | null>(null)
-  const [sending, setSending] = useState(false)
-  const [sendError, setSendError] = useState<string | null>(null)
-  const [sent, setSent] = useState(false)
+  // The reply/forward composer lives in ThreadReplyComposer below; EmailDetail
+  // holds only its handle for the toolbar's three entry points.
+  const replyApi = useRef<ThreadReplyComposerHandle | null>(null)
 
   const [archiving, setArchiving] = useState(false)
   const [archiveError, setArchiveError] = useState<string | null>(null)
@@ -303,7 +244,7 @@ export function EmailDetail({
       })
       onThreadReadChanged(thread.id, !unread)
     } catch (error) {
-      setReadError(error instanceof Error ? error.message : String(error))
+      setReadError(errorMessage(error))
     } finally {
       setTogglingRead(false)
     }
@@ -321,7 +262,7 @@ export function EmailDetail({
       })
       onThreadStarChanged(thread.id, !thread.starred)
     } catch (error) {
-      setStarError(error instanceof Error ? error.message : String(error))
+      setStarError(errorMessage(error))
     } finally {
       setTogglingStar(false)
     }
@@ -354,7 +295,7 @@ export function EmailDetail({
       )
       onThreadLabelChanged(thread.id, label.id, !applied)
     } catch (error) {
-      setLabelError(error instanceof Error ? error.message : String(error))
+      setLabelError(errorMessage(error))
     } finally {
       setTogglingLabel(null)
     }
@@ -371,7 +312,7 @@ export function EmailDetail({
       const latestId = result.messages[result.messages.length - 1]?.id
       setExpandedIds(new Set(latestId ? [latestId] : []))
     } catch (error) {
-      setThreadError(error instanceof Error ? error.message : String(error))
+      setThreadError(errorMessage(error))
     } finally {
       if (!silent) setThreadLoading(false)
     }
@@ -386,144 +327,7 @@ export function EmailDetail({
     void loadThread(thread.id)
   }, [thread.id])
 
-  const accountEmail = threadData?.userEmail
-  useEffect(() => {
-    const pending = pendingReplyRef.current
-    if (!accountEmail || !pending) return
-    pendingReplyRef.current = null
-    // Only the exact prefill the unknown address produced is rewritten; an
-    // edited To line means the user already took the list from here.
-    setDraft((prev) => {
-      if (!prev || prev.to !== pending.prefilledTo) return prev
-      const targets = replyAllRecipients(pending.target, accountEmail)
-      return { ...prev, to: targets.to, cc: targets.cc }
-    })
-  }, [accountEmail])
-
   const messages: EmailDetailData[] = threadData?.messages ?? []
-
-  const latestMessage: EmailDetailData | null = messages[messages.length - 1] ?? null
-
-  function openReplyComposer(target: EmailDetailData, toLine: string, ccLine = ''): void {
-    setSendError(null)
-    setSent(false)
-    const originalText = target.bodyText || target.snippet || thread.snippet
-    const quotedText = `On ${target.date}, ${target.from} wrote:\n${originalText
-      .split('\n')
-      .map((line) => `> ${line}`)
-      .join('\n')}`
-    const quotedHtml = buildQuoteHtml(
-      `On ${escapeHtml(gmailDateOf(target.date))}, ${escapeHtml(target.from)} wrote:<br>`,
-      target.bodyHtml ? sanitizeEmailHtml(target.bodyHtml) : '',
-      originalText
-    )
-
-    setQuotedContent({ text: quotedText, html: quotedHtml })
-    setDraft({
-      to: toLine,
-      // An empty carbon line stays unset: an absent field is the payload's
-      // "no carbon recipients", never an empty header.
-      ...(ccLine ? { cc: ccLine } : {}),
-      subject: /^re:/i.test(target.subject) ? target.subject : `Re: ${target.subject}`,
-      body: `\n\n${quotedText}`,
-      threadId: target.threadId || undefined,
-      inReplyTo: target.messageId || undefined,
-      references: [target.references, target.messageId].filter(Boolean).join(' ') || undefined
-    })
-  }
-
-  function replyToEmail(): void {
-    const target = latestMessage
-    if (!target) return
-    openReplyComposer(
-      target,
-      target.replyTo.trim() || target.from.trim() || thread.participants[0] || ''
-    )
-  }
-
-  function replyAllToEmail(): void {
-    const target = latestMessage
-    if (!target) return
-    const userEmail = threadData?.userEmail ?? ''
-    const { to, cc } = replyAllRecipients(target, userEmail)
-    openReplyComposer(target, to, cc)
-    // A reply-all opened before the account address landed prefilters
-    // nothing: when it arrives, an untouched To line gets one rewrite.
-    pendingReplyRef.current = userEmail ? null : { target, prefilledTo: to }
-  }
-
-  function forwardEmail(): void {
-    const target = latestMessage
-    if (!target) return
-
-    setSendError(null)
-    setSent(false)
-    const originalText = target.bodyText || target.snippet || thread.snippet
-    const forwardHeader = [
-      '---------- Forwarded message ----------',
-      `From: ${target.from}`,
-      `To: ${target.to}`,
-      `Date: ${target.date}`,
-      `Subject: ${target.subject}`
-    ].join('\n')
-    const quotedText = `${forwardHeader}\n\n${originalText}`
-    const forwardAttrHtml = [
-      '---------- Forwarded message ---------',
-      `From: ${target.from}`,
-      `To: ${target.to}`,
-      `Date: ${target.date}`,
-      `Subject: ${target.subject}`
-    ]
-      .map(escapeHtml)
-      .join('<br>')
-      .concat('<br><br>')
-    const quotedHtml = buildQuoteHtml(
-      forwardAttrHtml,
-      target.bodyHtml ? sanitizeEmailHtml(target.bodyHtml) : '',
-      originalText
-    )
-
-    setQuotedContent({ text: quotedText, html: quotedHtml })
-    setDraft({
-      to: '',
-      subject: /^fwd:/i.test(target.subject) ? target.subject : `Fwd: ${target.subject}`,
-      body: `\n\n${quotedText}`,
-      // Keep the forward in the same Gmail thread so it shows up in the
-      // conversation view alongside the original + replies.
-      threadId: target.threadId || undefined,
-      inReplyTo: target.messageId || undefined,
-      references: [target.references, target.messageId].filter(Boolean).join(' ') || undefined
-    })
-  }
-
-  async function handleSend(event: React.FormEvent<HTMLFormElement>): Promise<void> {
-    event.preventDefault()
-    // The Enter key submits the form even with the Send button disabled, so
-    // the receipt test lives here, not only on the button.
-    if (!draft || sending || !hasRecipient(draft)) return
-
-    setSending(true)
-    setSendError(null)
-    setSent(false)
-    try {
-      await window.api.sendEmail({
-        ...draft,
-        ...(quotedContent
-          ? { bodyHtml: formatDraftHtml(draft.body, quotedContent.text, quotedContent.html) }
-          : {})
-      })
-      setDraft(null)
-      setQuotedContent(null)
-      setSent(true)
-      // Refresh the conversation so the just-sent reply/forward is visible.
-      const threadId = latestMessage?.threadId ?? thread.id
-      if (threadId) await loadThread(threadId, true)
-    } catch (error) {
-      setSendError(error instanceof Error ? error.message : String(error))
-    } finally {
-      setSending(false)
-    }
-  }
 
   async function handleArchive(): Promise<void> {
     if (archiving) return
@@ -537,7 +341,7 @@ export function EmailDetail({
       })
       onThreadRemoved(thread.id)
     } catch (error) {
-      setArchiveError(error instanceof Error ? error.message : String(error))
+      setArchiveError(errorMessage(error))
     } finally {
       setArchiving(false)
     }
@@ -560,7 +364,7 @@ export function EmailDetail({
       })
       onThreadRemoved(thread.id)
     } catch (error) {
-      setDeleteError(error instanceof Error ? error.message : String(error))
+      setDeleteError(errorMessage(error))
     } finally {
       setDeleting(false)
     }
@@ -583,7 +387,7 @@ export function EmailDetail({
       })
       onThreadRemoved(thread.id)
     } catch (error) {
-      setSpamError(error instanceof Error ? error.message : String(error))
+      setSpamError(errorMessage(error))
     } finally {
       setChangingSpam(false)
     }
@@ -609,7 +413,7 @@ export function EmailDetail({
       }
       onThreadRemoved(thread.id)
     } catch (error) {
-      setSnoozeError(error instanceof Error ? error.message : String(error))
+      setSnoozeError(errorMessage(error))
     } finally {
       setChangingSnooze(false)
     }
@@ -627,7 +431,7 @@ export function EmailDetail({
       await window.api.snoozeThread(thread.id, restoreAt)
       onThreadRemoved(thread.id)
     } catch (error) {
-      setSnoozeError(error instanceof Error ? error.message : String(error))
+      setSnoozeError(errorMessage(error))
     } finally {
       setChangingSnooze(false)
     }
@@ -720,9 +524,9 @@ export function EmailDetail({
       </div>
       {labelError && <p role="alert">{labelError}</p>}
 
-      <button onClick={replyToEmail}>reply</button>
-      <button onClick={replyAllToEmail}>reply all</button>
-      <button onClick={forwardEmail}>forward</button>
+      <button onClick={() => replyApi.current?.reply()}>reply</button>
+      <button onClick={() => replyApi.current?.replyAll()}>reply all</button>
+      <button onClick={() => replyApi.current?.forward()}>forward</button>
       <button onClick={handleToggleRead} disabled={togglingRead}>
         {thread.unreadCount > 0 ? 'mark as read' : 'mark as unread'}
       </button>
@@ -788,53 +592,17 @@ export function EmailDetail({
       {snoozeError && <p role="alert">{snoozeError}</p>}
       {readError && <p role="alert">{readError}</p>}
       {starError && <p role="alert">{starError}</p>}
-      {draft && (
-        <form className="composer" onSubmit={handleSend}>
-          <h2 id="composer-title">Compose email</h2>
-
-          <RecipientFields
-            to={draft.to}
-            cc={draft.cc ?? ''}
-            bcc={draft.bcc ?? ''}
-            onChange={(patch) => setDraft({ ...draft, ...patch })}
-          />
-
-          <label className="composerField">
-            <span>Subject</span>
-            <input
-              value={draft.subject}
-              onChange={(event) => setDraft({ ...draft, subject: event.target.value })}
-            />
-          </label>
-
-          <label className="composerField">
-            <span>Message</span>
-            <AutoGrowTextarea
-              rows={5}
-              value={draft.body}
-              onChange={(event) => setDraft({ ...draft, body: event.target.value })}
-            />
-          </label>
-
-          {sendError && <p role="alert">{sendError}</p>}
-
-          <div className="composerActions">
-            <button
-              type="button"
-              onClick={() => {
-                setDraft(null)
-                setQuotedContent(null)
-              }}
-            >
-              Cancel
-            </button>
-            <button type="submit" disabled={sending || !hasRecipient(draft)}>
-              {sending ? 'Sending...' : 'Send'}
-            </button>
-          </div>
-        </form>
-      )}
-      {sent && <p role="status">Message sent.</p>}
+      {/* The reply/forward composer. Remounts per thread via key in App, so
+          its state (including the file set) resets with the conversation. */}
+      <ThreadReplyComposer
+        ref={replyApi}
+        thread={thread}
+        messages={messages}
+        userEmail={threadData?.userEmail ?? ''}
+        onSent={(threadId) => {
+          if (threadId) void loadThread(threadId, true)
+        }}
+      />
     </div>
   )
 }
