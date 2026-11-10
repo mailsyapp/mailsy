@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { RefObject } from 'react'
+import type { BodyEditorHandle } from './BodyEditor'
 import { errorMessage } from '../lib/format'
 import {
   ATTACHMENTS_TOTAL_LIMIT_BYTES,
@@ -66,11 +68,12 @@ export type AttachmentPrefill = {
 
 export function useComposerAttachments(
   prefill?: AttachmentPrefill,
-  // Image files deliberately dropped on the composer chrome (outside the
-  // rich body) route here — the editor's own surface handles its drops
-  // directly. Files-on-chips and images-in-text stay separated by type,
-  // never by where the drag happened to land.
-  onImageFiles?: (files: File[]) => void
+  // Where image files belong: the rich body's handle. Image files dropped
+  // on the composer chrome (outside the editor's own surface) insert
+  // through this ref read at handler time, so the wiring carries no
+  // stale-closure risk and needs no callback layer. Files-on-chips and
+  // images-in-text stay separated by type, never by where the drag landed.
+  bodyEditorRef?: RefObject<BodyEditorHandle | null>
 ): ComposerAttachments {
   const [attachments, setAttachments] = useState<ComposeAttachment[]>([])
   const [error, setError] = useState<string | null>(null)
@@ -81,13 +84,6 @@ export function useComposerAttachments(
   // hovering, and the counter beats per-element leave events that fire
   // while moving across children.
   const dropDepth = useRef(0)
-  // The routing callback at handler time, not hook time: composers can
-  // provide it after the hook's first render without a stale closure.
-  // Synced in an effect, not at render, per the refs rule.
-  const imageRouteRef = useRef(onImageFiles)
-  useEffect(() => {
-    imageRouteRef.current = onImageFiles
-  }, [onImageFiles])
 
   useEffect(() => {
     if (!prefill || prefill.refs.length === 0) return
@@ -197,11 +193,12 @@ export function useComposerAttachments(
         const files = Array.from(event.dataTransfer.files)
         const images = files.filter((file) => looksLikeImageFile(file))
         const others = files.filter((file) => !looksLikeImageFile(file))
-        if (images.length) imageRouteRef.current?.(images)
+        if (images.length) void bodyEditorRef?.current?.insertImages(images)
         void addFiles(others)
       }
     }),
-    [addFiles]
+    // bodyEditorRef is a stable ref object; read at handler time.
+    [addFiles, bodyEditorRef]
   )
 
   const remove = useCallback((index: number) => {

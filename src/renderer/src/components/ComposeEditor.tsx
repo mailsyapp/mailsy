@@ -1,10 +1,14 @@
 import { useRef, useState } from 'react'
 import { errorMessage } from '../lib/format'
 import { RecipientFields } from './RecipientFields'
-import { hasRecipient, type RecipientState } from '../../../shared/types'
+import {
+  composeRequest,
+  hasRecipient,
+  type ComposeBody,
+  type RecipientState
+} from '../../../shared/types'
 import { useDraftAutosave } from './useDraftAutosave'
-import { AttachmentChips } from './AttachmentChips'
-import { BodyEditor, type BodyEditorHandle } from './BodyEditor'
+import { ComposerBody, type ComposerBodyHandle } from './ComposerBody'
 import { useComposerAttachments } from './useComposerAttachments'
 
 type ComposeEditorProps = {
@@ -28,8 +32,8 @@ export function ComposeEditor({ onClose }: ComposeEditorProps): React.JSX.Elemen
   const [subject, setSubject] = useState('')
   // The body lives in two forms from the one editor: the rich html the
   // send/autosave carries and the plain-text fallback with it.
-  const [body, setBody] = useState<{ html: string; text: string }>({ html: '', text: '' })
-  const editorRef = useRef<BodyEditorHandle | null>(null)
+  const [body, setBody] = useState<ComposeBody>({ html: '', text: '' })
+  const bodyRef = useRef<ComposerBodyHandle | null>(null)
   const [sending, setSending] = useState(false)
   const [sendError, setSendError] = useState<string | null>(null)
   // Once sent, the form retires instead of re-arming: a second send would
@@ -37,19 +41,14 @@ export function ComposeEditor({ onClose }: ComposeEditorProps): React.JSX.Elemen
   const [sent, setSent] = useState(false)
   // Local files picked with the native dialog; the records ride every
   // autosave and send payload below like the text fields do, so a restored
-  // draft reopens with them.
-  const attach = useComposerAttachments(
-    undefined,
-    (files) =>
-      // Image files dropped on the composer chrome route into the rich body;
-      // the editor's own surface handles its drops at the caret instead.
-      void editorRef.current?.insertImages(files)
-  )
-  const autosave = useDraftAutosave(
-    { ...recipients, subject, body: body.text, bodyHtml: body.html || undefined, ...attach.field },
-    undefined,
-    true
-  )
+  // draft reopens with them. The body ref is where image files dropped on
+  // the composer chrome insert: the hook routes them into the editor's
+  // handle; the editor's own surface handles its drops at the caret.
+  const attach = useComposerAttachments(undefined, bodyRef)
+  // One payload for the autosave and every send path: identical field list,
+  // built in the shared composer shape.
+  const request = composeRequest({ recipients, subject, body, attachments: attach.attachments })
+  const autosave = useDraftAutosave(request, undefined, true)
 
   async function handleCancel(): Promise<void> {
     // Cancel is today's discard action: let any in-flight or queued write
@@ -85,22 +84,9 @@ export function ComposeEditor({ onClose }: ComposeEditorProps): React.JSX.Elemen
       autosave.suspend()
       try {
         if (draftId) {
-          await window.api.sendDraft({
-            draftId,
-            ...recipients,
-            subject,
-            body: body.text,
-            bodyHtml: body.html || undefined,
-            ...attach.field
-          })
+          await window.api.sendDraft({ draftId, ...request })
         } else {
-          await window.api.sendEmail({
-            ...recipients,
-            subject,
-            body: body.text,
-            bodyHtml: body.html || undefined,
-            ...attach.field
-          })
+          await window.api.sendEmail(request)
         }
       } finally {
         autosave.resume()
@@ -134,24 +120,7 @@ export function ComposeEditor({ onClose }: ComposeEditorProps): React.JSX.Elemen
         <input value={subject} onChange={(event) => setSubject(event.target.value)} />
       </label>
 
-      <label className="composerField composerField-grow">
-        <span>Message</span>
-        <BodyEditor
-          ref={editorRef}
-          initialHtml=""
-          placeholder="Type your message..."
-          onNonImageFiles={(files) => void attach.addFiles(files)}
-          onChange={setBody}
-        />
-      </label>
-
-      <AttachmentChips
-        attachments={attach.attachments}
-        error={attach.error}
-        picking={attach.picking}
-        onPick={attach.pick}
-        onRemove={attach.remove}
-      />
+      <ComposerBody ref={bodyRef} attach={attach} onBodyChange={setBody} />
 
       {sendError && <p role="alert">{sendError}</p>}
       {autosave.error && <p role="alert">Draft not saved: {autosave.error}</p>}

@@ -14,11 +14,11 @@ import { replyAllRecipients } from '../lib/recipients'
 import { hasRecipient } from '../../../shared/types'
 import { SNOOZE_PRESETS } from '../lib/snooze'
 import { RecipientFields } from './RecipientFields'
-import { AttachmentChips } from './AttachmentChips'
+import { ComposerBody, type ComposerBodyHandle } from './ComposerBody'
 import { MessageAttachments } from './MessageAttachments'
-import { BodyEditor, type BodyEditorHandle } from './BodyEditor'
 import { useComposerAttachments } from './useComposerAttachments'
 import { quoteHtmlFor, sanitizeEmailHtml } from '../lib/emailHtml'
+
 // Folders where report spam makes sense: drafts and sent (mail you own),
 // spam itself, and Trash are the excluded rest. A user-label view behaves
 // like All Mail: spam reporting is a valid action there.
@@ -203,7 +203,7 @@ export function EmailDetail({
   // Bumped by every reply/forward open, so a new quote remounts the editor
   // even for the same message twice in a row.
   const [composerSeq, setComposerSeq] = useState(0)
-  const editorRef = useRef<BodyEditorHandle | null>(null)
+  const bodyRef = useRef<ComposerBodyHandle | null>(null)
   const [sending, setSending] = useState(false)
   const [sendError, setSendError] = useState<string | null>(null)
   const [sent, setSent] = useState(false)
@@ -211,11 +211,9 @@ export function EmailDetail({
   // typed-text payload state keeps being exactly a SendEmailRequest and
   // the files join only when the bridge call leaves. Cancel clears them
   // with the text; the form remounts per thread via key in App. Image files
-  // route into the rich body instead of the chip list.
-  const attach = useComposerAttachments(
-    undefined,
-    (files) => void editorRef.current?.insertImages(files)
-  )
+  // route into the rich body instead of the chip list, through the body
+  // ref the hook holds.
+  const attach = useComposerAttachments(undefined, bodyRef)
 
   const [archiving, setArchiving] = useState(false)
   const [archiveError, setArchiveError] = useState<string | null>(null)
@@ -753,34 +751,22 @@ export function EmailDetail({
             />
           </label>
 
-          <label className="composerField">
-            <span>Message</span>
-            {/* Remounts per reply/forward open (composerSeq): the quote
-                prefill is the only programmatic content, and typed content
-                lives in the uncontrolled editor between opens. */}
-            <BodyEditor
-              key={String(composerSeq)}
-              ref={editorRef}
-              initialHtml={quotedContent?.html ?? ''}
-              placeholder="Type your message..."
-              onNonImageFiles={(files) => void attach.addFiles(files)}
-              onChange={(content) =>
-                setDraft((prev) =>
-                  prev ? { ...prev, body: content.text, bodyHtml: content.html || undefined } : prev
-                )
-              }
-            />
-          </label>
+          {/* Remounts per reply/forward open (composerSeq): the quote
+              prefill is the only programmatic content, and typed content
+              lives in the uncontrolled editor between opens. */}
+          <ComposerBody
+            ref={bodyRef}
+            attach={attach}
+            remountKey={composerSeq}
+            initialHtml={quotedContent?.html ?? ''}
+            onBodyChange={(content) =>
+              setDraft((prev) =>
+                prev ? { ...prev, body: content.text, bodyHtml: content.html || undefined } : prev
+              )
+            }
+          />
 
           {sendError && <p role="alert">{sendError}</p>}
-
-          <AttachmentChips
-            attachments={attach.attachments}
-            error={attach.error}
-            picking={attach.picking}
-            onPick={attach.pick}
-            onRemove={attach.remove}
-          />
 
           <div className="composerActions">
             <button

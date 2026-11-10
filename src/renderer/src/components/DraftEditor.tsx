@@ -1,11 +1,15 @@
 import { useRef, useState } from 'react'
 import { errorMessage } from '../lib/format'
 import type { EmailDetail as EmailDetailData, ThreadSummary } from '../../../shared/types'
-import { hasRecipient, type RecipientState } from '../../../shared/types'
+import {
+  composeRequest,
+  hasRecipient,
+  type ComposeBody,
+  type RecipientState
+} from '../../../shared/types'
 import { RecipientFields } from './RecipientFields'
 import { useDraftAutosave } from './useDraftAutosave'
-import { AttachmentChips } from './AttachmentChips'
-import { BodyEditor, type BodyEditorHandle } from './BodyEditor'
+import { ComposerBody, type ComposerBodyHandle } from './ComposerBody'
 import { useComposerAttachments } from './useComposerAttachments'
 import { plainTextToHtml } from '../lib/emailHtml'
 
@@ -61,8 +65,8 @@ function DraftForm({
   // mount report re-derives the exact editor view from this same content.
   const initialHtml = detail.bodyHtml ?? plainTextToHtml(detail.bodyText || detail.snippet || '')
   const initialText = detail.bodyText || detail.snippet || ''
-  const [body, setBody] = useState(() => ({ html: initialHtml, text: initialText }))
-  const editorRef = useRef<BodyEditorHandle | null>(null)
+  const [body, setBody] = useState<ComposeBody>(() => ({ html: initialHtml, text: initialText }))
+  const bodyRef = useRef<ComposerBodyHandle | null>(null)
   const [sending, setSending] = useState(false)
   const [sendError, setSendError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
@@ -70,33 +74,32 @@ function DraftForm({
   // The draft's stored files resolve back into composer state before the
   // first autosave fires: drafts.update replaces the whole raw message, so
   // writing without the data would strip them off the draft. `ready` gates
-  // the autosave until every ref has settled (resolved or failed).
+  // the autosave until every ref has settled (resolved or failed). Images
+  // dropped on the composer chrome insert into the rich body.
   const attach = useComposerAttachments(
     detail.attachments.length ? { messageId: detail.id, refs: detail.attachments } : undefined,
-    (files) => void editorRef.current?.insertImages(files)
+    bodyRef
   )
-  // Editing an existing draft autosaves through drafts.update, so a
-  // dismissed edit (row click, folder switch, reset) is not lost either.
-  // Threading and the settled attachment list ride along, so the stored
-  // draft keeps what it already carried. Rows without a draft id keep
-  // today's no-autosave shape: they send fresh and cannot be updated.
-  const autosave = useDraftAutosave(
-    {
-      ...recipients,
-      subject,
-      body: body.text,
-      bodyHtml: body.html || undefined,
-      ...attach.field,
+  // The shared composer payload, with the draft's stored linkage. Same
+  // header set for the autosave and the atomic send: drafts.update replaces
+  // the whole stored message, so a payload without the reply headers would
+  // strip its linkage to the parent thread.
+  const request = composeRequest({
+    recipients,
+    subject,
+    body,
+    attachments: attach.attachments,
+    thread: {
       threadId: detail.threadId || undefined,
-      // Same header set the atomic send writes: drafts.update replaces the
-      // whole stored message, so an autosave without the draft's reply
-      // headers would strip its linkage to the parent thread.
       inReplyTo: detail.inReplyTo || undefined,
       references: detail.references || undefined
-    },
-    draftId,
-    draftId !== undefined && attach.ready
-  )
+    }
+  })
+  // Editing an existing draft autosaves through drafts.update, so a
+  // dismissed edit (row click, folder switch, reset) is not lost either.
+  // Rows without a draft id keep today's no-autosave shape: they send fresh
+  // and cannot be updated.
+  const autosave = useDraftAutosave(request, draftId, draftId !== undefined && attach.ready)
 
   async function handleSend(event: React.FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault()
@@ -115,32 +118,19 @@ function DraftForm({
           // Atomic send: drafts.send removes the draft server-side in the same
           // operation. Sending succeeds => the row is guaranteed to be pruned
           // by App; a failure here leaves the draft and this form (with its
-          // error) in place to retry — never a silently lingering draft.
-          await window.api.sendDraft({
-            draftId,
-            ...recipients,
-            subject,
-            body: body.text,
-            bodyHtml: body.html || undefined,
-            ...attach.field,
-            threadId: detail.threadId || undefined,
-            // The draft's own In-Reply-To header is the message it was a reply
-            // to. detail.messageId is the draft's unsent Message-ID and would
-            // be bogus to send.
-            inReplyTo: detail.inReplyTo || undefined,
-            references: detail.references || undefined
-          })
+          // error) in place to retry — never a silently lingering draft. The
+          // draft's own In-Reply-To header is the message it replies to;
+          // detail.messageId is the draft's unsent Message-ID and would be
+          // bogus to send.
+          await window.api.sendDraft({ draftId, ...request })
         } else {
           // No draft ID (shouldn't happen for rows from the Drafts folder):
-          // send as a new message but do NOT report sent — the unknown draft
-          // is still in Gmail, and dropping the row would hide that fact.
-          await window.api.sendEmail({
-            ...recipients,
-            subject,
-            body: body.text,
-            bodyHtml: body.html || undefined,
-            ...attach.field
-          })
+          // send as a new message without the stored linkage, and do NOT
+          // report sent — the unknown draft is still in Gmail, and dropping
+          // the row would hide that fact.
+          await window.api.sendEmail(
+            composeRequest({ recipients, subject, body, attachments: attach.attachments })
+          )
           setNotice(
             'Sent as a new message; the original draft entry was left in place (unknown draft ID).'
           )
@@ -178,23 +168,11 @@ function DraftForm({
         <input value={subject} onChange={(event) => setSubject(event.target.value)} />
       </label>
 
-      <label className="composerField composerField-grow">
-        <span>Message</span>
-        <BodyEditor
-          ref={editorRef}
-          initialHtml={initialHtml}
-          placeholder="Type your message..."
-          onNonImageFiles={(files) => void attach.addFiles(files)}
-          onChange={setBody}
-        />
-      </label>
-
-      <AttachmentChips
-        attachments={attach.attachments}
-        error={attach.error}
-        picking={attach.picking}
-        onPick={attach.pick}
-        onRemove={attach.remove}
+      <ComposerBody
+        ref={bodyRef}
+        attach={attach}
+        initialHtml={initialHtml}
+        onBodyChange={setBody}
       />
 
       {sendError && <p role="alert">{sendError}</p>}

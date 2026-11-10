@@ -180,6 +180,42 @@ export function attachmentsLimitError(totalBytes: number): string {
   return `Attachments are too large to send (${Math.floor(totalBytes / (1024 * 1024))} MB). Gmail's limit is 25 MB per message.`
 }
 
+// The message content a rich editor reports: the html the send/autosave
+// carries, with the plain-text fallback beside it.
+export interface ComposeBody {
+  text: string
+  html: string
+}
+
+// The fields composing a message request: one composer's content. `thread`
+// is the linkage patch only draft/reply surfaces carry; a fresh compose
+// sends without it.
+export interface ComposeRequestFields {
+  recipients: RecipientState
+  subject: string
+  body: ComposeBody
+  attachments?: ComposeAttachment[]
+  thread?: Pick<SendEmailRequest, 'threadId' | 'inReplyTo' | 'references'>
+}
+
+// One composer payload in the exact SendEmailRequest shape: message
+// content plus files, so every surface's autosave and send hands the
+// boundary the same object. Optional fields stay absent when empty — an
+// absent field is the payload's "not this field", never an empty header.
+export function composeRequest(fields: ComposeRequestFields): SendEmailRequest {
+  const { recipients, subject, body, attachments, thread } = fields
+  return {
+    ...recipients,
+    subject,
+    body: body.text,
+    ...(body.html ? { bodyHtml: body.html } : {}),
+    ...(attachments?.length ? { attachments } : {}),
+    ...(thread?.threadId ? { threadId: thread.threadId } : {}),
+    ...(thread?.inReplyTo ? { inReplyTo: thread.inReplyTo } : {}),
+    ...(thread?.references ? { references: thread.references } : {})
+  }
+}
+
 export interface SendEmailRequest {
   to: string
   // Optional carbon lists in the same comma-separated address-line shape as
