@@ -168,8 +168,10 @@ function ThreadMessage({
           )}
 
           {/* The message's own files, below the body like Gmail's read
-              view; each chip saves itself through the native dialog. */}
-          <MessageAttachments message={message} />
+              view; each chip saves itself through the native dialog. The
+              key remounts per message, so the preview map stays that
+              message's fetch-once state. */}
+          <MessageAttachments key={message.id} message={message} />
         </div>
       )}
     </article>

@@ -10,46 +10,45 @@ import { imageMimeOf, looksLikeImageName } from '../lib/attachmentFile'
 // Image refs preview themselves inline: the bytes fetch on render through
 // the stored-attachment verb and land as a data URL, so a screenshot shows
 // as a screenshot, not a save dialog. Non-image refs keep the chip form,
-// each chip its save affordance through the native save dialog.
+// each chip its save affordance through the native save dialog, and an
+// image the preview fetch failed for falls back to its chip the same way.
 export function MessageAttachments({
   message
 }: {
   message: EmailDetail
 }): React.JSX.Element | null {
-  // Data URLs keyed by attachment id once fetched; a ref the fetch failed
-  // for surfaces through the shared error line instead.
-  const [previews, setPreviews] = useState<Map<string, string>>(new Map())
+  // The image previews, keyed by attachment id: a fetched ref's data URL,
+  // `null` once its fetch failed (its save chip stands in). The parent keys
+  // this component by message id, so the map holds one message's round and
+  // stays fetch-once state.
+  const [previews, setPreviews] = useState<Map<string, string | null>>(new Map())
   const [savingName, setSavingName] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
-  const imageRefs = message.attachments.filter((ref) => looksLikeImageName(ref.filename))
-  const otherRefs = message.attachments.filter((ref) => !looksLikeImageName(ref.filename))
-
   useEffect(() => {
+    const imageRefs = message.attachments.filter((ref) => looksLikeImageName(ref.filename))
     let alive = true
-    const missing = imageRefs.filter((ref) => !previews.has(ref.attachmentId))
-    for (const ref of missing) {
-      window.api
-        .getAttachment(message.id, ref.attachmentId)
-        .then((data) => {
-          if (!alive) return
-          setPreviews((prev) => {
-            const next = new Map(prev)
-            next.set(ref.attachmentId, `data:${imageMimeOf(ref.filename)};base64,${data}`)
-            return next
-          })
-        })
-        .catch(() => {
-          if (!alive) return
-          setError('Could not load preview images.')
-        })
-    }
+    // One atomic round: every image preview lands together (bytes or a null
+    // failure), so the render below has no per-ref transitions and no
+    // restart race over a growing map.
+    Promise.all(
+      imageRefs.map(async (ref) => ({
+        id: ref.attachmentId,
+        src: await window.api
+          .getAttachment(message.id, ref.attachmentId)
+          .then((data) => `data:${imageMimeOf(ref.filename)};base64,${data}`)
+          .catch(() => null)
+      }))
+    ).then((entries) => {
+      if (alive) setPreviews(new Map(entries.map((entry) => [entry.id, entry.src])))
+    })
     return () => {
       alive = false
     }
-    // Refs settle once per open message; the map is fetch-once state.
+    // Refs settle once per open message; the key={message.id} remount owns
+    // the reset between messages.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [message.id, message.attachments.length])
+  }, [])
 
   if (message.attachments.length === 0) return null
 
@@ -68,29 +67,36 @@ export function MessageAttachments({
 
   return (
     <div className="readAttachments">
-      {imageRefs.map((ref) => (
-        <figure key={ref.attachmentId} className="readAttachment-preview">
-          {/* The alt stays the file name: the preview is that file. */}
-          {previews.has(ref.attachmentId) && (
-            <img src={previews.get(ref.attachmentId)} alt={ref.filename} />
-          )}
-          {!previews.has(ref.attachmentId) && !error && (
-            <figcaption role="status">Loading {ref.filename}...</figcaption>
-          )}
-        </figure>
-      ))}
-      {otherRefs.map((ref) => (
-        <button
-          key={ref.attachmentId}
-          type="button"
-          className="attachmentChip attachmentChip-save"
-          disabled={Boolean(savingName)}
-          onClick={() => void save(ref)}
-        >
-          {savingName === ref.filename ? 'Saving...' : ref.filename}
-          <span className="attachmentChip-size">{sizeLabel(ref.size)}</span>
-        </button>
-      ))}
+      {message.attachments.map((ref) => {
+        const src = looksLikeImageName(ref.filename) ? previews.get(ref.attachmentId) : null
+        if (src === undefined)
+          return (
+            <figure key={ref.attachmentId} className="readAttachment-preview">
+              <figcaption role="status">Loading {ref.filename}...</figcaption>
+            </figure>
+          )
+        if (src)
+          return (
+            <figure key={ref.attachmentId} className="readAttachment-preview">
+              {/* The alt stays the file name: the preview is that file. */}
+              <img src={src} alt={ref.filename} />
+            </figure>
+          )
+        // A non-image ref, or an image whose preview fetch failed: the chip
+        // is its affordance either way.
+        return (
+          <button
+            key={ref.attachmentId}
+            type="button"
+            className="attachmentChip attachmentChip-save"
+            disabled={Boolean(savingName)}
+            onClick={() => void save(ref)}
+          >
+            {savingName === ref.filename ? 'Saving...' : ref.filename}
+            <span className="attachmentChip-size">{sizeLabel(ref.size)}</span>
+          </button>
+        )
+      })}
       {error && (
         <p className="attachmentBar-error" role="alert">
           {error}
