@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { RefObject } from 'react'
-import type { BodyEditorHandle } from './BodyEditor'
 import { errorMessage } from '../lib/format'
 import {
   ATTACHMENTS_TOTAL_LIMIT_BYTES,
@@ -73,7 +72,11 @@ export function useComposerAttachments(
   // through this ref read at handler time, so the wiring carries no
   // stale-closure risk and needs no callback layer. Files-on-chips and
   // images-in-text stay separated by type, never by where the drag landed.
-  bodyEditorRef?: RefObject<BodyEditorHandle | null>
+  // Structural on purpose: the only member the routing needs is the image
+  // insert, and both handles (editor and content unit) expose exactly it.
+  bodyEditorRef?: RefObject<{
+    insertImages: (files: File[]) => Promise<void>
+  } | null>
 ): ComposerAttachments {
   const [attachments, setAttachments] = useState<ComposeAttachment[]>([])
   const [error, setError] = useState<string | null>(null)

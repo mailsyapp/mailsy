@@ -2,12 +2,17 @@
 // Driver for verify-mailsy. Drives the real renderer through the UI only.
 // Usage: node scripts/drive.mjs --feature <id> --run-id <id> --port <n> [--signed-out]
 // Exit: 0 pass, 1 journey failure (reason in log), 2 infra failure.
-import { chromium } from 'playwright'
+// Playwright resolves from the skill's single dependency install (../drive,
+// see SKILL.md Helpers) instead of a local node_modules.
+import { createRequire } from 'node:module'
 import { access } from 'node:fs/promises'
 import { constants } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { mkdirSync, writeFileSync } from 'node:fs'
+
+const require2 = createRequire(new URL('../drive/', import.meta.url))
+const { chromium } = require2('playwright')
 
 const here = dirname(fileURLToPath(import.meta.url))
 const SKILL_DIR = resolve(here, '..')
@@ -54,6 +59,22 @@ async function waitForChecked(box, expected, okMsg, failMsg, timeoutMs = 5000) {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
     if ((await box.isChecked()) === expected) {
+      assert(true, okMsg, failMsg)
+      return
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100))
+  }
+  assert(false, okMsg, failMsg)
+}
+
+// aria-pressed flips in a post-mount effect (the signature auto-insert
+// and the mount-time presence derivation run after the DOM commit), so a
+// read taken as soon as the heading appears can beat them. Polls like the
+// checkbox waits do instead of trusting the first snapshot.
+async function waitForPressed(button, expected, okMsg, failMsg, timeoutMs = 5000) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if ((await button.getAttribute('aria-pressed')) === expected) {
       assert(true, okMsg, failMsg)
       return
     }
@@ -2160,6 +2181,194 @@ try {
     await inbox.getByText('Delivered at the fold', { exact: true }).first().waitFor({ timeout: 5000 })
     assert(true, 'a pushed reset re-folds the first page with its new mail', 'pushed reset did not re-fold')
     await snapshot(page, 'refresh')
+  } else if (FEATURE === 'signature') {
+    // The per-compose signature across all three surfaces: the stored text
+    // is born from the first toggle in a fresh compose, the block rides
+    // every send/autosave as ordinary body html, the draft round trip
+    // preserves it and re-derives its pressed state on reopen, and the
+    // reply surface appends it after the quote without touching it.
+    const inbox = page.getByRole('complementary', { name: 'Inbox' })
+    await inbox.waitFor({ timeout: 10000 })
+    const content = page.getByRole('region', { name: 'Email content' })
+    await page.getByRole('button', { name: 'Compose', exact: true }).click()
+    await content.getByRole('heading', { name: 'New email' }).waitFor({ timeout: 10000 })
+    // exact: the bar's neighbours are "Edit signature" and "Save
+    // signature"; a substring name would match all three.
+    const toggle = content.getByRole('button', { name: 'Signature', exact: true })
+    await toggle.waitFor({ timeout: 10000 })
+    assert(
+      (await toggle.getAttribute('aria-pressed')) === 'false',
+      'a fresh compose starts without the signature block',
+      'fresh compose opened with a signature it has no stored text for'
+    )
+    assert(
+      (await bodyTextOf(content.locator('.body-editor'))) === '',
+      'empty storage auto-inserts nothing',
+      'the fresh body holds text with no stored signature'
+    )
+    // First toggle with nothing stored: the inline editor opens instead of
+    // inserting emptiness — the stored text is born here.
+    await toggle.click()
+    const signatureField = content.getByRole('textbox', { name: 'Signature' })
+    await signatureField.waitFor({ timeout: 10000 })
+    assert(
+      true,
+      'an empty stored signature opens the inline editor',
+      'toggle did not open the editor'
+    )
+    await signatureField.fill('Ada Lovelace\nAnalytical Engine Dept.')
+    await content.getByRole('button', { name: 'Save signature' }).click()
+    // The panel closes back to the toggle row on save.
+    await toggle.waitFor({ timeout: 10000 })
+    assert(
+      (await page.evaluate(() => window.localStorage.getItem('mailsy.signature'))) ===
+        'Ada Lovelace\nAnalytical Engine Dept.',
+      'the saved text persists in storage',
+      'the stored signature did not persist'
+    )
+    // Toggle on: the block lands at the body's end and the button reads it.
+    await toggle.click()
+    assert(
+      (await toggle.getAttribute('aria-pressed')) === 'true' &&
+        (await bodyTextOf(content.locator('.body-editor'))).includes('Analytical Engine Dept.'),
+      'the toggle inserts the signature block',
+      'the signature block did not appear in the body'
+    )
+    // Typing above the signature leaves the block alone at the end.
+    await typeAtStart(content.locator('.body-editor'), 'Hello from Mailsy.\n')
+    const freshBody = await bodyTextOf(content.locator('.body-editor'))
+    assert(
+      freshBody.includes('Hello from Mailsy.') && freshBody.includes('Analytical Engine Dept.'),
+      `typing above the block keeps both (${freshBody.slice(0, 60)}…)`,
+      'typing disturbed the signature block'
+    )
+    await snapshot(page, 'signature-compose')
+    await content.locator('.composerField input').first().fill('ada@example.com')
+    await content.locator('.composerField input').nth(1).fill('Signature check')
+    await content.getByRole('button', { name: 'Send', exact: true }).click()
+    await content.getByText('Message sent.').waitFor({ timeout: 10000 })
+    const freshSent = await page.evaluate(() => window.__sent)
+    const signedRecord = freshSent[freshSent.length - 1]
+    assert(
+      freshSent.length === 1 &&
+        signedRecord.subject === 'Signature check' &&
+        String(signedRecord.body ?? '').includes('Analytical Engine Dept.') &&
+        String(signedRecord.bodyHtml ?? '').includes('mailsy-signature'),
+      `the send carries the signature in both forms (${JSON.stringify(signedRecord).slice(0, 100)}…)`,
+      'the send lost the signature'
+    )
+    // A second fresh compose auto-inserts the stored signature: same
+    // surface, no click on the toggle.
+    await content.getByRole('button', { name: 'Close', exact: true }).click()
+    await page.getByRole('button', { name: 'Compose', exact: true }).click()
+    await content.getByRole('heading', { name: 'New email' }).waitFor({ timeout: 10000 })
+    await waitForPressed(
+      toggle,
+      'true',
+      'a fresh compose auto-inserts the stored signature',
+      'the auto-insert did not happen'
+    )
+    assert(
+      (await bodyTextOf(content.locator('.body-editor'))).includes('Analytical Engine Dept.'),
+      'the auto-inserted body carries the stored text',
+      'the auto-insert left the body empty'
+    )
+    // The autosave round trip: the block rides the draft payload...
+    const savesBefore = await page.evaluate(() => (window.__draftSaves ?? []).length)
+    await content.locator('.composerField input').first().fill('brook@example.com')
+    await content.locator('.composerField input').nth(1).fill('Draft with signature')
+    await page.waitForFunction(
+      (before) => (window.__draftSaves ?? []).length > before,
+      savesBefore,
+      { timeout: 10000 }
+    )
+    assert(
+      true,
+      'the signed compose autosaves with its block',
+      'no autosave recorded the signature'
+    )
+    // ...and the Drafts folder restores it: the reopened editor re-derives
+    // the pressed state from the stored html, not from the toggle.
+    await page.getByRole('button', { name: 'Drafts' }).click()
+    const drafts = page.getByRole('complementary', { name: 'Drafts' })
+    await drafts.waitFor({ timeout: 10000 })
+    await drafts.getByText('Draft with signature', { exact: true }).first().click()
+    await content.getByRole('heading', { name: 'Draft', exact: true }).waitFor({ timeout: 10000 })
+    // The reopened editor derives the pressed state in its mount effect;
+    // poll like every other post-mount flip.
+    await waitForPressed(
+      toggle,
+      'true',
+      'the reopened draft restores the signature and its pressed state',
+      'the draft round trip lost the signature'
+    )
+    assert(
+      (await bodyTextOf(content.locator('.body-editor'))).includes('Analytical Engine Dept.'),
+      'the reopened draft body carries the signature text',
+      'the draft round trip lost the signature text'
+    )
+    // Toggling off in the editor removes the block for this message only;
+    // the stored text stays for the next compose.
+    await toggle.click()
+    assert(
+      (await toggle.getAttribute('aria-pressed')) === 'false' &&
+        !(await bodyTextOf(content.locator('.body-editor'))).includes('Analytical Engine Dept.'),
+      'the editor toggle removes the block per message',
+      'the removal did not clear the body'
+    )
+    assert(
+      (await page.evaluate(() => window.localStorage.getItem('mailsy.signature'))) !== null,
+      'the stored text survives the per-message removal',
+      'per-message removal wiped the stored signature'
+    )
+    await content.getByRole('button', { name: 'Send', exact: true }).click()
+    await content.getByText('Message sent.').waitFor({ timeout: 10000 })
+    const draftSent = await page.evaluate(() => window.__sent)
+    const unsignedRecord = draftSent[draftSent.length - 1]
+    assert(
+      draftSent.length === 2 &&
+        unsignedRecord.subject === 'Draft with signature' &&
+        !String(unsignedRecord.body ?? '').includes('Analytical Engine Dept.') &&
+        !String(unsignedRecord.bodyHtml ?? '').includes('Analytical Engine Dept.'),
+      `the unsigned draft send carries no signature (${JSON.stringify(unsignedRecord).slice(0, 100)}…)`,
+      'the removal did not reach the send'
+    )
+    // The reply surface: the block appends after the quote, and the send
+    // keeps the quote structure beside it.
+    await page.getByRole('button', { name: 'Inbox' }).click()
+    await inbox.waitFor({ timeout: 10000 })
+    await inbox.getByText('Launch checklist').first().click()
+    await page.getByRole('button', { name: 'reply', exact: true }).waitFor({ timeout: 10000 })
+    await page.getByRole('button', { name: 'reply', exact: true }).click()
+    await page.getByRole('heading', { name: 'Compose email' }).waitFor({ timeout: 10000 })
+    const replyToggle = page.getByRole('button', { name: 'Signature', exact: true })
+    assert(
+      (await replyToggle.getAttribute('aria-pressed')) === 'false',
+      'the reply composer starts without the block',
+      'the reply opened with a signature it was never asked to add'
+    )
+    await replyToggle.click()
+    assert(
+      (await replyToggle.getAttribute('aria-pressed')) === 'true' &&
+        (await bodyTextOf(page.locator('.body-editor'))).includes('Analytical Engine Dept.'),
+      'the reply surface appends the signature',
+      'the reply toggle did not insert'
+    )
+    await typeAtStart(page.locator('.body-editor'), 'Replying with my signature.\n\n')
+    await page.getByRole('button', { name: 'Send', exact: true }).click()
+    await page.getByRole('status').getByText('Message sent.').waitFor({ timeout: 10000 })
+    const replySent = await page.evaluate(() => window.__sent)
+    const replyRecord = replySent[replySent.length - 1]
+    const replyHtml = String(replyRecord.bodyHtml ?? '')
+    assert(
+      replySent.length === 3 &&
+        replyHtml.includes('gmail_quote_container') &&
+        replyHtml.includes('mailsy-signature') &&
+        replyHtml.includes('Analytical Engine Dept.'),
+      `the reply keeps the quote and gains the block (${replyHtml.slice(0, 80)}…)`,
+      'the reply lost the quote or the signature'
+    )
+    await snapshot(page, 'signature')
   } else {
     throw new Error(`unknown feature: ${FEATURE}`)
   }

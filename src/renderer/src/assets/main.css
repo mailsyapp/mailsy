@@ -621,6 +621,41 @@ button {
   background: #fff;
 }
 
+/* Signature row: the toggle and the edit entry, in the toolbar zone with
+   the attachment bar; both speak the link-blue the reveal buttons use. */
+.signatureBar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.signatureBar button,
+.signatureEdit-actions button {
+  font: inherit;
+  cursor: pointer;
+}
+
+.signatureBar button[aria-pressed='true'] {
+  font-weight: 600;
+}
+
+.signatureEdit {
+  display: grid;
+  gap: 6px;
+  flex-basis: 100%;
+}
+
+.signatureEdit label {
+  font-size: 12px;
+  color: #5f6368;
+}
+
+.signatureEdit-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
 /* Attachment bar: picker button left, one chip per file with its size and
    the remove control, matching the composer's own box style. */
 .attachmentBar {
