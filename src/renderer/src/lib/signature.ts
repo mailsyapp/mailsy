@@ -1,5 +1,3 @@
-import { plainTextToHtml } from './emailHtml'
-
 // The per-compose signature. The stored signature is one account-level
 // text the user edits from any composer; the per-message state lives in
 // the body itself — inserting appends a marked block to the rich content,
@@ -36,10 +34,4 @@ export function saveSignature(text: string): void {
     // Unwritable storage (private mode, quota): the edit still applies to
     // this compose via the editor; only its persistence is lost.
   }
-}
-
-// The block's inner markup: the plain text escaped and line-broken the
-// same way every plain-text-to-body conversion in the app renders.
-export function signatureHtml(text: string): string {
-  return plainTextToHtml(text)
 }

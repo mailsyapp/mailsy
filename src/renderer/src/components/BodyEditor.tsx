@@ -22,7 +22,10 @@ export interface BodyEditorHandle {
   // two) at the box's end, remove takes the block back out, and the
   // presence check drives the composer's toggle state. The block is the
   // caller's markup (lib/signature builds it); the editor only places it.
-  insertSignatureBlock: (html: string) => void
+  // `focusCaret` is whether the insert takes the caret: the bar's toggle
+  // does (the user just acted on the body); the fresh-compose auto-insert
+  // does not (see insertSignatureBlockInto below).
+  insertSignatureBlock: (html: string, options?: { focusCaret?: boolean }) => void
   removeSignatureBlock: () => void
   hasSignatureBlock: () => boolean
 }
@@ -331,24 +334,39 @@ async function insertImageFiles(editor: HTMLDivElement, files: File[]): Promise<
 // fall to its remove.
 const SIGNATURE_OWNED_SELECTOR = `:scope > ${SIGNATURE_BLOCK_SELECTOR}`
 
-function insertSignatureBlockInto(editor: HTMLDivElement, html: string): void {
+// The removal half of the block's lifecycle: insert runs it as its
+// replace step (one block, never two) and the handle's remove runs it
+// alone. Keeping it in one place keeps the scoped-lookup invariant —
+// foreign html nested deeper never reads as the composer's signature —
+// in one place too.
+function removeSignatureBlocks(editor: HTMLDivElement): void {
   for (const existing of Array.from(editor.querySelectorAll(SIGNATURE_OWNED_SELECTOR))) {
     existing.remove()
   }
+}
+
+// `focusCaret` splits the two callers' caret appetite. The bar's toggle
+// just acted on the body and typing continues above the signature, so it
+// takes the caret. The fresh-compose auto-insert runs before the user has
+// touched anything, and focus must not depend on whether a stored
+// signature happens to exist — otherwise the first-ever compose (nothing
+// stored) and every later one would open with the caret in different
+// places.
+function insertSignatureBlockInto(editor: HTMLDivElement, html: string, focusCaret: boolean): void {
+  removeSignatureBlocks(editor)
   const block = document.createElement('div')
   block.className = SIGNATURE_BLOCK_CLASS
   block.innerHTML = (isVisuallyEmpty(editor) ? '' : '<br>') + html
   editor.appendChild(block)
+  if (!focusCaret) return
   // The caret goes to the seam before the block, so typing continues
   // above the signature and never lands inside it.
   const index = Array.prototype.indexOf.call(editor.childNodes, block)
-  const range = document.createRange()
-  range.setStart(editor, Math.max(index, 0))
-  range.collapse(true)
   const selection = window.getSelection()
-  selection?.removeAllRanges()
-  selection?.addRange(range)
-  editor.focus()
+  // placeCaret needs a live Selection; with none to move (rare — no
+  // selection exists yet), the focus alone is what the placement ends in.
+  if (selection) placeCaret(editor, selection, editor, Math.max(index, 0))
+  else editor.focus()
 }
 
 export const BodyEditor = forwardRef<BodyEditorHandle, BodyEditorProps>(function BodyEditor(
@@ -391,18 +409,16 @@ export const BodyEditor = forwardRef<BodyEditorHandle, BodyEditorProps>(function
         editor.focus()
         reportNow(editor, onChangeRef.current)
       },
-      insertSignatureBlock: (html: string) => {
+      insertSignatureBlock: (html: string, options?: { focusCaret?: boolean }) => {
         const editor = editorRef.current
         if (!editor) return
-        insertSignatureBlockInto(editor, html)
+        insertSignatureBlockInto(editor, html, options?.focusCaret ?? true)
         reportNow(editor, onChangeRef.current)
       },
       removeSignatureBlock: () => {
         const editor = editorRef.current
         if (!editor) return
-        for (const existing of Array.from(editor.querySelectorAll(SIGNATURE_OWNED_SELECTOR))) {
-          existing.remove()
-        }
+        removeSignatureBlocks(editor)
         editor.focus()
         reportNow(editor, onChangeRef.current)
       },
