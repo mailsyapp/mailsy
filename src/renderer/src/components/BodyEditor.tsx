@@ -1,5 +1,6 @@
 import { forwardRef, useImperativeHandle, useEffect, useRef } from 'react'
 import { imageToPayload, looksLikeImageFile } from '../lib/attachmentFile'
+import { SIGNATURE_BLOCK_CLASS, SIGNATURE_BLOCK_SELECTOR } from '../lib/signature'
 
 // The compose body across all three composer surfaces: one rich-text field
 // where a line of text, a dropped screenshot, and another line of text all
@@ -17,6 +18,13 @@ export interface BodyEditorHandle {
   // File-drop routing that lands outside the editor's own surface (on the
   // composer chrome) still wants its images here; inserts at the box's end.
   insertImages: (files: File[]) => Promise<void>
+  // The signature block: insert appends (or replaces — one block, never
+  // two) at the box's end, remove takes the block back out, and the
+  // presence check drives the composer's toggle state. The block is the
+  // caller's markup (lib/signature builds it); the editor only places it.
+  insertSignatureBlock: (html: string) => void
+  removeSignatureBlock: () => void
+  hasSignatureBlock: () => boolean
 }
 
 type BodyEditorProps = {
@@ -308,6 +316,41 @@ async function insertImageFiles(editor: HTMLDivElement, files: File[]): Promise<
   return leftovers
 }
 
+// The signature block, placed by the imperative handle below: a marked
+// div the composer toggles at the box's end. Inserted after typed content
+// it opens with a <br> seam so the signature sits one blank line below
+// the message, Gmail-style; in an empty box it is the content and needs
+// no seam. One insertion path for both the fresh-compose auto-insert and
+// the bar's toggle, and re-inserting replaces the previous block (an
+// edited signature re-applies without stacking a second copy).
+//
+// Every lookup is scoped to the editor's direct children: the block is
+// always appended at the top level, while quoted or forwarded content is
+// nested deeper — foreign html (sanitized, but classes survive) can carry
+// the same class name and must never read as the composer's signature or
+// fall to its remove.
+const SIGNATURE_OWNED_SELECTOR = `:scope > ${SIGNATURE_BLOCK_SELECTOR}`
+
+function insertSignatureBlockInto(editor: HTMLDivElement, html: string): void {
+  for (const existing of Array.from(editor.querySelectorAll(SIGNATURE_OWNED_SELECTOR))) {
+    existing.remove()
+  }
+  const block = document.createElement('div')
+  block.className = SIGNATURE_BLOCK_CLASS
+  block.innerHTML = (isVisuallyEmpty(editor) ? '' : '<br>') + html
+  editor.appendChild(block)
+  // The caret goes to the seam before the block, so typing continues
+  // above the signature and never lands inside it.
+  const index = Array.prototype.indexOf.call(editor.childNodes, block)
+  const range = document.createRange()
+  range.setStart(editor, Math.max(index, 0))
+  range.collapse(true)
+  const selection = window.getSelection()
+  selection?.removeAllRanges()
+  selection?.addRange(range)
+  editor.focus()
+}
+
 export const BodyEditor = forwardRef<BodyEditorHandle, BodyEditorProps>(function BodyEditor(
   { initialHtml, placeholder, onChange, onNonImageFiles },
   ref
@@ -347,7 +390,23 @@ export const BodyEditor = forwardRef<BodyEditorHandle, BodyEditorProps>(function
         await insertImageFiles(editor, files)
         editor.focus()
         reportNow(editor, onChangeRef.current)
-      }
+      },
+      insertSignatureBlock: (html: string) => {
+        const editor = editorRef.current
+        if (!editor) return
+        insertSignatureBlockInto(editor, html)
+        reportNow(editor, onChangeRef.current)
+      },
+      removeSignatureBlock: () => {
+        const editor = editorRef.current
+        if (!editor) return
+        for (const existing of Array.from(editor.querySelectorAll(SIGNATURE_OWNED_SELECTOR))) {
+          existing.remove()
+        }
+        editor.focus()
+        reportNow(editor, onChangeRef.current)
+      },
+      hasSignatureBlock: () => Boolean(editorRef.current?.querySelector(SIGNATURE_OWNED_SELECTOR))
     }),
 
     []

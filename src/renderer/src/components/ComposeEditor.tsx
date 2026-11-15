@@ -120,7 +120,10 @@ export function ComposeEditor({ onClose }: ComposeEditorProps): React.JSX.Elemen
         <input value={subject} onChange={(event) => setSubject(event.target.value)} />
       </label>
 
-      <ComposerBody ref={bodyRef} attach={attach} onBodyChange={setBody} />
+      {/* The one surface that starts from an empty body: the stored
+          signature auto-joins a fresh compose, Gmail-style. Drafts and
+          replies already carry their own content. */}
+      <ComposerBody ref={bodyRef} attach={attach} onBodyChange={setBody} autoSignature />
 
       {sendError && <p role="alert">{sendError}</p>}
       {autosave.error && <p role="alert">Draft not saved: {autosave.error}</p>}
