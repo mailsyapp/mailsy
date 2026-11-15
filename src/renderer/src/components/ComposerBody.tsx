@@ -2,7 +2,8 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useSta
 import { BodyEditor, type BodyEditorHandle } from './BodyEditor'
 import { AttachmentChips } from './AttachmentChips'
 import { SignatureBar } from './SignatureBar'
-import { loadSignature, signatureHtml } from '../lib/signature'
+import { loadSignature } from '../lib/signature'
+import { plainTextToHtml } from '../lib/emailHtml'
 import type { ComposerAttachments } from './useComposerAttachments'
 
 // The composer's content unit: the message label with the rich body, the
@@ -65,13 +66,19 @@ export const ComposerBody = forwardRef<ComposerBodyHandle, ComposerBodyProps>(fu
   )
   // The fresh-compose auto-insert: mount-only, after the editor's own
   // mount prefill (child effects run first), so the empty body the
-  // initial report saw gains its signature before the user types.
+  // initial report saw gains its signature before the user types. The
+  // prefill is the whole emptiness question at mount — a body carrying a
+  // stored draft's html or a reply quote is not fresh, and the signature
+  // must not stack onto content already there. The insert takes no caret:
+  // the compose opens focused wherever it always opened, whether or not a
+  // stored signature exists.
   useEffect(() => {
     if (!autoSignature) return
+    if ((initialHtml ?? '').trim() !== '') return
     const stored = loadSignature()
     if (stored.trim() === '') return
-    editorRef.current?.insertSignatureBlock(signatureHtml(stored))
-  }, [autoSignature])
+    editorRef.current?.insertSignatureBlock(plainTextToHtml(stored), { focusCaret: false })
+  }, [autoSignature, initialHtml])
   return (
     <>
       <label className="composerField composerField-grow">

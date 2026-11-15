@@ -1,5 +1,6 @@
 import { useId, useState } from 'react'
-import { loadSignature, saveSignature, signatureHtml } from '../lib/signature'
+import { loadSignature, saveSignature } from '../lib/signature'
+import { plainTextToHtml } from '../lib/emailHtml'
 import type { BodyEditorHandle } from './BodyEditor'
 
 type SignatureBarProps = {
@@ -39,7 +40,7 @@ export function SignatureBar({ editor, present }: SignatureBarProps): React.JSX.
       setEditing(true)
       return
     }
-    handle?.insertSignatureBlock(signatureHtml(stored))
+    handle?.insertSignatureBlock(plainTextToHtml(stored))
   }
 
   function save(): void {
@@ -55,7 +56,7 @@ export function SignatureBar({ editor, present }: SignatureBarProps): React.JSX.
     // A present block re-applies the new text in place of the old one
     // (insert replaces); an absent block stays absent — the stored text
     // only joins bodies the user asks it to.
-    if (present) handle?.insertSignatureBlock(signatureHtml(draft))
+    if (present) handle?.insertSignatureBlock(plainTextToHtml(draft))
   }
 
   return (
