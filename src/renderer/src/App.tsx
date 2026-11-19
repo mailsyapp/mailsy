@@ -17,6 +17,7 @@ import { DraftEditor } from './components/DraftEditor'
 import { ComposeEditor } from './components/ComposeEditor'
 import { FolderRail } from './components/FolderRail'
 import { MailListRow } from './components/MailListRow'
+import { OAuthCredentialsSetup } from './components/OAuthCredentialsSetup'
 
 const LIST_PAGE_SIZE = 30
 // Smaller pages for server search: each result costs a messages.get call,
@@ -247,17 +248,24 @@ function App(): React.JSX.Element {
       .finally(() => setDraftDetailLoading(false))
   }
 
+  const [showCredentialsSetup, setShowCredentialsSetup] = useState(false)
+
+  async function completeSignIn(): Promise<void> {
+    await window.api.signIn()
+    // The list effect below loads the list; fetching here too would
+    // double the quota cost.
+    lastFetchedRef.current = null
+    setShowCredentialsSetup(false)
+    setSignedIn(true)
+  }
+
   function handleSignIn(): void {
     setError(null)
-    window.api
-      .signIn()
-      .then(() => {
-        // The list effect below loads the list; fetching here too would
-        // double the quota cost.
-        lastFetchedRef.current = null
-        setSignedIn(true)
-      })
-      .catch((e: unknown) => recordError(e))
+    completeSignIn().catch((e: unknown) => {
+      const message = e instanceof Error ? e.message : String(e)
+      if (/OAuth credentials are missing/i.test(message)) setShowCredentialsSetup(true)
+      else recordError(e)
+    })
   }
 
   function handleSignOut(): void {
@@ -838,6 +846,20 @@ function App(): React.JSX.Element {
     // recordError is render-scoped and stable in behavior; mount-once stays.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  if (showCredentialsSetup) {
+    return (
+      <div className="app">
+        <OAuthCredentialsSetup
+          onSubmit={async (credentials) => {
+            await window.api.saveOAuthCredentials(credentials)
+            await completeSignIn()
+          }}
+          onCancel={() => setShowCredentialsSetup(false)}
+        />
+      </div>
+    )
+  }
 
   return (
     <div className="app">

@@ -1,3 +1,13 @@
+export interface OAuthCredentials {
+  clientId: string
+  clientSecret: string
+}
+
+export interface OAuthCredentialsStatus {
+  configured: boolean
+  source: 'built-in' | 'stored' | null
+}
+
 // Read state is Gmail's absence or presence of the UNREAD label, flattened
 // to a boolean where the summary is built so the renderer never parses
 // labelIds itself.

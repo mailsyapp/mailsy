@@ -6,22 +6,59 @@ import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import type { AddressInfo } from 'node:net'
+import type { OAuthCredentials, OAuthCredentialsStatus } from '../shared/types'
 
 const CLIENT_ID = import.meta.env.MAIN_VITE_GOOGLE_CLIENT_ID as string
 const CLIENT_SECRET = import.meta.env.MAIN_VITE_GOOGLE_CLIENT_SECRET as string
 const SCOPES = ['https://www.googleapis.com/auth/gmail.modify']
 
 function makeClient(redirectUri?: string): OAuth2Client {
-  if (!CLIENT_ID || !CLIENT_SECRET) {
-    throw new Error(
-      'Google OAuth credentials are missing. Set MAIN_VITE_GOOGLE_CLIENT_ID and MAIN_VITE_GOOGLE_CLIENT_SECRET in .env'
-    )
+  const credentials = resolveOAuthCredentials()
+  if (!credentials) {
+    throw new Error('Google OAuth credentials are missing. Add a client ID and secret to sign in.')
   }
   return new OAuth2Client({
-    clientId: CLIENT_ID,
-    clientSecret: CLIENT_SECRET,
+    ...credentials,
     redirectUri
   })
+}
+
+const credentialsPath = (): string => path.join(app.getPath('userData'), 'oauth-credentials.bin')
+
+function validateOAuthCredentials(input: unknown): OAuthCredentials {
+  if (typeof input !== 'object' || input === null) {
+    throw new Error('Client ID and client secret must be non-empty strings.')
+  }
+  const { clientId, clientSecret } = input as Partial<OAuthCredentials>
+  if (typeof clientId !== 'string' || !clientId.trim()) {
+    throw new Error('Client ID must be a non-empty string.')
+  }
+  if (typeof clientSecret !== 'string' || !clientSecret.trim()) {
+    throw new Error('Client secret must be a non-empty string.')
+  }
+  return { clientId: clientId.trim(), clientSecret: clientSecret.trim() }
+}
+
+function resolveOAuthCredentials(): OAuthCredentials | null {
+  if (CLIENT_ID && CLIENT_SECRET) return { clientId: CLIENT_ID, clientSecret: CLIENT_SECRET }
+  try {
+    return validateOAuthCredentials(
+      JSON.parse(safeStorage.decryptString(fs.readFileSync(credentialsPath())))
+    )
+  } catch {
+    return null
+  }
+}
+
+export function saveOAuthCredentials(input: unknown): void {
+  const credentials = validateOAuthCredentials(input)
+  fs.writeFileSync(credentialsPath(), safeStorage.encryptString(JSON.stringify(credentials)))
+}
+
+export function getOAuthCredentialsStatus(): OAuthCredentialsStatus {
+  if (CLIENT_ID && CLIENT_SECRET) return { configured: true, source: 'built-in' }
+  const configured = resolveOAuthCredentials() !== null
+  return { configured, source: configured ? 'stored' : null }
 }
 
 const tokenPath = (): string => path.join(app.getPath('userData'), 'refresh-token.bin')

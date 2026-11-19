@@ -18,6 +18,8 @@ declare global {
     electron: ElectronAPI
     api: {
       signIn(): Promise<void>
+      saveOAuthCredentials(creds: import('../shared/types').OAuthCredentials): Promise<void>
+      getOAuthCredentialsStatus(): Promise<import('../shared/types').OAuthCredentialsStatus>
       isSignedIn(): Promise<boolean>
       signOut(): Promise<void>
       listFolder(options?: ListFolderOptions): Promise<MailPage>

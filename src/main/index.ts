@@ -2,7 +2,13 @@ import { app, shell, BrowserWindow, ipcMain } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
-import { signIn, signOut, isSignedIn } from './auth'
+import {
+  signIn,
+  signOut,
+  isSignedIn,
+  saveOAuthCredentials,
+  getOAuthCredentialsStatus
+} from './auth'
 import { pickAttachments, saveAttachmentFile } from './attachments'
 import {
   discardDraft,
@@ -76,6 +82,8 @@ app.whenReady().then(() => {
   })
 
   ipcMain.handle('auth:sign-in', () => signIn())
+  ipcMain.handle('auth:save-credentials', (_e, creds) => saveOAuthCredentials(creds))
+  ipcMain.handle('auth:credentials-status', () => getOAuthCredentialsStatus())
   ipcMain.handle('auth:is-signed-in', () => isSignedIn())
   // Signing out ends the mailbox session: the stored grant's teardown
   // (invalidateStoredGrant) fires the per-account state teardown

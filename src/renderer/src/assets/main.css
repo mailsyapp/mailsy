@@ -80,6 +80,35 @@ button {
   color: #b00020;
 }
 
+.oauth-setup {
+  width: 100%;
+  max-width: 520px;
+  margin: auto;
+  line-height: 1.5;
+}
+
+.oauth-setup form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.oauth-setup input {
+  padding: 10px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font: inherit;
+}
+
+.oauth-setup .actions {
+  margin-top: 16px;
+}
+
+.oauth-setup button:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
 .email-text {
   display: block;
   overflow: hidden;

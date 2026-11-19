@@ -7,6 +7,8 @@ import type {
   ListFolderOptions,
   MailLabel,
   ModifyLabelsRequest,
+  OAuthCredentials,
+  OAuthCredentialsStatus,
   SaveDraftRequest,
   SendDraftRequest,
   SendEmailRequest,
@@ -16,6 +18,10 @@ import type { SyncReason, SyncResult } from '../shared/sync'
 
 const api = {
   signIn: (): Promise<void> => ipcRenderer.invoke('auth:sign-in'),
+  saveOAuthCredentials: (creds: OAuthCredentials): Promise<void> =>
+    ipcRenderer.invoke('auth:save-credentials', creds),
+  getOAuthCredentialsStatus: (): Promise<OAuthCredentialsStatus> =>
+    ipcRenderer.invoke('auth:credentials-status'),
   isSignedIn: (): Promise<boolean> => ipcRenderer.invoke('auth:is-signed-in'),
   signOut: (): Promise<void> => ipcRenderer.invoke('auth:sign-out'),
   listFolder: (options?: ListFolderOptions): Promise<ThreadPage> =>
