@@ -4,6 +4,7 @@
   "description": "A Mail Client",
   "main": "./out/main/index.js",
   "author": "DragonSenseiGuy hey@adityan.dev",
+  "repository": "github:mailsyapp/mailsy",
   "homepage": "https://mailsy.app",
   "license": "AGPL-3.0-only",
   "scripts": {
