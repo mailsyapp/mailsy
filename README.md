@@ -2,12 +2,12 @@
 <h1>
 <p align="center">
   <img src="build/icon.png" alt="Logo" width="128">
-  <br>mailsy
+  <br>Mailsy
 </h1>
   <p align="center">
-    Fast, native, keyboard-friendly Gmail client for your desktop.
+    The fast, beautiful, keyboard-first email client that’s open source.
     <br />
-    Read, search, snooze, and send mail — without the browser.
+    Read, search, snooze, and send mail.
     <br />
     <a href="#about">About</a>
     ·
@@ -23,13 +23,13 @@
 
 ## About
 
-mailsy is a Gmail client that differentiates itself by being fast,
-keyboard-friendly, and native. Webmail gives you every feature but weighs
+Mailsy is an email client that differentiates itself by being fast,
+keyboard-friendly, and native. Webmail gives you a lot of features but weighs
 you down with tabs, toolbars, and a slow, uncustomizeable experience.
-mailsy gives you the mail you actually use in a small, quick desktop app.
+Mailsy gives you the mail you actually use in a small, quick desktop app.
 
-mailsy is built with Electron, React, and TypeScript, and talks to the
-Gmail API over OAuth — it requests only the `gmail.modify` scope and stores
+Mailsy is built with Electron, React, and TypeScript, and talks to the
+Gmail API over OAuth, it requests only the `gmail.modify` scope and stores
 your refresh token encrypted with your OS keychain. You can revoke access
 any time from your [Google account security settings](https://myaccount.google.com/permissions).
 
@@ -43,7 +43,7 @@ Install, sign in with Google, and you're in.
 <details>
 <summary>macOS Gatekeeper</summary>
 
-mailsy isn't notarized with an Apple Developer certificate, so the first
+Mailsy isn't notarized with an Apple Developer certificate, so the first
 launch may be blocked with *"mailsy can't be opened because it is from an
 unidentified developer."* Right-click **mailsy** in Applications and choose
 **Open**, then **Open** again in the dialog — this only needs to happen
@@ -95,21 +95,6 @@ npm run build:linux  # Linux AppImage + deb
 
 Releases are built automatically by GitHub Actions on every `v*` tag and
 attached to the GitHub Release.
-
-## Roadmap and Status
-
-mailsy is stable and in daily use for real mail.
-
-The high-level ambitious plan for the project, in order:
-
-|  #  | Step                                                     | Status |
-| :-: | -------------------------------------------------------- | :----: |
-|  1  | Full Gmail sync — inbox, starred, snoozed, sent, drafts, spam, trash |   ✅   |
-|  2  | Fuzzy search across senders, subjects, and bodies        |   ✅   |
-|  3  | Compose, reply, reply-all, forward, with attachments     |   ✅   |
-|  4  | Drafts with autosave and per-compose signature           |   ✅   |
-|  5  | Snooze and label management                              |   ✅   |
-|  6  | Multi-account support                                    |   ❌   |
 
 ## License
 
