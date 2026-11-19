@@ -28,7 +28,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm install
-      - run: npm run ${{ matrix.script }}
+      - run: npm run ${{ matrix.script }} -- --publish always
         env:
           MAIN_VITE_GOOGLE_CLIENT_ID: ${{ secrets.MAIN_VITE_GOOGLE_CLIENT_ID }}
           MAIN_VITE_GOOGLE_CLIENT_SECRET: ${{ secrets.MAIN_VITE_GOOGLE_CLIENT_SECRET }}

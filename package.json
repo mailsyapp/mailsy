@@ -1,6 +1,6 @@
 {
   "name": "mailsy",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "A Mail Client",
   "main": "./out/main/index.js",
   "author": "DragonSenseiGuy hey@adityan.dev",
