@@ -2414,35 +2414,60 @@ try {
     )
     await snapshot(page, 'signature-inline-text')
     await toggle.click()
-    for (const { html, text, visibleText, evidence } of [
-      { html: '<b>Label:</b> ', text: 'Label: ', visibleText: 'Label: ', evidence: 'label-space' },
-      { html: 'Line<br>  ', text: 'Line  ', visibleText: 'Line\n  ', evidence: 'br-indent' }
-    ]) {
-      await autoBody.evaluate((editor, html) => {
+    const assertWhitespaceParity = async (body, signatureToggle, surface) => {
+      const wasPressed = (await signatureToggle.getAttribute('aria-pressed')) === 'true'
+      if (wasPressed) await signatureToggle.click()
+      const originalHtml = await body.innerHTML()
+      const quoteHtml = await body.locator('.gmail_quote_container').evaluateAll(
+        (quotes) => quotes.map((quote) => quote.outerHTML)
+      )
+      for (const { html, text, visibleText, evidence } of [
+        { html: '<b>Label:</b> ', text: 'Label: ', visibleText: 'Label: ', evidence: 'label-space' },
+        { html: 'Line<br>  ', text: 'Line  ', visibleText: 'Line\n  ', evidence: 'br-indent' }
+      ]) {
+        await body.evaluate((editor, html) => {
+          const quoteSelector = 'blockquote, .gmail_quote, .gmail_quote_container'
+          const quotes = Array.from(editor.children).filter(
+            (node) => node.matches(quoteSelector) || node.querySelector(quoteSelector)
+          )
+          const template = document.createElement('template')
+          template.innerHTML = html
+          editor.replaceChildren(...template.content.childNodes, ...quotes)
+          editor.dispatchEvent(new InputEvent('input', { bubbles: true }))
+        }, html)
+        await signatureToggle.click()
+        await body.pressSequentially('Plain continuation.')
+        for (const signed of [true, false]) {
+          if (!signed) await signatureToggle.click()
+          assert(
+            await body.evaluate((editor, { text, visibleText, quoteHtml }) => {
+              const ownBody = editor.firstElementChild
+              const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT)
+              let continuation = walker.nextNode()
+              while (continuation && !continuation.textContent.includes('Plain continuation.'))
+                continuation = walker.nextNode()
+              return ownBody.textContent === `${text}Plain continuation.` &&
+                ownBody.innerText.trimEnd() === `${visibleText}Plain continuation.` &&
+                JSON.stringify(Array.from(editor.querySelectorAll('.gmail_quote_container'),
+                  (quote) => quote.outerHTML)) === JSON.stringify(quoteHtml) &&
+                continuation && !continuation.parentElement.closest('b, strong, .mailsy-signature') &&
+                Number(getComputedStyle(continuation.parentElement).fontWeight) < 600
+            }, { text, visibleText, quoteHtml }),
+            evidence === 'label-space'
+              ? `${surface}: bold label + space stays spaced and unbold (${signed ? 'signature on' : 'signature removed'})`
+              : `${surface}: BR + spaces preserves indentation (${signed ? 'signature on' : 'signature removed'})`,
+            `${surface}: signature insertion skipped meaningful whitespace, inherited bold, or changed the quote`
+          )
+        }
+        await snapshot(page, `signature-${surface}-${evidence}`)
+      }
+      await body.evaluate((editor, html) => {
         editor.innerHTML = html
         editor.dispatchEvent(new InputEvent('input', { bubbles: true }))
-      }, html)
-      await toggle.click()
-      await autoBody.pressSequentially('Plain continuation.')
-      await toggle.click()
-      assert(
-        await autoBody.evaluate((editor, { text, visibleText }) => {
-          const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT)
-          let continuation = walker.nextNode()
-          while (continuation && !continuation.textContent.includes('Plain continuation.'))
-            continuation = walker.nextNode()
-          return editor.textContent === `${text}Plain continuation.` &&
-            editor.innerText.trimEnd() === `${visibleText}Plain continuation.` &&
-            continuation && !continuation.parentElement.closest('b, strong, .mailsy-signature') &&
-            Number(getComputedStyle(continuation.parentElement).fontWeight) < 600
-        }, { text, visibleText }),
-        evidence === 'label-space'
-          ? 'typing after a bold label and separate space keeps the space and stays unbold'
-          : 'typing after a BR and separate spaces preserves indentation',
-        'signature insertion skipped meaningful whitespace or inherited bold formatting'
-      )
-      await snapshot(page, `signature-${evidence}`)
+      }, originalHtml)
+      if (wasPressed) await signatureToggle.click()
     }
+    await assertWhitespaceParity(autoBody, toggle, 'compose')
     for (const enters of [1, 2]) {
       await autoBody.evaluate((editor) => {
         editor.replaceChildren(document.createTextNode('Line start'))
@@ -2641,6 +2666,7 @@ try {
     )
     await snapshot(page, 'signature-draft-caret')
     await toggle.click()
+    await assertWhitespaceParity(content.locator('.body-editor'), toggle, 'reopened-draft')
     await content.getByRole('button', { name: 'Send', exact: true }).click()
     await content.getByText('Message sent.').waitFor({ timeout: 10000 })
     const draftSent = await page.evaluate(() => window.__sent)
@@ -2691,6 +2717,7 @@ try {
       'reply typing entered the quote or signature, or landed below the quote'
     )
     await snapshot(page, 'signature-reply-caret')
+    await assertWhitespaceParity(page.locator('.body-editor'), replyToggle, 'reply')
     await page.getByRole('button', { name: 'Send', exact: true }).click()
     await page.getByRole('status').getByText('Message sent.').waitFor({ timeout: 10000 })
     const replySent = await page.evaluate(() => window.__sent)
@@ -2718,6 +2745,7 @@ try {
       'forward typing entered the quote or signature'
     )
     await snapshot(page, 'signature-forward-caret')
+    await assertWhitespaceParity(page.locator('.body-editor'), replyToggle, 'forward')
   } else if (FEATURE === 'background-work') {
     const inbox = page.getByRole('complementary', { name: 'Inbox' })
     await inbox.waitFor({ timeout: 10000 })
