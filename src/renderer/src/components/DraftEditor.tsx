@@ -177,7 +177,12 @@ function DraftForm({
 
       {sendError && <p role="alert">{sendError}</p>}
       {notice && <p role="status">{notice}</p>}
-      {autosave.error && <p role="alert">Draft not saved: {autosave.error}</p>}
+      {autosave.error && (
+        <p role="alert">
+          {autosave.refsStale ? 'Attachment refresh required: ' : 'Draft not saved: '}
+          {autosave.error}
+        </p>
+      )}
       {autosave.status === 'saving' && <p role="status">Saving draft...</p>}
       {autosave.status === 'saved' && <p role="status">Draft saved.</p>}
       {discardError && <p role="alert">Delete failed: {discardError}</p>}

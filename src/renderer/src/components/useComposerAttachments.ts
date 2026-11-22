@@ -147,7 +147,7 @@ export function useComposerAttachments(
   )
 
   const adoptSaved = useCallback((result: SaveDraftResult): void => {
-    if (!mountedRef.current) return
+    if (!mountedRef.current || result.refsStale) return
     for (const { previousAttachmentId, ref } of result.retainedAttachments) {
       for (const [key, value] of aliasesRef.current) {
         if (

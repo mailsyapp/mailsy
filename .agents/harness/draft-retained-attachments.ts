@@ -9,6 +9,9 @@ import type { gmail_v1 } from 'googleapis'
 const writes: { requestBody: { message: { raw: string } } }[] = []
 const fetches: { messageId: string; id: string }[] = []
 let unavailable = false
+let readbackUnavailable = false
+let creates = 0
+const updateIds: string[] = []
 let original = Buffer.from('original bytes').toString('base64url')
 let inlinePayload: gmail_v1.Schema$MessagePart | undefined
 let inlineUnavailable = false
@@ -38,6 +41,7 @@ const gmail = {
     },
     drafts: {
       get: async (): Promise<{ data: gmail_v1.Schema$Draft }> => {
+        if (readbackUnavailable) throw new Error('Saved draft readback unavailable')
         const raw = Buffer.from(writes.at(-1)!.requestBody.message.raw, 'base64url')
           .toString()
           .replace(/\r\n/g, '\n')
@@ -65,12 +69,19 @@ const gmail = {
           }
         }
       },
-      update: async (request: (typeof writes)[number]): Promise<void> => {
+      update: async (
+        request: (typeof writes)[number] & { id: string }
+      ): Promise<{ data: gmail_v1.Schema$Draft }> => {
         writes.push(request)
+        updateIds.push(request.id)
+        return { data: { id: request.id, message: { id: `saved-message-${writes.length}` } } }
       },
-      create: async (request: (typeof writes)[number]): Promise<{ data: { id: string } }> => {
+      create: async (
+        request: (typeof writes)[number]
+      ): Promise<{ data: gmail_v1.Schema$Draft }> => {
         writes.push(request)
-        return { data: { id: 'created-draft' } }
+        creates++
+        return { data: { id: 'created-draft', message: { id: `saved-message-${writes.length}` } } }
       }
     }
   }
@@ -339,3 +350,98 @@ for (const data of ['Zg', 'Zg==', 'Zm8', 'Zm8=']) {
   })
 }
 console.log('pass: valid padded and unpadded nonempty base64 attachments still save')
+
+const { chromium } = createRequire(new URL('../skills/verify-mailsy/drive/', import.meta.url))(
+  'playwright'
+)
+const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] })
+try {
+  const page = await browser.newPage()
+  await page.clock.install()
+  const calls: SaveDraftRequest[] = []
+  const results: SaveDraftResult[] = []
+  const createsBefore = creates
+  const updatesBefore = updateIds.length
+  const fetchesBefore = fetches.length
+  original = Buffer.from('original bytes').toString('base64url')
+  readbackUnavailable = true
+  await page.exposeFunction(
+    'persistDraft',
+    async (fields: SaveDraftRequest): Promise<SaveDraftResult> => {
+      calls.push(fields)
+      const result = await saveDraft(fields)
+      results.push(result)
+      return result
+    }
+  )
+  const client = await build({
+    stdin: {
+      contents: `
+        import React, { useState } from 'react';
+        import { createRoot } from 'react-dom/client';
+        import { useDraftAutosave } from './src/renderer/src/components/useDraftAutosave';
+        window.api = { saveDraft: window.persistDraft };
+        function Harness() {
+          const [subject, setSubject] = useState('initial');
+          const [ready, setReady] = useState(false);
+          const fields = ${JSON.stringify({ ...request, draftId: undefined })};
+          fields.subject = subject;
+          if (ready) {
+            fields.retainAttachments = undefined;
+            fields.attachments.push({filename:'original.bin', size:14, data:${JSON.stringify(Buffer.from('original bytes').toString('base64'))}});
+          }
+          const autosave = useDraftAutosave(fields, undefined, true);
+          window.autosave = autosave;
+          return React.createElement('div', null,
+            React.createElement('input', {'aria-label':'Subject', value:subject, onChange:e=>setSubject(e.target.value)}),
+            React.createElement('button', {onClick:()=>setReady(true)}, 'Original loaded'),
+            React.createElement('p', {'data-testid':'draft-id'}, autosave.currentDraftId() ?? ''),
+            React.createElement('p', {role:'alert'}, autosave.error ?? ''),
+            React.createElement('p', {role:'status'}, autosave.status));
+        }
+        createRoot(document.getElementById('root')).render(React.createElement(Harness));
+      `,
+      resolveDir: fileURLToPath(new URL('../../', import.meta.url))
+    },
+    bundle: true,
+    platform: 'browser',
+    format: 'iife',
+    write: false
+  })
+  await page.setContent('<div id="root"></div>')
+  await page.addScriptTag({ content: client.outputFiles[0].text })
+  await page.getByRole('textbox', { name: 'Subject' }).fill('First edit')
+  await page.clock.runFor(1300)
+  await page.waitForFunction(() => window.autosave.error !== null)
+  assert.equal(
+    await page.getByTestId('draft-id').textContent(),
+    'created-draft',
+    'a committed create must return its draft id even if readback fails'
+  )
+  assert.equal(results[0].messageId, `saved-message-${writes.length}`)
+  assert.equal(results[0].refsStale, true)
+  assert.match(await page.getByRole('alert').textContent(), /reload/i)
+  await page.getByRole('textbox', { name: 'Subject' }).fill('Second edit')
+  await page.clock.runFor(1300)
+  await page.evaluate(() => window.autosave.flushPending())
+  assert.equal(calls.length, 1, 'retaining autosave must not dispatch stale refs')
+  readbackUnavailable = false
+  await page.getByRole('button', { name: 'Original loaded' }).click()
+  await page.clock.runFor(1300)
+  await page.waitForFunction(() => window.autosave.status === 'saved')
+  assert.equal(calls.length, 2)
+  assert.equal(calls[1].draftId, 'created-draft')
+  assert.equal(calls[1].retainAttachments, undefined)
+  assert.equal(
+    creates,
+    createsBefore + 1,
+    'the next save must update the committed draft, never create a duplicate'
+  )
+  assert.deepEqual(updateIds.slice(updatesBefore), ['created-draft'])
+  assert.equal(fetches.length, fetchesBefore + 1, 'no fetch may use retired attachment ids')
+  console.log(
+    'pass: failed readback returns committed ids; stale retaining saves are blocked with a reload error; the next safe save updates without duplicates or dead refs'
+  )
+} finally {
+  await browser.close()
+}

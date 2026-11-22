@@ -133,8 +133,8 @@ async function writeDraft(
   draftId: string,
   raw: string,
   threadId?: string
-): Promise<void> {
-  await withQuotaRetry(() =>
+): Promise<gmail_v1.Schema$Draft> {
+  const saved = await withQuotaRetry(() =>
     gmail.users.drafts.update({
       userId: 'me',
       id: draftId,
@@ -146,6 +146,7 @@ async function writeDraft(
       }
     })
   )
+  return saved.data
 }
 
 // The autosave persistence primitive: applies the composer's fields to a
@@ -196,8 +197,9 @@ export async function saveDraft(request: SaveDraftRequest): Promise<SaveDraftRes
     const raw = await buildRawMessage(from, fields)
 
     let draftId = request.draftId
+    let committed: gmail_v1.Schema$Draft
     if (draftId) {
-      await writeDraft(gmail, draftId, raw, request.threadId)
+      committed = await writeDraft(gmail, draftId, raw, request.threadId)
     } else {
       const created = await withQuotaRetry(() =>
         gmail.users.drafts.create({
@@ -212,25 +214,36 @@ export async function saveDraft(request: SaveDraftRequest): Promise<SaveDraftRes
       )
       if (!created.data.id) throw new Error('Gmail returned no draft ID')
       draftId = created.data.id
+      committed = created.data
     }
-    const saved = await withQuotaRetry(() =>
-      gmail.users.drafts.get({ userId: 'me', id: draftId, format: 'full' })
-    )
-    if (!saved.data.message?.id || !saved.data.message.payload)
-      throw new Error('Gmail returned no saved message')
-    const bodies: MessageBodies = { text: '', html: '', inlineImages: [], attachments: [] }
-    collectBodies(saved.data.message.payload, bodies)
-    const retainedAttachments = (retain?.refs ?? []).map((ref, index) => {
-      const next = bodies.attachments[(request.attachments?.length ?? 0) + index]
-      if (!next || next.filename !== ref.filename)
-        throw new Error('Gmail returned no retained attachment')
-      return { previousAttachmentId: ref.attachmentId, ref: next }
-    })
-    return {
-      draftId,
-      messageId: saved.data.message.id,
-      previousMessageId: retain?.messageId,
-      retainedAttachments
+    try {
+      const saved = await withQuotaRetry(() =>
+        gmail.users.drafts.get({ userId: 'me', id: draftId, format: 'full' })
+      )
+      if (!saved.data.message?.id || !saved.data.message.payload)
+        throw new Error('Gmail returned no saved message')
+      const bodies: MessageBodies = { text: '', html: '', inlineImages: [], attachments: [] }
+      collectBodies(saved.data.message.payload, bodies)
+      const retainedAttachments = (retain?.refs ?? []).map((ref, index) => {
+        const next = bodies.attachments[(request.attachments?.length ?? 0) + index]
+        if (!next || next.filename !== ref.filename)
+          throw new Error('Gmail returned no retained attachment')
+        return { previousAttachmentId: ref.attachmentId, ref: next }
+      })
+      return {
+        draftId,
+        messageId: saved.data.message.id,
+        previousMessageId: retain?.messageId,
+        retainedAttachments
+      }
+    } catch {
+      return {
+        draftId,
+        messageId: committed.message?.id ?? undefined,
+        previousMessageId: retain?.messageId,
+        retainedAttachments: [],
+        refsStale: true
+      }
     }
   } catch (e) {
     rethrowDeadGrant(e)
