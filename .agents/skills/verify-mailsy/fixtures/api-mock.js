@@ -554,9 +554,9 @@
     if (!signedIn) throw new Error('Not signed in yet')
   }
 
-  function findDraft(draftId) {
-    const target = seed.find((m) => m.draftId === draftId)
-    if (!target || deletedDrafts.includes(draftId)) throw new Error(`mock: no draft ${draftId}`)
+  function findDraft(draftId, allowMissing = false) {
+    const target = deletedDrafts.includes(draftId) ? undefined : seed.find((m) => m.draftId === draftId)
+    if (!target && !allowMissing) throw new Error(`mock: no draft ${draftId}`)
     return target
   }
 
@@ -754,8 +754,8 @@
       if (request.draftId !== undefined && typeof request.draftId !== 'string') {
         throw new Error('Invalid draft request')
       }
-      const target = request.draftId ? findDraft(request.draftId) : null
-      const conflict = target && hasDraftConflict(target, request.expectedMessageId)
+      const target = request.draftId ? findDraft(request.draftId, request.copyOnConflict === true) : null
+      const conflict = request.draftId && (!target || hasDraftConflict(target, request.expectedMessageId))
       if (conflict && request.copyOnConflict !== true) throw draftConflict()
       let draftId
       if (target && !conflict) {

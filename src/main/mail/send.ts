@@ -158,10 +158,15 @@ export async function saveDraft(request: SaveDraftRequest): Promise<DraftVersion
     const requestBody = { message: { raw, ...(threadId ? { threadId } : {}) } }
     const saved = await withQuotaRetry(async () => {
       if (draftId) {
-        if (await isCurrentDraftVersion(gmail, draftId, expectedMessageId, session)) {
-          return gmail.users.drafts.update({ userId: 'me', id: draftId, requestBody })
+        try {
+          if (await isCurrentDraftVersion(gmail, draftId, expectedMessageId, session)) {
+            return await gmail.users.drafts.update({ userId: 'me', id: draftId, requestBody })
+          }
+          if (copyOnConflict !== true) throw draftConflict()
+        } catch (e) {
+          if (copyOnConflict !== true || !isNotFoundError(e)) throw e
         }
-        if (copyOnConflict !== true) throw draftConflict()
+        if (getMailSession() !== session) throw new Error('Mail account changed')
         return gmail.users.drafts.create({ userId: 'me', requestBody: { message: { raw } } })
       }
       return gmail.users.drafts.create({ userId: 'me', requestBody })

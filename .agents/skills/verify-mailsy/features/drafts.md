@@ -24,7 +24,7 @@ Preconditions:
 - **List + open.** Run `node scripts/drive.mjs --feature drafts --run-id "$RUN_ID" --port "$VERIFY_MAILSY_PORT"`. The `Drafts` landmark lists `Draft: Q4 planning notes`, a `Draft` heading appears, and To contains `team@example.com`.
 - **Send.** Choose `Send` (same command). `Message sent.` appears and the recorded outbox holds a `draft-1` entry whose `inReplyTo` is `<q4-plan-parent@example.com>`.
 - **Prune.** The row disappears even after re-opening it inside the delay, and a folder round-trip refetch shows the Drafts folder without the draft.
-- **Edit a search result.** Rename a draft so it no longer matches; the editor stays open and accepts a second local save. Replace the draft in the mailbox and try autosaving and sending from the old editor. Both preserve the newer remote draft and leave the local text visible; leaving the pane with pending edits saves a separate copy. Delete the now off-list draft in the mailbox and push a deletion delta; the editor closes.
+- **Edit a search result.** Rename a draft so it no longer matches; the editor stays open and accepts a second local save. Replace the draft in the mailbox and try autosaving and sending from the old editor. Both preserve the newer remote draft and leave the local text visible; leaving the pane with pending edits saves a separate copy. Delete the now off-list draft in the mailbox and push a deletion delta; the editor closes and keeps only pending edits in a new draft.
 - **Proof.** The driver writes `drafts`, `drafts-search-edit-conflict`, and `drafts-search-remote-delete` ARIA snapshots and screenshots and the `drafts.log` transcript.
 
 ## Gotchas
@@ -33,4 +33,4 @@ Preconditions:
 - The row prune is delayed ~2s on purpose ("Message sent." proof); waiting for `state: detached` is required, not the empty folder immediately.
 - Nothing reaches Gmail here; the mock models drafts.send by recording the send and dropping the draft in one step. Real delivery/consumption is manual-tier only.
 - Gmail keeps the draft ID stable but replaces its message ID on update. The check before a write detects an already-replaced message; Gmail does not provide a conditional draft write, so the check and write are not atomic.
-- Attachment prefill is not an edit and creates no conflict copy. Recovered copies do not force Gmail into the original thread, since the subject may have changed. A remotely deleted draft is not recreated.
+- Attachment prefill is not an edit and creates no conflict copy. Only unsaved local edits are recovered when an editor closes after a remote replacement or deletion. Recovery does not restore the old draft or force Gmail into the original thread.

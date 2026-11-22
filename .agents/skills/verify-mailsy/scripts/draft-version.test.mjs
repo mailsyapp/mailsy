@@ -109,3 +109,50 @@ test('a version check finishing after an account switch cannot start a write', a
     fixture.get = originalGet
   }
 })
+
+test('unmount recovery keeps pending edits without restoring the deleted draft', async () => {
+  fixture.calls.length = 0
+  const originalGet = fixture.get
+  const missing = Object.assign(new Error('Requested entity was not found'), { code: 404 })
+  fixture.get = () => { throw missing }
+  const edited = { ...request, expectedMessageId: 'msg-1' }
+  try {
+    await assert.rejects(saveDraft(edited), missing)
+    await assert.rejects(sendDraft(edited), missing)
+    assert.deepEqual(fixture.calls, [])
+    assert.deepEqual(await saveDraft({ ...edited, copyOnConflict: true }), {
+      draftId: 'draft-local-copy',
+      messageId: 'msg-copy'
+    })
+    assert.deepEqual(fixture.calls.map(([verb]) => verb), ['create'])
+    assert.equal(fixture.calls[0][1].requestBody.message.threadId, undefined)
+  } finally {
+    fixture.get = originalGet
+  }
+})
+
+test('unmount recovery handles deletion between the version check and update', async () => {
+  fixture.calls.length = 0
+  fixture.messageId = 'msg-1'
+  const originalUpdate = fixture.update
+  fixture.update = () => {
+    throw Object.assign(new Error('Requested entity was not found'), { code: 404 })
+  }
+  const edited = { ...request, expectedMessageId: 'msg-1', copyOnConflict: true }
+  try {
+    assert.deepEqual(await saveDraft(edited), {
+      draftId: 'draft-local-copy',
+      messageId: 'msg-copy'
+    })
+    assert.deepEqual(fixture.calls.map(([verb]) => verb), ['create'])
+    fixture.calls.length = 0
+    fixture.update = () => {
+      fixture.session = Symbol()
+      throw Object.assign(new Error('Requested entity was not found'), { code: 404 })
+    }
+    await assert.rejects(saveDraft(edited), /account changed/i)
+    assert.deepEqual(fixture.calls, [])
+  } finally {
+    fixture.update = originalUpdate
+  }
+})

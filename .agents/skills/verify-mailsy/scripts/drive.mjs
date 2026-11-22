@@ -967,22 +967,22 @@ try {
       })
       return draftId
     }, uneditedSubject)
+    const savesBeforeOpening = await page.evaluate(() => window.__draftSaves.length)
     await page.evaluate(() => window.__pushSync({ kind: 'reset' }))
     await drafts.getByText(uneditedSubject, { exact: true }).click()
     await content.getByRole('button', { name: 'Remove preloaded.txt' }).waitFor({ timeout: 5000 })
-    const logCount = await page.evaluate(async (draftId) => {
+    await page.evaluate(async (draftId) => {
       const api = window.__packagedFixtureApi ?? window.api
       await api.saveDraft({
         draftId, to: 'reader@example.com', subject: 'Remote revision', body: 'Remote text',
         attachments: [{ filename: 'preloaded.txt', size: 3, data: 'dHh0' }]
       })
-      return window.__draftSaves.length
     }, uneditedDraftId)
     await page.getByRole('button', { name: 'Inbox', exact: true }).click()
     await page.getByRole('button', { name: 'Drafts', exact: true }).click()
     await drafts.getByText('Remote revision', { exact: true }).waitFor({ timeout: 5000 })
     assert(
-      (await page.evaluate(() => window.__draftSaves.length)) === logCount,
+      (await page.evaluate(() => window.__draftSaves.length)) === savesBeforeOpening + 1,
       'loading an untouched draft attachment does not save or create a conflict copy',
       'attachment prefill was mistaken for an edit and saved a stale draft copy'
     )
@@ -1069,16 +1069,31 @@ try {
     await page.evaluate(async () => {
       const api = window.__packagedFixtureApi ?? window.api
       await api.discardDraft('draft-q4')
+    })
+    const deletedDraftEdit = 'Pending edits after Gmail deleted the draft'
+    await subjectField.fill(deletedDraftEdit)
+    await page.evaluate(() =>
       window.__pushSync({
         kind: 'delta', historyId: 'remote-draft-delete',
         threads: [], deletedThreadIds: ['thread-draft-q4']
       })
-    })
+    )
     await editor.waitFor({ state: 'detached', timeout: 5000 }).catch(() => {
       throw new Error('ASSERT: a deleted draft remains editable after a search refresh')
     })
     log('pass: search closes a draft editor after the draft is deleted externally')
     await snapshot(page, 'drafts-search-remote-delete')
+    await page.waitForFunction((subject) =>
+      window.__draftSaves.some((d) => d.draftId !== 'draft-q4' && d.subject === subject),
+      deletedDraftEdit,
+      { timeout: 5000 }
+    ).catch(() => {
+      throw new Error('ASSERT: remote deletion silently lost pending local edits')
+    })
+    await page.getByRole('button', { name: 'Inbox', exact: true }).click()
+    await page.getByRole('button', { name: 'Drafts', exact: true }).click()
+    await drafts.getByText(deletedDraftEdit, { exact: true }).waitFor({ timeout: 5000 })
+    log('pass: pending local edits survive remote deletion as a separate draft')
   } else if (FEATURE === 'delete-draft') {
     // Row surface: the confirm gates the delete. Dismiss it first —
     // deleting a draft is irreversible, so refusing must be a full no-op.
