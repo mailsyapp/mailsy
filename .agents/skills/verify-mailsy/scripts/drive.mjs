@@ -2369,6 +2369,124 @@ try {
       'the reply lost the quote or the signature'
     )
     await snapshot(page, 'signature')
+  } else if (FEATURE === 'background-work') {
+    const inbox = page.getByRole('complementary', { name: 'Inbox' })
+    await inbox.waitFor({ timeout: 10000 })
+    await inbox.getByText('Launch checklist', { exact: true }).first().waitFor({ timeout: 10000 })
+    const rows = page.locator('.emails > li')
+
+    await page.evaluate(() => {
+      window.__queries = []
+      const listFolder = window.api.listFolder
+      window.api.listFolder = (options = {}) => {
+        if (options.q) window.__queries.push(options.q)
+        return listFolder(options)
+      }
+    })
+    const box = page.getByRole('searchbox', { name: 'Search emails' })
+    await box.pressSequentially('b')
+    await page.waitForTimeout(1500)
+    assert(
+      (await page.evaluate(() => window.__queries.length)) === 0,
+      'a single settled character never reaches the boundary',
+      'a one-character query was sent to the boundary'
+    )
+    await box.pressSequentially('udget', { delay: 120 })
+    await page.getByText('Launch checklist', { exact: true }).waitFor({ state: 'detached', timeout: 10000 })
+    await page.waitForTimeout(1000)
+    const queries = await page.evaluate(() => window.__queries)
+    assert(
+      queries.length === 1 && queries[0] === 'budget',
+      'six keystrokes settle into one boundary query for the whole word',
+      `typing was not debounced into one query (${JSON.stringify(queries)})`
+    )
+    await snapshot(page, 'background-work-search')
+    await page.getByRole('button', { name: 'Clear search' }).click()
+    await page.getByText('Launch checklist', { exact: true }).first().waitFor({ timeout: 10000 })
+
+    const before = await rows.count()
+    await page.evaluate(() => {
+      for (let n = 1; n <= 45; n++) window.__deliverMail({ subject: `Backlog mail ${n}` })
+    })
+    const folders = page.getByRole('navigation', { name: 'Mail folders' })
+    await folders.getByRole('button', { name: 'Starred', exact: true }).click()
+    await page.getByRole('complementary', { name: 'Starred' }).waitFor({ timeout: 10000 })
+    await folders.getByRole('button', { name: 'Inbox', exact: true }).click()
+    await page.waitForFunction(
+      (count) => document.querySelectorAll('.emails > li').length > count,
+      before,
+      { timeout: 10000 }
+    )
+    const firstPage = await rows.count()
+    assert(
+      firstPage === 30,
+      'the reopened inbox shows one page of 30 rows',
+      `expected a 30-row first page, got ${firstPage}`
+    )
+    await rows.last().scrollIntoViewIfNeeded()
+    await page.waitForFunction(
+      (total) => document.querySelectorAll('.emails > li').length === total,
+      before + 45,
+      { timeout: 10000 }
+    )
+    await inbox.getByText('Backlog mail 45', { exact: true }).first().waitFor({ timeout: 10000 })
+    assert(
+      (await page.getByRole('button', { name: 'Load more' }).count()) === 0,
+      'scrolling to the end loads every remaining page with no click',
+      'the list still offers Load more after scrolling to the end'
+    )
+    await snapshot(page, 'background-work-pagination')
+
+    const rail = page.getByRole('navigation', { name: 'Mail folders' })
+    const tipsActive = () => rail.evaluate((nav) => nav.classList.contains('tips-active'))
+    await rail.getByRole('button', { name: 'Starred', exact: true }).hover()
+    await page.waitForTimeout(200)
+    assert(!(await tipsActive()), 'a rail tooltip stays hidden before the dwell', 'the tooltip showed with no dwell')
+    await page.getByRole('searchbox', { name: 'Search emails' }).hover()
+    await page.waitForTimeout(700)
+    assert(!(await tipsActive()), 'leaving the rail early cancels the tooltip', 'the tooltip showed after the pointer left')
+    await rail.getByRole('button', { name: 'Starred', exact: true }).hover()
+    await page.waitForFunction(
+      () => document.querySelector('.folder-rail')?.classList.contains('tips-active'),
+      undefined,
+      { timeout: 5000 }
+    )
+    assert(true, 'dwelling on a rail button shows its tooltip', 'the tooltip never showed')
+    await snapshot(page, 'background-work-tooltip')
+    await page.getByRole('searchbox', { name: 'Search emails' }).hover()
+    await page.waitForFunction(
+      () => !document.querySelector('.folder-rail')?.classList.contains('tips-active'),
+      undefined,
+      { timeout: 5000 }
+    )
+    assert(true, 'leaving the rail hides the tooltip', 'the tooltip stayed after the pointer left')
+
+    const content = page.getByRole('region', { name: 'Email content' })
+    await page.getByRole('button', { name: 'Compose', exact: true }).click()
+    await content.getByRole('heading', { name: 'New email' }).waitFor({ timeout: 10000 })
+    await content.locator('.composerField input').first().fill('brook@example.com')
+    await content.locator('.composerField input').nth(1).fill('Closed before the autosave')
+    await content.locator('.body-editor').fill('Typed and abandoned at once.')
+    const savesBeforeClose = await page.evaluate(() => (window.__draftSaves ?? []).length)
+    await rows.first().click()
+    await content.getByRole('heading', { name: 'New email' }).waitFor({ state: 'detached', timeout: 10000 })
+    await page.waitForFunction(() => (window.__draftSaves ?? []).length >= 1, undefined, { timeout: 5000 })
+    const saves = await page.evaluate(() => window.__draftSaves)
+    assert(
+      savesBeforeClose === 0 &&
+        saves.length === 1 &&
+        JSON.stringify(saves[0]).includes('Typed and abandoned at once.'),
+      'closing a compose inside the autosave delay still saves it, once',
+      `the abandoned compose was not saved exactly once (before close ${savesBeforeClose}, after ${saves.length})`
+    )
+    await page.waitForTimeout(1800)
+    assert(
+      (await page.evaluate(() => window.__draftSaves.length)) === 1 &&
+        (await page.evaluate(() => (window.__sent ?? []).length)) === 0,
+      'the cancelled autosave timer does not save a second time or send',
+      'a second save or a send followed the closed compose'
+    )
+    await snapshot(page, 'background-work')
   } else {
     throw new Error(`unknown feature: ${FEATURE}`)
   }
