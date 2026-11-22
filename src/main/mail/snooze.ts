@@ -42,6 +42,10 @@ function getSchedule(): SnoozeSchedule {
   return schedule
 }
 
+export function getSnoozeUntil(threadId: string): number | null {
+  return getSchedule().get(threadId) ?? null
+}
+
 function storePath(): string {
   return join(app.getPath('userData'), 'snooze-schedules.json')
 }

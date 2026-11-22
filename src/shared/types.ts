@@ -39,6 +39,7 @@ export interface EmailDetail extends EmailSummary {
 export interface EmailThread {
   id: string
   messages: EmailDetail[]
+  snoozeUntil?: number | null
   // The thread's raw label ids, deduped across its messages: the renderer
   // reads label membership from this intersection with the user labels it
   // already holds, never parsed out of message labelIds again.

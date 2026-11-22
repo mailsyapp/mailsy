@@ -1455,7 +1455,13 @@ try {
     assert(true, 'row-level unsnooze restored the second thread to the Inbox', 'parked mail missing from the Inbox after restore')
     await snapshot(page, 'snooze')
   } else if (FEATURE === 'snooze-wake') {
-    for (const scenario of ['selected', 'other', 'lookup-error']) {
+    for (const scenario of [
+      'selected',
+      'other',
+      'lookup-error',
+      'lookup-not-found',
+      'still-parked'
+    ].filter((value) => !arg('wake-case') || value === arg('wake-case'))) {
       const selected = scenario === 'other' ? 'Vendor pricing follow-up' : 'Launch checklist'
       await page.reload({ waitUntil: 'domcontentloaded' })
       const inbox = page.getByRole('complementary', { name: 'Inbox' })
@@ -1480,33 +1486,79 @@ try {
       await waking.waitFor()
       await snoozed.getByText(selected, { exact: true }).click()
       await content.getByRole('heading', { name: selected, exact: true }).waitFor()
-      if (scenario === 'lookup-error') {
-        await page.evaluate(() => {
+      if (
+        scenario === 'lookup-error' ||
+        scenario === 'lookup-not-found' ||
+        scenario === 'still-parked'
+      ) {
+        await page.evaluate((scenario) => {
           const getThread = window.api.getThread
           let fail = true
           window.api.getThread = async (id) => {
-            if (fail) {
+            if (scenario !== 'still-parked' && fail) {
               fail = false
-              throw new Error('Wake membership unavailable')
+              throw new Error(
+                scenario === 'lookup-not-found'
+                  ? '404 Requested entity was not found'
+                  : 'Wake membership unavailable'
+              )
+            }
+            if (scenario === 'still-parked') {
+              const thread = await getThread(id)
+              return {
+                ...thread,
+                labelIds: [...thread.labelIds, 'INBOX'],
+                messages: [
+                  ...thread.messages,
+                  { ...thread.messages[0], id: 'new-inbox-reply', labelIds: ['INBOX'] }
+                ]
+              }
             }
             return getThread(id)
           }
-        })
+        }, scenario)
       }
-      await page.evaluate(() => {
-        window.__snoozeWakePages = []
-        const listFolder = window.api.listFolder
-        window.api.listFolder = async (options) => {
-          const result = await listFolder(options)
-          if (options.folder === 'snoozed')
-            window.__snoozeWakePages.push(result.threads.map((row) => row.id))
-          return result
-        }
-      })
-      await snapshot(
-        page,
-        `snooze-wake-${selected === 'Launch checklist' ? 'selected' : 'other'}-before`
+      const freshTitle = ['lookup-error', 'lookup-not-found', 'still-parked'].includes(scenario)
+        ? 'Fresh parked newsletter'
+        : 'Newsletter backlog cleanup'
+      await page.evaluate(
+        ({ scenario, freshTitle }) => {
+          window.__snoozeWakePages = []
+          const listFolder = window.api.listFolder
+          window.api.listFolder = async (options) => {
+            const result = await listFolder(options)
+            if (options.folder === 'snoozed') {
+              result.threads = result.threads.map((row) =>
+                row.id === 'thread-snoozed-2' ? { ...row, subject: freshTitle } : row
+              )
+              if (scenario === 'still-parked')
+                result.threads = result.threads.filter((row) => row.id !== 'thread-launch')
+            }
+            if (options.folder === 'snoozed')
+              window.__snoozeWakePages.push(result.threads.map((row) => row.id))
+            return result
+          }
+        },
+        { scenario, freshTitle }
       )
+      await snapshot(page, `snooze-wake-${scenario}-before`)
+      if (scenario === 'still-parked') {
+        await page.evaluate(() => window.__pushSync({ kind: 'reset', reason: 'inbox-reply' }))
+        await snoozed.getByText(freshTitle, { exact: true }).waitFor()
+        assert(
+          await page.evaluate(() => window.__snoozeSchedule.get('thread-launch') > Date.now()),
+          'the selected thread still has a future scheduled wake',
+          'the parked schedule expired unexpectedly'
+        )
+        assert(
+          (await waking.count()) === 1 &&
+            (await content.getByRole('heading', { name: selected, exact: true }).count()) === 1,
+          'Inbox membership does not evict a still-parked off-page thread',
+          'a still-parked Inbox thread was removed from Snoozed'
+        )
+        await snapshot(page, 'snooze-wake-still-parked-after')
+        continue
+      }
       await page.clock.fastForward(48 * 60 * 60 * 1000)
       await page.waitForFunction(
         () =>
@@ -1514,6 +1566,17 @@ try {
           window.__snoozeWakePages.some((ids) => !ids.includes('thread-launch'))
       )
       const wake = await page.evaluate(() => window.__mods.at(-1))
+      if (scenario === 'lookup-error' || scenario === 'lookup-not-found') {
+        await snoozed
+          .getByText(freshTitle, { exact: true })
+          .waitFor({ timeout: 2000 })
+          .catch(() => {})
+        assert(
+          (await snoozed.getByText(freshTitle, { exact: true }).count()) === 1,
+          `${scenario}: a failed selected lookup still applies the fresh Snoozed page`,
+          `${scenario}: selected lookup failure discarded the fresh Snoozed page`
+        )
+      }
       if (scenario === 'lookup-error') {
         await page.getByText('Wake membership unavailable', { exact: true }).waitFor()
         assert(
@@ -1553,11 +1616,8 @@ try {
           'waking the only parked thread leaves an empty Snoozed list',
           'empty Snoozed retained a stale row'
         )
-      else await snoozed.getByText('Newsletter backlog cleanup', { exact: true }).waitFor()
-      await snapshot(
-        page,
-        `snooze-wake-${selected === 'Launch checklist' ? 'selected' : 'other'}-after`
-      )
+      else await snoozed.getByText(freshTitle, { exact: true }).waitFor()
+      await snapshot(page, `snooze-wake-${scenario}-after`)
       await page.getByRole('button', { name: 'Inbox', exact: true }).click()
       await inbox.getByText('Launch checklist', { exact: true }).waitFor()
       await content.getByText('Nothing open yet :P').waitFor()

@@ -85,6 +85,7 @@ function App(): React.JSX.Element {
   )
 
   const selectionRef = useRef<string | null>(null)
+  const selectedSnoozedByMailsyRef = useRef(false)
   const sentinelRef = useRef<HTMLDivElement | null>(null)
   const sidebarRef = useRef<HTMLElement | null>(null)
   const requestIdRef = useRef(0)
@@ -176,6 +177,7 @@ function App(): React.JSX.Element {
 
   function closeEmail(): void {
     selectionRef.current = null
+    selectedSnoozedByMailsyRef.current = false
     setSelectedId(null)
     setDraftDetail(null)
     setComposing(false)
@@ -231,6 +233,7 @@ function App(): React.JSX.Element {
     // everything else the pane draws), so the exit runs through closeEmail.
     closeEmail()
     openEmail(row.id)
+    selectedSnoozedByMailsyRef.current = row.snoozedByMailsy === true
     setError(null)
     // Drafts open the editor, not the conversation pane. In All Mail the
     // carrying row's hasDraft decides; in the drafts folder every row is
@@ -632,18 +635,33 @@ function App(): React.JSX.Element {
         .then(async (page) => {
           if (requestIdRef.current !== requestId) return
           const selected = selectionRef.current
-          const woke =
+          let dropSelected = false
+          let lookupError: unknown
+          if (
             activeFolder === 'snoozed' &&
             selected !== null &&
-            !page.threads.some((row) => row.id === selected) &&
-            (await window.api.getThread(selected)).labelIds.includes('INBOX')
+            !page.threads.some((row) => row.id === selected)
+          ) {
+            const locallySnoozed = selectedSnoozedByMailsyRef.current
+            try {
+              const thread = await window.api.getThread(selected)
+              dropSelected =
+                locallySnoozed &&
+                thread.snoozeUntil !== undefined &&
+                (thread.snoozeUntil === null || thread.snoozeUntil <= Date.now())
+            } catch (e) {
+              dropSelected =
+                (e as { code?: unknown })?.code === 404 || /404|not\s*found/i.test(errorMessage(e))
+              if (!dropSelected) lookupError = e
+            }
+          }
           if (requestIdRef.current !== requestId) return
-          if (woke && selectionRef.current === selected) closeEmail()
+          if (dropSelected && selectionRef.current === selected) closeEmail()
           setThreads((prev) =>
             mode === 'load'
               ? page.threads
               : mergeIncoming(
-                  woke ? prev.filter((row) => row.id !== selected) : prev,
+                  dropSelected ? prev.filter((row) => row.id !== selected) : prev,
                   page.threads,
                   mode === 'sync',
                   selectionRef.current
@@ -657,6 +675,8 @@ function App(): React.JSX.Element {
             setPageToken(page.nextPageToken)
           }
           storeFirstPage(page, committedQuery)
+          if (lookupError && (mode !== 'sync' || isDeadGrantError(lookupError)))
+            recordError(lookupError)
         })
         .catch((e: unknown) => {
           if (requestIdRef.current !== requestId) return
