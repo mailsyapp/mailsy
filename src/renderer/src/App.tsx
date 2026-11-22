@@ -113,16 +113,23 @@ function App(): React.JSX.Element {
   // read these instead of render-scoped state.
   const loadingMoreRef = useRef(false)
   const searchingRef = useRef(false)
+  const pendingSyncRef = useRef(false)
   const nextPageTokenRef = useRef<string | null | undefined>(undefined)
-  const hasLoadedMoreRef = useRef(false)
+  const loadedPagesRef = useRef(0)
+  const invalidCursorRef = useRef<symbol | null>(null)
 
   // The sync mirrors above are read by the IntersectionObserver before any
   // state has committed, so every write pairs the state with its ref. One
   // setter per pair makes an unpaired write unrepresentable.
-  function setPageToken(token: string | null | undefined, hasLoadedMore = false): void {
+  function setPageToken(token: string | null | undefined, loadedPages = 0): void {
     nextPageTokenRef.current = token
-    hasLoadedMoreRef.current = hasLoadedMore
+    loadedPagesRef.current = loadedPages
+    invalidCursorRef.current = null
     setNextPageToken(token)
+  }
+
+  function invalidatePageCursor(): void {
+    invalidCursorRef.current = Symbol()
   }
 
   function setActiveSearching(active: boolean): void {
@@ -291,6 +298,7 @@ function App(): React.JSX.Element {
   // signed-out screen.
   function exitToSignedOut(): void {
     ++requestIdRef.current
+    pendingSyncRef.current = false
     setSignedIn(false)
     setCommittedQuery('')
     setSearchInput('')
@@ -392,6 +400,7 @@ function App(): React.JSX.Element {
   // Only the pane showing the removed thread folds along: deleting row B
   // must not slam a compose or an unrelated open conversation.
   function handleThreadRemoved(threadId: string): void {
+    invalidatePageCursor()
     setThreads((prev) => prev.filter((e) => e.id !== threadId))
     if (selectionRef.current === threadId) closeEmail()
   }
@@ -451,6 +460,7 @@ function App(): React.JSX.Element {
   // Star is thread-level like read/unread: threads.modify applies STARRED to
   // every message in the conversation.
   function handleThreadStarChanged(threadId: string, starred: boolean): void {
+    if (activeFolder === 'starred' && !starred) invalidatePageCursor()
     // In the Starred folder an unstar removes the mail from this view, the
     // same way archive leaves the Inbox list.
     setThreads((prev) =>
@@ -498,6 +508,7 @@ function App(): React.JSX.Element {
   // label-view plumbing and activeLabel the id, together the whole view.
   function handleLabelSelect(label: MailLabel): void {
     if (activeLabel?.id === label.id) return
+    ++requestIdRef.current
     setActiveLabel(label)
     setActiveFolder('label')
     setSearchInput('')
@@ -550,12 +561,14 @@ function App(): React.JSX.Element {
   function handleThreadLabelChanged(threadId: string, labelId: string, applied: boolean): void {
     refreshLabels()
     if (activeLabel && !applied && activeLabel.id === labelId) {
+      invalidatePageCursor()
       setThreads((prev) => prev.filter((row) => row.id !== threadId))
     }
   }
 
   function handleFolderSelect(folder: MailFolder): void {
     if (folder === activeFolder && activeLabel === null) return
+    ++requestIdRef.current
     setActiveFolder(folder)
     setActiveLabel(null)
     setSearchInput('')
@@ -574,35 +587,51 @@ function App(): React.JSX.Element {
     // Guards read the synchronous refs: the observer can fire repeatedly
     // within one fetch's window, before the states it mirrors have
     // committed, and a stale false here appends duplicate pages.
-    const pageToken = nextPageTokenRef.current
-    if (loadingMoreRef.current || searchingRef.current || pageToken === null) return
+    const continuation = nextPageTokenRef.current
+    if (loadingMoreRef.current || searchingRef.current || continuation === null) return
     // Same request guard as the list effect below: a slower overlapping
     // response must never write after a response a later request superseded.
     const requestId = ++requestIdRef.current
     loadingMoreRef.current = true
     setLoadingMore(true)
-    window.api
-      .listFolder({
-        maxResults: committedQuery ? SEARCH_PAGE_SIZE : LIST_PAGE_SIZE,
-        pageToken,
-        folder: activeFolder,
-        ...(activeLabel ? { userLabelId: activeLabel.id } : {}),
-        ...(committedQuery ? { q: committedQuery } : {})
-      })
-      .then((page) => {
-        if (requestIdRef.current !== requestId) return
-        // Merged-in tail rows reappear in an older page's token range;
-        // keyed dedup keeps them single.
+    const loadPages = async (): Promise<void> => {
+      const invalidCursor = invalidCursorRef.current
+      const previousDepth = loadedPagesRef.current
+      let depth = invalidCursor ? 0 : previousDepth
+      let pageToken: string | null | undefined = invalidCursor ? undefined : continuation
+      const incoming = new Map<string, ThreadSummary>()
+      do {
+        const page = await window.api.listFolder({
+          maxResults: committedQuery ? SEARCH_PAGE_SIZE : LIST_PAGE_SIZE,
+          pageToken,
+          folder: activeFolder,
+          ...(activeLabel ? { userLabelId: activeLabel.id } : {}),
+          ...(committedQuery ? { q: committedQuery } : {})
+        })
+        if (requestIdRef.current !== requestId || invalidCursorRef.current !== invalidCursor) return
+        for (const row of page.threads) incoming.set(row.id, row)
+        pageToken = page.nextPageToken
+        depth++
+      } while (pageToken !== null && depth <= previousDepth)
+      const rows = [...incoming.values()]
+      if (invalidCursor) {
+        setThreads((prev) => mergeIncoming(prev, rows, true, null))
+      } else {
         setThreads((prev) => {
           const seen = new Set(prev.map((row) => row.id))
-          return [...prev, ...page.threads.filter((row) => !seen.has(row.id))]
+          return [...prev, ...rows.filter((row) => !seen.has(row.id))]
         })
-        setPageToken(page.nextPageToken, pageToken !== undefined)
+      }
+      setPageToken(pageToken, depth)
+    }
+    void loadPages()
+      .catch((e: unknown) => {
+        if (requestIdRef.current === requestId) recordError(e)
       })
-      .catch((e: unknown) => recordError(e))
       .finally(() => {
         loadingMoreRef.current = false
         setLoadingMore(false)
+        flushPendingSync()
       })
     // recordError is render-scoped like the neighbouring handlers it calls;
     // nothing it closes over changes this callback's behavior.
@@ -613,10 +642,10 @@ function App(): React.JSX.Element {
   // of the behavior.
   const loadFirstPage = useCallback(
     (mode: FirstPageMode): void => {
-      // A colliding fetch would see its response dropped by the request
-      // id; skipping here keeps a pushed reset fold from ever starting
-      // one it already knows will lose.
-      if (mode === 'sync' && (searchingRef.current || loadingMoreRef.current)) return
+      if (mode === 'sync' && (searchingRef.current || loadingMoreRef.current)) {
+        pendingSyncRef.current = true
+        return
+      }
       const requestId = ++requestIdRef.current
       if (mode === 'sync') {
         setQuietSearching(true)
@@ -625,6 +654,7 @@ function App(): React.JSX.Element {
       }
       if (mode !== 'sync') setError(null)
       if (mode === 'load') closeEmail()
+      const invalidCursor = invalidCursorRef.current
       window.api
         .listFolder({
           maxResults: committedQuery ? SEARCH_PAGE_SIZE : LIST_PAGE_SIZE,
@@ -634,6 +664,10 @@ function App(): React.JSX.Element {
         })
         .then((page) => {
           if (requestIdRef.current !== requestId) return
+          if (mode === 'sync' && invalidCursor !== invalidCursorRef.current) {
+            pendingSyncRef.current = true
+            return
+          }
           setThreads((prev) =>
             mode === 'load'
               ? page.threads
@@ -641,8 +675,8 @@ function App(): React.JSX.Element {
           )
           // Use the fresh continuation until a later page has been fetched.
           // Its cursor (including null at the end) must not rewind on sync.
-          if (mode !== 'sync' || !hasLoadedMoreRef.current) {
-            setPageToken(page.nextPageToken)
+          if (mode !== 'sync' || loadedPagesRef.current <= 1) {
+            setPageToken(page.nextPageToken, 1)
           }
           storeFirstPage(page, committedQuery)
         })
@@ -660,6 +694,7 @@ function App(): React.JSX.Element {
         .finally(() => {
           if (requestIdRef.current === requestId) {
             setActiveSearching(false)
+            flushPendingSync()
           }
         })
     },
@@ -680,6 +715,12 @@ function App(): React.JSX.Element {
   const syncResultHandlerRef = useRef<(result: SyncResult) => void>(() => {})
   const signedInRef = useRef<boolean | null>(null)
 
+  function flushPendingSync(): void {
+    if (!pendingSyncRef.current || searchingRef.current || loadingMoreRef.current) return
+    pendingSyncRef.current = false
+    syncResultHandlerRef.current({ kind: 'reset' })
+  }
+
   function handleSyncResult(result: SyncResult): void {
     // A sweep resolving after sign-out has a cleared list behind it; its
     // rows would repaint the signed-out screen. The same guard keeps a
@@ -697,6 +738,18 @@ function App(): React.JSX.Element {
     if (viewLabel === null) {
       if (result.threads.length > 0 || result.deletedThreadIds.length > 0) loadFirstPage('sync')
       return
+    }
+    const departingIds = new Set([
+      ...result.deletedThreadIds,
+      ...result.threads.filter((row) => !row.labelIds.includes(viewLabel)).map((row) => row.id)
+    ])
+    if (
+      departingIds.size > 0 &&
+      (loadingMoreRef.current ||
+        searchingRef.current ||
+        threads.some((row) => departingIds.has(row.id)))
+    ) {
+      invalidatePageCursor()
     }
     setThreads(
       (prev) =>
@@ -733,7 +786,7 @@ function App(): React.JSX.Element {
     setSyncing(true)
     window.api
       .syncMail('button')
-      .then(handleSyncResult)
+      .then((result) => syncResultHandlerRef.current(result))
       .catch((e: unknown) => recordError(e))
       .finally(() => {
         syncingRef.current = false
@@ -807,7 +860,10 @@ function App(): React.JSX.Element {
       : undefined
     if (cached) {
       setThreads(cached.threads)
-      setPageToken(cached.nextPageToken)
+      ++requestIdRef.current
+      setPageToken(cached.nextPageToken, 1)
+      setActiveSearching(false)
+      flushPendingSync()
       lastFetchedRef.current = {
         folder: activeFolder,
         labelId: activeLabel?.id ?? null,

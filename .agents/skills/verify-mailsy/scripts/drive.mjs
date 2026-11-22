@@ -2235,6 +2235,135 @@ try {
       'a second reset lost the loaded tail or exposed a stale continuation'
     )
     await snapshot(page, 'refresh')
+
+    await page.evaluate(() => {
+      const listFolder = window.api.listFolder
+      window.__refreshListed = []
+      window.api.listFolder = async (options) => {
+        const result = await listFolder(options)
+        window.__refreshListed.push(options.folder)
+        return result
+      }
+      window.api.syncMail = () =>
+        new Promise((resolve) => {
+          window.__releaseRefresh = () => resolve({ kind: 'reset' })
+        })
+    })
+    const rail = page.getByRole('navigation', { name: 'Mail folders' })
+    for (const [name, folder, subject] of [
+      ['Drafts', 'drafts', 'Draft: Q4 planning notes'],
+      ['Receipts', 'label', 'Receipts for March travel']
+    ]) {
+      if (name === 'Receipts') {
+        await rail.getByRole('button', { name: 'Inbox', exact: true }).click()
+        await inbox.getByText('Launch checklist', { exact: true }).waitFor({ timeout: 5000 })
+        const labels = rail.getByRole('button', { name: 'Labels', exact: true })
+        if (await labels.count()) await labels.click()
+      }
+      await refresh.click()
+      await page.waitForFunction(() => Boolean(window.__releaseRefresh))
+      await rail.getByRole('button', { name, exact: true }).click()
+      const destination = page.getByRole('complementary', { name, exact: true })
+      await destination.getByText(subject, { exact: true }).waitFor({ timeout: 5000 })
+      const before = await destination.getByRole('listitem').allTextContents()
+      await page.evaluate(() => {
+        window.__refreshListed.length = 0
+        window.__releaseRefresh()
+        window.__releaseRefresh = null
+      })
+      const listed = await page.waitForFunction(() => window.__refreshListed[0], undefined, {
+        timeout: 5000
+      })
+      assert(
+        (await listed.jsonValue()) === folder &&
+          JSON.stringify(await destination.getByRole('listitem').allTextContents()) ===
+            JSON.stringify(before),
+        `a sweep started in Inbox refreshes ${name} after switching views`,
+        `the delayed sweep listed the wrong view after switching to ${name}`
+      )
+      await snapshot(page, `refresh-switch-${folder}`)
+    }
+  } else if (FEATURE === 'pagination') {
+    const inbox = page.getByRole('complementary', { name: 'Inbox', exact: true })
+    const rows = inbox.getByRole('listitem')
+    const loadMore = inbox.getByRole('button', { name: 'Load more', exact: true })
+    const activateLoadMore = async () => {
+      await loadMore.evaluate((button) => button.focus({ preventScroll: true }))
+      await page.keyboard.press('Enter')
+    }
+    await inbox.getByText('Launch checklist', { exact: true }).waitFor({ timeout: 5000 })
+    const firstPageSize = 30
+    const deliveries = 64
+    const initialRows = await rows.count()
+    await page.evaluate((count) => {
+      for (let i = 1; i <= count; i++) window.__deliverMail({ subject: `Paging thread ${i}` })
+      window.__pushSync({ kind: 'reset' })
+    }, deliveries)
+    await loadMore.waitFor({ timeout: 5000 })
+
+    // Capture page two before the resets, but keep the response in flight.
+    await page.evaluate(() => {
+      const listFolder = window.api.listFolder
+      window.__paginationRequests = []
+      window.api.listFolder = async (options) => {
+        window.__paginationRequests.push(options.pageToken)
+        const result = await listFolder(options)
+        if (window.__paginationRequests.length === 1) {
+          await new Promise((resolve) => { window.__releasePage = resolve })
+        }
+        return result
+      }
+    })
+    await activateLoadMore()
+    await page.waitForFunction(() => Boolean(window.__releasePage))
+    const arrival = 'Delivered during Load more'
+    await page.evaluate((subject) => {
+      window.__deliverMail({ subject, prepend: true })
+      window.__pushSync({ kind: 'reset' })
+      window.__pushSync({ kind: 'reset' })
+    }, arrival)
+    assert(
+      (await inbox.getByText('Loading more...', { exact: true }).count()) === 1,
+      'the second page is still in flight when the resets arrive',
+      'the second page settled before the overlapping resets'
+    )
+    await page.evaluate(() => window.__releasePage())
+    await inbox.getByText(arrival, { exact: true }).waitFor({ timeout: 5000 })
+    assert(
+      (await rows.count()) === firstPageSize * 2 + 1 &&
+        (await page.evaluate(() => window.__paginationRequests.length)) === 2,
+      'overlapping resets fold once after page two without losing either result',
+      'overlapping resets did not coalesce or page two was lost'
+    )
+    await snapshot(page, 'pagination-overlap')
+
+    const content = page.getByRole('region', { name: 'Email content' })
+    for (const [number, action] of [[31, 'archive'], [32, 'delete']]) {
+      const subject = `Paging thread ${number}`
+      const row = inbox.getByRole('button').filter({
+        has: page.getByText(subject, { exact: true })
+      })
+      // Avoid scrolling the list or triggering its pagination sentinel.
+      await row.evaluate((button) => button.focus({ preventScroll: true }))
+      await page.keyboard.press('Enter')
+      await content.getByRole('heading', { name: subject, exact: true }).waitFor({ timeout: 5000 })
+      await content.getByRole('button', { name: action, exact: true }).click()
+      await row.waitFor({ state: 'detached', timeout: 5000 })
+    }
+    await activateLoadMore()
+    await inbox.getByText(`Paging thread ${deliveries}`, { exact: true }).waitFor({ timeout: 5000 })
+    for (let i = 1; i <= deliveries; i++) {
+      const count = await inbox.getByText(`Paging thread ${i}`, { exact: true }).count()
+      if (count !== (i === 31 || i === 32 ? 0 : 1)) {
+        throw new Error(`ASSERT: wrong occurrence count for Paging thread ${i}: ${count}`)
+      }
+    }
+    assert(
+      (await rows.count()) === initialRows + deliveries - 1 && (await loadMore.count()) === 0,
+      'a third page reaches every surviving thread exactly once after archive and delete',
+      'archive or delete left missing, duplicated or extra pages'
+    )
+    await snapshot(page, 'pagination')
   } else if (FEATURE === 'signature') {
     // The per-compose signature across all three surfaces: the stored text
     // is born from the first toggle in a fresh compose, the block rides

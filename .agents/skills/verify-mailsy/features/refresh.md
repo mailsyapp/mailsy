@@ -29,7 +29,8 @@ Run `node scripts/drive.mjs --feature refresh --run-id "$RUN_ID" --port "$VERIFY
 - **Push delta.** `window.__deliverMail` + `window.__pushSync(delta)` adds the row `Delivered between sweeps` to the Inbox without any click.
 - **Push reset.** Delivering again and pushing `{kind:'reset'}` re-folds the first page; `Delivered at the fold` appears.
 - **Pagination after reset.** After the open inbox grows from 30 to 31 threads, the reset exposes `Load more`. Activating it shows `Delivered onto page two` exactly once and removes the continuation. Another reset, with a new delivery on page one, retains the loaded tail without reopening pagination.
-- **Proof.** `artifacts/<run-id>/refresh-button.aria.txt`/`.png` for the busy-state moment, `refresh-pagination.aria.txt`/`.png` when the continuation returns, and `refresh.aria.txt`/`.png` after the push journeys.
+- **Switch views mid-sweep.** Hold the button's reset result while switching from Inbox to Drafts, then repeat from Inbox to Receipts. Releasing the reset lists the destination view without introducing any Inbox rows.
+- **Proof.** `refresh-button`, `refresh-pagination`, `refresh`, `refresh-switch-drafts` and `refresh-switch-label` ARIA snapshots and screenshots under `artifacts/<run-id>/`.
 
 ## Gotchas
 
