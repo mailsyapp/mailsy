@@ -428,6 +428,38 @@ try {
       'search over 30 results skipped, duplicated, or mixed in other rows'
     )
     await snapshot(page, 'search-pagination')
+
+    await inbox.getByRole('button', { name: 'Clear search' }).click()
+    const unreadResult = inbox.getByRole('listitem').filter({ hasText: 'Launch checklist' })
+    await unreadResult.getByRole('button', { name: 'mark unread', exact: true }).click()
+    await unreadResult.getByRole('button', { name: 'mark read', exact: true }).waitFor({ timeout: 5000 })
+    await box.fill('is:unread Launch checklist')
+    await box.press('Enter')
+    await inbox.getByText(/results? for “is:unread Launch checklist”/).waitFor({ timeout: 5000 })
+    await unreadResult.getByText('Launch checklist', { exact: true }).click()
+    await page.waitForFunction(() => window.__mods.some(
+      (mod) => mod.id === 'thread-launch' && mod.removeLabelIds?.includes('UNREAD')
+    ))
+    const content = page.getByRole('region', { name: 'Email content' })
+    await content.getByRole('button', { name: 'reply', exact: true }).click()
+    const body = content.locator('.body-editor')
+    await typeAtStart(body, 'Keep this unsent reply.\n\n')
+    await page.evaluate(async () => {
+      const api = window.__packagedFixtureApi ?? window.api
+      const { threads } = await api.listFolder({ folder: 'inbox', q: 'Launch checklist' })
+      window.__pushSync({
+        kind: 'delta', historyId: 'mark-read',
+        threads: [{ ...threads.find(({ id }) => id === 'thread-launch'), labelIds: ['INBOX'] }],
+        deletedThreadIds: []
+      })
+    })
+    await unreadResult.waitFor({ state: 'detached', timeout: 5000 })
+    assert(
+      (await body.count()) === 1 && (await bodyTextOf(body)).includes('Keep this unsent reply.'),
+      'the search drops an auto-read result without losing its open reply',
+      'background search refresh discarded the unsent reply'
+    )
+    await snapshot(page, 'search-open-reply')
   } else if (FEATURE === 'read-thread') {
     await page.getByRole('complementary', { name: 'Inbox' }).waitFor({ timeout: 10000 })
     await page.getByText('Deploy window').first().click()

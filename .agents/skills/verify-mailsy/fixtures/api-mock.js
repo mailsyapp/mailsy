@@ -523,7 +523,7 @@
     }
   }
 
-  // Minimal Gmail-style query support: plain text and the Inbox label predicate.
+  // Minimal Gmail-style query support: plain text and selected label predicates.
   function matches(m, q) {
     if (!q || !q.trim()) return true
     const hay = `${m.subject} ${m.from} ${m.snippet}`.toLowerCase()
@@ -534,6 +534,7 @@
         const inInbox = (m.labelIds ?? []).includes('INBOX')
         if (tok === 'in:inbox') return inInbox
         if (tok === '-in:inbox') return !inInbox
+        if (tok === 'is:unread') return (m.labelIds ?? []).includes('UNREAD')
         return hay.includes(tok)
       })
   }

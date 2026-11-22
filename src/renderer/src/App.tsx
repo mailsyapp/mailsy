@@ -45,7 +45,7 @@ type FirstPageMode = 'load' | 'wake' | QuietFold
 
 function App(): React.JSX.Element {
   const [threads, setThreads] = useState<ThreadSummary[]>([])
-  const [selectedKey, setSelectedKey] = useState<string | null>(null)
+  const [openedRow, setOpenedRow] = useState<ThreadSummary | null>(null)
   const [nextPageToken, setNextPageToken] = useState<string | null | undefined>(undefined)
   const [loadingMore, setLoadingMore] = useState(false)
   const [searching, setSearching] = useState(false)
@@ -175,10 +175,7 @@ function App(): React.JSX.Element {
   const isSearchActive = committedQuery.length > 0
   const hasPendingInput = searchInput.trim() !== committedQuery
 
-  function openEmail(key: string): void {
-    selectionRef.current = key
-    setSelectedKey(key)
-  }
+  const selectedKey = openedRow ? listRowKey(openedRow) : null
 
   // Both pane entries clear all pane state through closeEmail first, so a
   // compose and an open email can never be on screen together.
@@ -190,7 +187,7 @@ function App(): React.JSX.Element {
 
   function closeEmail(): void {
     selectionRef.current = null
-    setSelectedKey(null)
+    setOpenedRow(null)
     setDraftDetail(null)
     setDraftDetailLoading(false)
     setComposing(false)
@@ -240,14 +237,17 @@ function App(): React.JSX.Element {
     activeFolder
   ])
 
-  const selectedThread = displayedThreads.find((e) => listRowKey(e) === selectedKey) ?? null
+  const selectedThread =
+    displayedThreads.find((e) => listRowKey(e) === selectedKey) ??
+    (isSearchActive ? openedRow : null)
 
   function handleSelect(row: ThreadSummary): void {
     // The pane is exclusive: a selected row replaces an open compose (and
     // everything else the pane draws), so the exit runs through closeEmail.
     closeEmail()
     const rowKey = listRowKey(row)
-    openEmail(rowKey)
+    selectionRef.current = rowKey
+    setOpenedRow(row)
     setError(null)
     // Drafts open the editor, not the conversation pane. In All Mail the
     // carrying row's hasDraft decides; in the drafts folder every row is
@@ -430,13 +430,13 @@ function App(): React.JSX.Element {
   // threads.modify on UNREAD does the same batch shape as archive above.
   // The row's unread count collapses to the whole thread or clears to zero.
   function handleThreadReadChanged(threadId: string, unread: boolean): void {
-    setThreads((prev) =>
-      prev.map((e) => {
-        if (e.id !== threadId) return e
-        const next = unread ? e.messageIds.length : 0
-        return e.unreadCount === next ? e : { ...e, unreadCount: next }
-      })
-    )
+    function updateRead(row: ThreadSummary): ThreadSummary {
+      if (row.id !== threadId) return row
+      const next = unread ? row.messageIds.length : 0
+      return row.unreadCount === next ? row : { ...row, unreadCount: next }
+    }
+    setThreads((prev) => prev.map(updateRead))
+    setOpenedRow((row) => row && updateRead(row))
   }
 
   function handleRowReadToggle(row: ThreadSummary): void {
@@ -482,13 +482,17 @@ function App(): React.JSX.Element {
   // every message in the conversation.
   function handleThreadStarChanged(threadId: string, starred: boolean): void {
     if (activeFolder === 'starred' && !starred) invalidatePageCursor()
+    function updateStar(row: ThreadSummary): ThreadSummary {
+      return row.id === threadId && row.starred !== starred ? { ...row, starred } : row
+    }
     // In the Starred folder an unstar removes the mail from this view, the
     // same way archive leaves the Inbox list.
     setThreads((prev) =>
       activeFolder === 'starred' && !starred
         ? prev.filter((e) => e.id !== threadId)
-        : prev.map((e) => (e.id === threadId && e.starred !== starred ? { ...e, starred } : e))
+        : prev.map(updateStar)
     )
+    setOpenedRow((row) => row && updateStar(row))
   }
 
   function handleRowStarToggle(row: ThreadSummary): void {
@@ -717,7 +721,7 @@ function App(): React.JSX.Element {
         return true
       }
       async function foldPages(): Promise<void> {
-        const page = await window.api.listFolder(options)
+        const page: ThreadPage = await window.api.listFolder(options)
         if (!ownsResult()) return
         let token = page.nextPageToken
         let depth = 1
