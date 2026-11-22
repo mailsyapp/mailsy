@@ -127,6 +127,11 @@ export default {
       ImportDeclaration(node) {
         check(node, node.source.value, node.importKind === 'type')
       },
+      TSImportEqualsDeclaration(node) {
+        if (node.moduleReference.type === 'TSExternalModuleReference') {
+          check(node, staticSpecifier(node.moduleReference.expression), node.importKind === 'type')
+        }
+      },
       ExportNamedDeclaration(node) {
         if (node.source) check(node, node.source.value, node.exportKind === 'type')
       },
