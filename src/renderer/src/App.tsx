@@ -395,12 +395,14 @@ function App(): React.JSX.Element {
   }
 
   function updateThreadLists(
-    update: (rows: ThreadSummary[], query: string, view: string) => ThreadSummary[]
+    update: (rows: ThreadSummary[], query: string, view: string) => ThreadSummary[],
+    invalidateQuery?: string
   ): void {
     setThreads((prev) => update(prev, committedQuery, viewKey))
     for (const [view, pages] of searchPageCacheRef.current) {
       for (const [query, page] of pages) {
-        pages.set(query, { ...page, threads: update(page.threads, query, view) })
+        if (query.trim().toLowerCase() === invalidateQuery) pages.delete(query)
+        else pages.set(query, { ...page, threads: update(page.threads, query, view) })
       }
     }
   }
@@ -409,14 +411,12 @@ function App(): React.JSX.Element {
   // threads.modify on UNREAD does the same batch shape as archive above.
   // The row's unread count collapses to the whole thread or clears to zero.
   function handleThreadReadChanged(threadId: string, unread: boolean): void {
-    updateThreadLists((rows, query) =>
-      !unread && query.trim().toLowerCase() === 'is:unread'
-        ? rows.filter((e) => e.id !== threadId)
-        : rows.map((e) => {
-            if (e.id !== threadId) return e
-            const next = unread ? e.messageIds.length : 0
-            return e.unreadCount === next ? e : { ...e, unreadCount: next }
-          })
+    updateThreadLists((rows) =>
+      rows.map((e) => {
+        if (e.id !== threadId) return e
+        const next = unread ? e.messageIds.length : 0
+        return e.unreadCount === next ? e : { ...e, unreadCount: next }
+      })
     )
   }
 
@@ -464,11 +464,19 @@ function App(): React.JSX.Element {
   function handleThreadStarChanged(threadId: string, starred: boolean): void {
     // In the Starred folder an unstar removes the mail from this view, the
     // same way archive leaves the Inbox list.
-    updateThreadLists((rows, query, view) =>
-      !starred && (view === 'starred' || query.trim().toLowerCase() === 'is:starred')
-        ? rows.filter((e) => e.id !== threadId)
-        : rows.map((e) => (e.id === threadId && e.starred !== starred ? { ...e, starred } : e))
+    updateThreadLists(
+      (rows, query, view) =>
+        !starred && (view === 'starred' || query.trim().toLowerCase() === 'is:starred')
+          ? rows.filter((e) => e.id !== threadId)
+          : rows.map((e) => (e.id === threadId && e.starred !== starred ? { ...e, starred } : e)),
+      'is:starred'
     )
+    if (
+      !starred &&
+      (viewKey === 'starred' || committedQuery.trim().toLowerCase() === 'is:starred') &&
+      selectionRef.current === threadId
+    )
+      closeEmail()
   }
 
   function handleRowStarToggle(row: ThreadSummary): void {

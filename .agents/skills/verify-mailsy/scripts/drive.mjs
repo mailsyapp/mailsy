@@ -218,6 +218,10 @@ try {
       'cached-read',
       'cached-outside',
       'starred-query',
+      'starred-restar',
+      'starred-empty-add',
+      'selected-starred-query',
+      'selected-starred-folder',
       'unread-query',
       'complex-query',
       'failed-write'
@@ -228,6 +232,7 @@ try {
       await page.reload({ waitUntil: 'domcontentloaded' })
       const inbox = page.getByRole('complementary', { name: 'Inbox' })
       await inbox.getByText('Launch checklist', { exact: true }).waitFor()
+      const content = page.getByRole('region', { name: 'Email content' })
       await page.evaluate(() => {
         window.__searchCalls = []
         const listFolder = window.api.listFolder
@@ -238,17 +243,49 @@ try {
       })
       const box = page.getByRole('searchbox', { name: 'Search emails' })
       const row = inbox.locator('li', { hasText: 'Q3 budget draft' }).first()
+      if (scenario === 'selected-starred-folder') {
+        await row.getByRole('button', { name: 'Star', exact: true }).click()
+        await row.getByRole('button', { name: 'Unstar', exact: true }).waitFor()
+        await page
+          .getByRole('navigation', { name: 'Mail folders' })
+          .getByRole('button', { name: 'Starred', exact: true })
+          .click()
+        const starredRow = page
+          .getByRole('complementary', { name: 'Starred' })
+          .locator('li', { hasText: 'Q3 budget draft' })
+          .first()
+        await starredRow.getByText('Q3 budget draft', { exact: true }).click()
+        await content.getByRole('heading', { name: 'Q3 budget draft', exact: true }).waitFor()
+        await content.getByRole('button', { name: 'starred', exact: true }).click()
+        await starredRow.waitFor({ state: 'detached' })
+        await content.getByText('Nothing open yet :P', { exact: true }).waitFor()
+        assert(
+          true,
+          'unstar of the selected Starred-folder row closes its conversation',
+          'selected Starred-folder conversation stayed open'
+        )
+        await snapshot(page, 'search-state-selected-starred-folder')
+        continue
+      }
       const cached = scenario.startsWith('cached-')
-      const operator = scenario === 'starred-query' || scenario === 'unread-query'
+      const starredQuery = [
+        'starred-query',
+        'starred-restar',
+        'starred-empty-add',
+        'selected-starred-query'
+      ].includes(scenario)
+      const emptyAdd = scenario === 'starred-empty-add'
+      const selectedStarred = scenario === 'selected-starred-query'
+      const restar = scenario === 'starred-restar' || selectedStarred
       const unread = scenario === 'unread-query'
       const query = unread
         ? 'is:unread'
-        : scenario === 'starred-query'
+        : starredQuery
           ? 'is:starred'
           : scenario === 'complex-query'
             ? 'is:starred budget'
             : 'budget'
-      if (operator || scenario === 'complex-query') {
+      if ((starredQuery && !emptyAdd) || unread || scenario === 'complex-query') {
         await row
           .getByRole('button', { name: unread ? 'mark unread' : 'Star', exact: true })
           .click()
@@ -259,7 +296,13 @@ try {
       await box.fill(query)
       await box.press('Enter')
       await inbox.getByText('Launch checklist', { exact: true }).waitFor({ state: 'detached' })
-      await row.waitFor()
+      if (!emptyAdd) await row.waitFor()
+      else
+        assert(
+          (await row.count()) === 0,
+          'plain starred search initially caches an empty result',
+          'unstarred mail matched starred search'
+        )
       if (scenario === 'cached-outside') {
         await box.press('Escape')
         await inbox.getByText('Launch checklist', { exact: true }).waitFor()
@@ -286,17 +329,37 @@ try {
           'a rejected mutation leaves current flags unchanged',
           'a rejected mutation changed current flags'
         )
-      } else {
+      } else if (unread) {
+        await row.getByText('Q3 budget draft', { exact: true }).click()
         await row
-          .getByRole('button', { name: unread ? 'mark read' : 'Unstar', exact: true })
-          .click()
-        if (operator) {
+          .getByRole('button', { name: 'mark unread', exact: true })
+          .waitFor({ timeout: 2000 })
+          .catch(() => {})
+        assert(
+          (await content.getByRole('heading', { name: 'Q3 budget draft', exact: true }).count()) ===
+            1 &&
+            (await row.getByRole('button', { name: 'mark unread', exact: true }).count()) === 1,
+          'opening an unread result marks it read and keeps its conversation open',
+          'opening an unread result closed its conversation or failed to mark it read'
+        )
+        await snapshot(page, 'search-state-unread-open')
+      } else if (!emptyAdd) {
+        if (selectedStarred) {
+          await row.getByText('Q3 budget draft', { exact: true }).click()
+          await content.getByRole('heading', { name: 'Q3 budget draft', exact: true }).waitFor()
+          await content.getByRole('button', { name: 'starred', exact: true }).click()
+        } else {
+          await row.getByRole('button', { name: 'Unstar', exact: true }).click()
+        }
+        if (starredQuery) {
           await row.waitFor({ state: 'detached', timeout: 3000 }).catch(() => {})
           assert(
             (await row.count()) === 0,
-            `${query}: the nonmatching row leaves active results`,
-            `${query}: the nonmatching row remained in active results`
+            'is:starred: the nonmatching row leaves active results',
+            'is:starred: the nonmatching row remained in active results'
           )
+          if (selectedStarred)
+            await content.getByText('Nothing open yet :P', { exact: true }).waitFor()
           await snapshot(page, `search-state-${scenario}-empty`)
         } else {
           await row.getByRole('button', { name: 'Star', exact: true }).waitFor()
@@ -311,18 +374,34 @@ try {
         await box.press('Escape')
         await inbox.getByText('Launch checklist', { exact: true }).waitFor()
       }
+      if (restar || emptyAdd) {
+        await row.getByRole('button', { name: 'Star', exact: true }).click()
+        await row.getByRole('button', { name: 'Unstar', exact: true }).waitFor()
+      }
       await box.fill(query)
       await box.press('Enter')
       await inbox.getByText('Launch checklist', { exact: true }).waitFor({ state: 'detached' })
-      if (operator) {
+      if (starredQuery && !restar && !emptyAdd) {
         assert(
           (await row.count()) === 0,
-          `${query}: cached results also omit the row`,
-          `${query}: a cached nonmatching row reappeared`
+          'reopened starred search refetches without the unstarred row',
+          'a nonmatching row reappeared'
         )
       } else {
-        await row.waitFor()
-        if (cached) {
+        await row.waitFor({ timeout: 3000 }).catch(() => {})
+        if (restar || emptyAdd) {
+          assert(
+            (await row.getByRole('button', { name: 'Unstar', exact: true }).count()) === 1,
+            `${scenario}: reopening shows the newly starred row`,
+            `${scenario}: cached search lost the newly starred row`
+          )
+          if (selectedStarred)
+            assert(
+              (await content.getByText('Nothing open yet :P', { exact: true }).count()) === 1,
+              'the deliberately closed selection does not reopen on re-star',
+              're-star resurrected a stale selection'
+            )
+        } else if (cached) {
           const correctStar =
             scenario === 'cached-read' ||
             (await row.getByRole('button', { name: 'Unstar', exact: true }).count()) === 1
@@ -334,6 +413,12 @@ try {
             `${scenario}: cached search keeps current flags`,
             `${scenario}: cached search restored stale star/unread flags`
           )
+        } else if (unread) {
+          assert(
+            (await row.getByRole('button', { name: 'mark unread', exact: true }).count()) === 1,
+            'unread search keeps the updated read flag without pruning the conversation',
+            'unread search lost the updated row'
+          )
         } else {
           assert(
             (await row.getByRole('button', { name: 'Star', exact: true }).count()) === 1,
@@ -343,9 +428,14 @@ try {
         }
       }
       assert(
-        await page.evaluate(() => window.__searchCalls.length === 1),
-        `${scenario}: reopening reuses the cached page`,
-        `${scenario}: a refetch masked stale cache state`
+        await page.evaluate(
+          (expected) => window.__searchCalls.length === expected,
+          starredQuery ? 2 : 1
+        ),
+        starredQuery
+          ? 'plain starred membership changes invalidate the cached query'
+          : `${scenario}: reopening reuses the cached page`,
+        'search cache refetch policy was incorrect'
       )
       await snapshot(page, `search-state-${scenario}`)
     }
