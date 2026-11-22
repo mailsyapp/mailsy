@@ -2439,6 +2439,12 @@ try {
 
     const rail = page.getByRole('navigation', { name: 'Mail folders' })
     const tipsActive = () => rail.evaluate((nav) => nav.classList.contains('tips-active'))
+    await page.getByRole('searchbox', { name: 'Search emails' }).hover()
+    await page.waitForFunction(
+      () => !document.querySelector('.folder-rail')?.classList.contains('tips-active'),
+      undefined,
+      { timeout: 5000 }
+    )
     await rail.getByRole('button', { name: 'Starred', exact: true }).hover()
     await page.waitForTimeout(200)
     assert(!(await tipsActive()), 'a rail tooltip stays hidden before the dwell', 'the tooltip showed with no dwell')
