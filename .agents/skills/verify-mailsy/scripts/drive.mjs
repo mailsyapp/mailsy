@@ -2358,7 +2358,35 @@ try {
       'normal typing survives signature removal',
       'signature removal deleted normally typed text or kept the signature'
     )
+    await autoBody.fill('')
+    await autoBody.evaluate((editor) => {
+      const bytes = Uint8Array.from(
+        atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='),
+        (character) => character.charCodeAt(0)
+      )
+      const clipboardData = new DataTransfer()
+      clipboardData.items.add(new File([bytes], 'signature-image.png', { type: 'image/png' }))
+      editor.dispatchEvent(new ClipboardEvent('paste', { clipboardData, bubbles: true }))
+    })
+    await autoBody.locator(':scope > img').waitFor({ timeout: 10000 })
     await toggle.click()
+    await autoBody.pressSequentially('Typing after the image.')
+    assert(
+      await autoBody.evaluate((editor) => {
+        const image = editor.querySelector('img')
+        const signature = editor.querySelector('.mailsy-signature')
+        const paragraph = Array.from(editor.children).find((node) =>
+          node.textContent.includes('Typing after the image.')
+        )
+        return paragraph && !paragraph.contains(image) && !paragraph.contains(signature) &&
+          !signature.contains(paragraph) &&
+          Boolean(image.compareDocumentPosition(paragraph) & Node.DOCUMENT_POSITION_FOLLOWING) &&
+          Boolean(paragraph.compareDocumentPosition(signature) & Node.DOCUMENT_POSITION_FOLLOWING)
+      }),
+      'signature insertion types after a trailing inline image and before the signature',
+      'signature insertion typed before the inline image or inside the signature'
+    )
+    await snapshot(page, 'signature-image-caret')
     const savesBefore = await page.evaluate(() => (window.__draftSaves ?? []).length)
     await content.locator('.composerField input').first().fill('brook@example.com')
     await content.locator('.composerField input').nth(1).fill('Draft with signature')
@@ -2432,6 +2460,7 @@ try {
       'the reply composer starts without the block',
       'the reply opened with a signature it was never asked to add'
     )
+    const originalQuote = await page.locator('.body-editor .gmail_quote_container').innerHTML()
     await replyToggle.click()
     assert(
       (await replyToggle.getAttribute('aria-pressed')) === 'true' &&
@@ -2439,7 +2468,22 @@ try {
       'the reply surface appends the signature',
       'the reply toggle did not insert'
     )
-    await typeAtStart(page.locator('.body-editor'), 'Replying with my signature.\n\n')
+    await page.locator('.body-editor').pressSequentially('Replying with my signature.')
+    assert(
+      (await page.locator('.body-editor .gmail_quote_container').innerHTML()) === originalQuote &&
+        !(await page.locator('.body-editor .mailsy-signature').textContent()).includes('Replying with my signature.') &&
+        await page.locator('.body-editor').evaluate((editor) => {
+          const ownBody = Array.from(editor.children).find((node) =>
+            node.textContent.includes('Replying with my signature.')
+          )
+          return Boolean(ownBody &&
+            (ownBody.compareDocumentPosition(editor.querySelector('.gmail_quote_container')) &
+              Node.DOCUMENT_POSITION_FOLLOWING))
+        }),
+      'reply typing after signature insertion stays above and outside the unchanged quote',
+      'reply typing entered the quote or signature, or landed below the quote'
+    )
+    await snapshot(page, 'signature-reply-caret')
     await page.getByRole('button', { name: 'Send', exact: true }).click()
     await page.getByRole('status').getByText('Message sent.').waitFor({ timeout: 10000 })
     const replySent = await page.evaluate(() => window.__sent)
@@ -2454,6 +2498,19 @@ try {
       'the reply lost the quote or the signature'
     )
     await snapshot(page, 'signature')
+    await page.getByRole('button', { name: 'forward', exact: true }).click()
+    await page.getByRole('heading', { name: 'Compose email' }).waitFor({ timeout: 10000 })
+    const forwardQuote = await page.locator('.body-editor .gmail_quote_container').innerHTML()
+    await page.getByRole('button', { name: 'Signature', exact: true }).click()
+    await page.locator('.body-editor').pressSequentially('Forwarding outside the quote.')
+    assert(
+      (await page.locator('.body-editor .gmail_quote_container').innerHTML()) === forwardQuote &&
+        !(await page.locator('.body-editor .mailsy-signature').textContent()).includes('Forwarding outside the quote.') &&
+        (await bodyTextOf(page.locator('.body-editor'))).includes('Forwarding outside the quote.'),
+      'forward typing after signature insertion leaves the quote and signature unchanged',
+      'forward typing entered the quote or signature'
+    )
+    await snapshot(page, 'signature-forward-caret')
   } else {
     throw new Error(`unknown feature: ${FEATURE}`)
   }

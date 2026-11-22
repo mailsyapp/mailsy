@@ -28,5 +28,4 @@ Preconditions:
 
 - The detail pane stays mounted across a same-thread folder refetch, so the Labels menu can stay expanded from the removal; the journey only clicks `Labels` when the `Apply labels` group is closed, and a blind toggle can turn the reopen into a close.
 - Checkbox state flips asynchronously after the boundary write resolves, so the journey reads checks through `waitForChecked`, not an instant `isChecked`.
-- The rail chip browse, slash-name create, and confirm delete are not scripted until the expanded sidebar exposes the rail labels surface; the driver must not weaken the default-view absence assertions to drive them.
-- The map's earlier chip-driven steps moved out with the user's sidebar change that hid the labels section; the mock's `createUserLabel` parent-chain behavior is unaffected.
+- The journey reveals the collapsed rail's Labels surface before browsing Receipts; default-view absence assertions still apply before that reveal. Slash-name create and confirm delete are not scripted in this journey.

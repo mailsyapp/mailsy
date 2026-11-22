@@ -232,29 +232,42 @@ function removeSignatureBlocks(editor: HTMLDivElement): void {
   if (isVisuallyEmpty(editor)) editor.replaceChildren()
 }
 
+function signatureBodyParagraph(editor: HTMLDivElement): HTMLElement {
+  const quoteSelector = 'blockquote, .gmail_quote, .gmail_quote_container'
+  const quote =
+    Array.from(editor.children).find(
+      (child) => child.matches(quoteSelector) || child.querySelector(quoteSelector)
+    ) ?? null
+  const preceding = quote ? quote.previousSibling : editor.lastChild
+  if (
+    preceding instanceof HTMLElement &&
+    (preceding.tagName === 'DIV' || preceding.tagName === 'P') &&
+    !preceding.querySelector(`img, ${quoteSelector}, ${SIGNATURE_BLOCK_SELECTOR}`)
+  )
+    return preceding
+  const paragraph = document.createElement('div')
+  paragraph.appendChild(document.createElement('br'))
+  editor.insertBefore(paragraph, quote)
+  return paragraph
+}
+
 function insertSignatureBlockInto(editor: HTMLDivElement, html: string, focusCaret: boolean): void {
   removeSignatureBlocks(editor)
   const block = document.createElement('div')
   block.className = SIGNATURE_BLOCK_CLASS
   block.innerHTML = (isVisuallyEmpty(editor) ? '' : '<br>') + html
-  if (isVisuallyEmpty(editor)) {
-    const paragraph = document.createElement('div')
-    paragraph.appendChild(document.createElement('br'))
-    editor.prepend(paragraph)
-  }
+  const paragraph = signatureBodyParagraph(editor)
   editor.appendChild(block)
   if (!focusCaret) return
-  const before = block.previousSibling
   const selection = window.getSelection()
-  if (selection && before) {
-    const offset =
-      before.nodeType === Node.TEXT_NODE
-        ? (before.textContent ?? '').length
-        : isVisuallyEmpty(before as HTMLElement)
-          ? 0
-          : before.childNodes.length
-    placeCaret(editor, selection, before, offset)
-  } else editor.focus()
+  if (selection)
+    placeCaret(
+      editor,
+      selection,
+      paragraph,
+      isVisuallyEmpty(paragraph) ? 0 : paragraph.childNodes.length
+    )
+  else editor.focus()
 }
 
 export const BodyEditor = forwardRef<BodyEditorHandle, BodyEditorProps>(function BodyEditor(
