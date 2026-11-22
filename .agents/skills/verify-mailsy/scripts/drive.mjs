@@ -2318,7 +2318,7 @@ try {
       'the auto-insert left the body empty'
     )
     // The autosave round trip: the block rides the draft payload...
-    const autoBody = content.locator('.body-editor')
+    const autoBody = content.getByRole('textbox', { name: 'Message', exact: true })
     const firstSignatureHtml = await autoBody.innerHTML()
     const signatureOffset = () => autoBody.evaluate((editor) =>
       editor.querySelector('.mailsy-signature').getBoundingClientRect().top -
@@ -2439,6 +2439,11 @@ try {
         await body.pressSequentially('Plain continuation.')
         for (const signed of [true, false]) {
           if (!signed) await signatureToggle.click()
+          assert(
+            (await body.locator('.mailsy-signature').count()) === (signed ? 1 : 0),
+            `${surface}: ${evidence} signature block ${signed ? 'exists when on' : 'is gone after removal'}`,
+            `${surface}: ${evidence} signature block did not match the toggle state`
+          )
           assert(
             await body.evaluate((editor, { text, visibleText, quoteHtml }) => {
               const ownBody = editor.firstElementChild
@@ -2666,7 +2671,7 @@ try {
     )
     await snapshot(page, 'signature-draft-caret')
     await toggle.click()
-    await assertWhitespaceParity(content.locator('.body-editor'), toggle, 'reopened-draft')
+    await assertWhitespaceParity(content.getByRole('textbox', { name: 'Message', exact: true }), toggle, 'reopened-draft')
     await content.getByRole('button', { name: 'Send', exact: true }).click()
     await content.getByText('Message sent.').waitFor({ timeout: 10000 })
     const draftSent = await page.evaluate(() => window.__sent)
@@ -2717,7 +2722,7 @@ try {
       'reply typing entered the quote or signature, or landed below the quote'
     )
     await snapshot(page, 'signature-reply-caret')
-    await assertWhitespaceParity(page.locator('.body-editor'), replyToggle, 'reply')
+    await assertWhitespaceParity(page.getByRole('textbox', { name: 'Message', exact: true }), replyToggle, 'reply')
     await page.getByRole('button', { name: 'Send', exact: true }).click()
     await page.getByRole('status').getByText('Message sent.').waitFor({ timeout: 10000 })
     const replySent = await page.evaluate(() => window.__sent)
@@ -2745,7 +2750,7 @@ try {
       'forward typing entered the quote or signature'
     )
     await snapshot(page, 'signature-forward-caret')
-    await assertWhitespaceParity(page.locator('.body-editor'), replyToggle, 'forward')
+    await assertWhitespaceParity(page.getByRole('textbox', { name: 'Message', exact: true }), replyToggle, 'forward')
   } else if (FEATURE === 'background-work') {
     const inbox = page.getByRole('complementary', { name: 'Inbox' })
     await inbox.waitFor({ timeout: 10000 })
