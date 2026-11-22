@@ -729,6 +729,16 @@
       if (request.draftId !== undefined && typeof request.draftId !== 'string') {
         throw new Error('Invalid draft request')
       }
+      const retain = request.retainAttachments
+      const retained = await Promise.all(
+        (retain?.refs ?? []).map(async (ref) => {
+          if (window.__retainAttachmentError) throw new Error(window.__retainAttachmentError)
+          const key = `${retain.messageId}~${ref.attachmentId}`
+          if (!attachmentStore.has(key)) throw new Error(`mock: no attachment ${key}`)
+          return { filename: ref.filename, size: ref.size, data: attachmentStore.get(key) }
+        })
+      )
+      const attachments = [...(request.attachments ?? []), ...retained]
       let draftId
       if (request.draftId) {
         const target = seed.find((m) => m.draftId === request.draftId)
@@ -775,13 +785,11 @@
       // follow the request file set exactly: the inbox content store drops
       // stale entries and registers the current bytes per new ref.
       const stored = seed.find((m) => m.draftId === draftId)
-      stored.attachments = (request.attachments ?? []).map(
-        ({ filename, size }, i) => ({
-          filename,
-          size,
-          attachmentId: `att-${draftId}-${i}`
-        })
-      )
+      stored.attachments = attachments.map(({ filename, size }, i) => ({
+        filename,
+        size,
+        attachmentId: `att-${draftId}-${i}`
+      }))
       const msgId = stored.id
       const keep = new Set(
         stored.attachments.map((a) => `${msgId}~${a.attachmentId}`)
@@ -789,7 +797,7 @@
       for (const key of [...attachmentStore.keys()]) {
         if (key.startsWith(`${msgId}~`) && !keep.has(key)) attachmentStore.delete(key)
       }
-      ;(request.attachments ?? []).forEach((a, i) => {
+      attachments.forEach((a, i) => {
         attachmentStore.set(`${msgId}~att-${draftId}-${i}`, a.data)
       })
       draftSaves.push({ ...request, draftId })

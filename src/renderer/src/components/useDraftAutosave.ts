@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { errorMessage } from '../lib/format'
-import type { SendEmailRequest } from '../../../shared/types'
+import type { SaveDraftRequest } from '../../../shared/types'
 
 // The composer fields the bridge persists. The optional send fields ride
 // along for drafts that already carry threading (an existing draft keeps
 // its linkage when the autosave updates it).
-type AutosaveFields = SendEmailRequest
+type AutosaveFields = Omit<SaveDraftRequest, 'draftId'>
 
 // How long a keystroke pauses before its fields reach the drafts bridge:
 // one Gmail drafts call per settled edit, not per character.

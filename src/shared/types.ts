@@ -258,6 +258,10 @@ export interface SendDraftRequest extends SendEmailRequest {
 // the autosave and the send path stay pinned to the same server draft.
 export interface SaveDraftRequest extends SendEmailRequest {
   draftId?: string
+  retainAttachments?: {
+    messageId: string
+    refs: MessageAttachmentRef[]
+  }
 }
 
 export interface ModifyLabelsRequest {
