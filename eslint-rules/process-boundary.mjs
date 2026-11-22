@@ -12,11 +12,22 @@ const ALLOWED_TARGETS = {
 
 const NODE_BUILTINS = new RegExp(`^(node:.+|${builtinModules.join('|')})$`)
 
+const REACT = /^react(-dom)?(\/|$)/
+
+const MAIN_PROCESS_ONLY = [
+  /^electron(\/|$)/,
+  /^@electron-toolkit\/(utils|preload)(\/|$)/,
+  NODE_BUILTINS,
+  /^googleapis(\/|$)/,
+  /^google-auth-library(\/|$)/,
+  /^nodemailer(\/|$)/
+]
+
 const BANNED_PACKAGES = {
-  renderer: [/^electron$/, NODE_BUILTINS, /^googleapis$/, /^google-auth-library$/, /^nodemailer$/],
-  shared: [/^electron$/, NODE_BUILTINS, /^react(-dom)?(\/|$)/],
-  main: [/^react(-dom)?(\/|$)/],
-  preload: [/^react(-dom)?(\/|$)/]
+  renderer: MAIN_PROCESS_ONLY,
+  shared: [...MAIN_PROCESS_ONLY, REACT],
+  main: [REACT],
+  preload: [REACT]
 }
 
 function staticSpecifier(node) {
@@ -45,12 +56,22 @@ export default {
         "src/{{from}} must not import from src/{{to}}: each Electron process is its own bundle. Put code both sides need in src/shared (types and pure functions only), and cross the process line through the IPC contract in src/preload/index.ts ('window.api').",
       typeOnlyPreload:
         "The renderer may only use 'import type' from src/preload. Call the bridge at runtime through 'window.api'.",
-      bannedPackage: "'{{name}}' is not available to src/{{from}}. {{hint}}"
+      bannedPackage: "'{{name}}' is not available to src/{{from}}. {{hint}}",
+      unreadableSpecifier:
+        'This module name is computed, so the process boundary cannot be checked. Import or require a literal module name.',
+      noZone:
+        'Every file in src/ must live in src/main, src/preload, src/renderer or src/shared so the process boundary applies to it.'
     }
   },
   create(context) {
     const from = zoneOf(context.filename)
-    if (!from) return {}
+    if (!from) {
+      return {
+        Program(node) {
+          context.report({ node, messageId: 'noZone' })
+        }
+      }
+    }
 
     const HINTS = {
       renderer:
@@ -89,6 +110,12 @@ export default {
       context.report({ node, messageId: 'crossZone', data: { from, to: target } })
     }
 
+    function checkComputed(node, specifier) {
+      const source = staticSpecifier(specifier)
+      if (typeof source === 'string') check(node, source, false)
+      else context.report({ node, messageId: 'unreadableSpecifier' })
+    }
+
     return {
       ImportDeclaration(node) {
         check(node, node.source.value, node.importKind === 'type')
@@ -100,11 +127,11 @@ export default {
         check(node, node.source.value, node.exportKind === 'type')
       },
       ImportExpression(node) {
-        check(node, staticSpecifier(node.source), false)
+        checkComputed(node, node.source)
       },
       CallExpression(node) {
         if (node.callee.type === 'Identifier' && node.callee.name === 'require') {
-          check(node, staticSpecifier(node.arguments[0]), false)
+          checkComputed(node, node.arguments[0])
         }
       }
     }

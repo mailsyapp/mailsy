@@ -93,7 +93,7 @@ test('src rejects inline eslint-disable', () =>
 
 test('hooks may use raw effects and timers', () =>
   accepts(
-    'src/renderer/src/hooks/useProbe.ts',
+    'src/renderer/src/hooks/useTimers.ts',
     "import { useEffect } from 'react'\nexport function useProbe(): void {\n  useEffect(() => {\n    const timer = window.setTimeout(() => undefined, 1)\n    return () => window.clearTimeout(timer)\n  }, [])\n}\n"
   ))
 
