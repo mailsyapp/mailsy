@@ -2237,13 +2237,6 @@ try {
     await snapshot(page, 'refresh')
 
     await page.evaluate(() => {
-      const listFolder = window.api.listFolder
-      window.__refreshListed = []
-      window.api.listFolder = async (options) => {
-        const result = await listFolder(options)
-        window.__refreshListed.push(options.folder)
-        return result
-      }
       window.api.syncMail = () =>
         new Promise((resolve) => {
           window.__releaseRefresh = () => resolve({ kind: 'reset' })
@@ -2265,19 +2258,30 @@ try {
       await rail.getByRole('button', { name, exact: true }).click()
       const destination = page.getByRole('complementary', { name, exact: true })
       await destination.getByText(subject, { exact: true }).waitFor({ timeout: 5000 })
-      const before = await destination.getByRole('listitem').allTextContents()
-      await page.evaluate(() => {
-        window.__refreshListed.length = 0
+      const destinationRows = destination.getByRole('listitem')
+      const before = await destinationRows.count()
+      const marker = `Delivered to ${name} during refresh`
+      await page.evaluate(async ({ folder, marker, name }) => {
+        if (folder === 'drafts') {
+          await window.api.saveDraft({ to: '', body: '', subject: marker })
+        } else {
+          const label = (await window.api.listLabels()).find((label) => label.name === name)
+          const { delta } = window.__deliverMail({ subject: marker })
+          await window.api.modifyLabels({
+            kind: 'thread',
+            id: delta.threads[0].id,
+            addLabelIds: [label.id],
+            removeLabelIds: ['INBOX']
+          })
+        }
         window.__releaseRefresh()
         window.__releaseRefresh = null
-      })
-      const listed = await page.waitForFunction(() => window.__refreshListed[0], undefined, {
-        timeout: 5000
-      })
+      }, { folder, marker, name })
+      await destination.getByText(marker, { exact: true }).waitFor({ timeout: 5000 })
       assert(
-        (await listed.jsonValue()) === folder &&
-          JSON.stringify(await destination.getByRole('listitem').allTextContents()) ===
-            JSON.stringify(before),
+        (await destinationRows.count()) === before + 1 &&
+          (await destination.getByText(subject, { exact: true }).count()) === 1 &&
+          (await destination.getByText('Launch checklist', { exact: true }).count()) === 0,
         `a sweep started in Inbox refreshes ${name} after switching views`,
         `the delayed sweep listed the wrong view after switching to ${name}`
       )
@@ -2365,10 +2369,6 @@ try {
       'a third page reaches every surviving thread exactly once after archive and delete',
       'archive or delete left missing, duplicated or extra pages'
     )
-    await snapshot(page, 'pagination')
-
-    await page.getByRole('button', { name: 'Drafts', exact: true }).click()
-    const drafts = page.getByRole('complementary', { name: 'Drafts', exact: true })
     const replay = await page.evaluate(() => window.__paginationRequests.slice(2))
     assert(
       replay.length === 3 &&
@@ -2379,6 +2379,10 @@ try {
       'replay starts at page one and skips metadata for all still-visible rows',
       'the continuation was not rebuilt or already-visible rows would be fetched again'
     )
+    await snapshot(page, 'pagination')
+
+    await page.getByRole('button', { name: 'Drafts', exact: true }).click()
+    const drafts = page.getByRole('complementary', { name: 'Drafts', exact: true })
     await drafts.getByText('Draft: Q4 planning notes', { exact: true }).waitFor({ timeout: 5000 })
     const draftFill = firstPageSize - (await drafts.getByRole('listitem').count()) - 1
     await page.evaluate(async (count) => {
@@ -2405,7 +2409,7 @@ try {
       )
     }
     await snapshot(page, 'pagination-drafts')
-    } else if (FEATURE === 'signature') {
+  } else if (FEATURE === 'signature') {
     // The per-compose signature across all three surfaces: the stored text
     // is born from the first toggle in a fresh compose, the block rides
     // every send/autosave as ordinary body html, the draft round trip
