@@ -1,10 +1,6 @@
 import type { ComposerAttachments } from './useComposerAttachments'
 import { sizeLabel } from '../lib/format'
 
-// The composer's chip row: one chip per file, the picker button always
-// present. An empty set renders just the button, so a composer without
-// files looks exactly like it did before any of them existed. One hook
-// object in, so every surface's wiring is a single prop.
 export function AttachmentChips({ attach }: { attach: ComposerAttachments }): React.JSX.Element {
   return (
     <div className="attachmentBar">

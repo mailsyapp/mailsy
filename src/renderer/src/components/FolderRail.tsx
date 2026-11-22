@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
+import { useTimers } from '../hooks/useTimers'
 import {
   AlarmClock,
   Flag,
@@ -22,15 +23,13 @@ import {
 } from 'lucide-react'
 import type { MailFolder, MailLabel } from '../../../shared/types'
 
-// The dwell before a rail tooltip shows, matching the native-tooltip
-// standard (~0.5s rest before the hint appears).
 const TOOLTIP_DWELL_MS = 500
+const TOOLTIP_TIMER = 'tooltip-dwell'
 
 const FOLDERS: Array<{ id: MailFolder; label: string; icon: LucideIcon }> = [
   { id: 'inbox', label: 'Inbox', icon: Inbox },
   { id: 'starred', label: 'Starred', icon: Star },
   { id: 'snoozed', label: 'Snoozed', icon: AlarmClock },
-  // Gmail's category stack, Important first, the four inbox tabs after it.
   { id: 'important', label: 'Important', icon: Flag },
   { id: 'social', label: 'Social', icon: Users },
   { id: 'promotions', label: 'Promotions', icon: Megaphone },
@@ -43,11 +42,6 @@ const FOLDERS: Array<{ id: MailFolder; label: string; icon: LucideIcon }> = [
   { id: 'all', label: 'All Mail', icon: Mail }
 ]
 
-// One chip per user label, held together by the count it opens: the body
-// carries the label's Gmail background color and text color, the count the
-// thread total, and the corner holds the delete affordance. Selecting and
-// deleting must be separate elements because a click target that is also a
-// nested button is not renderable.
 function UserLabelChip({
   label,
   expanded,
@@ -109,8 +103,6 @@ function UserLabelChip({
 interface FolderRailProps {
   activeFolder: MailFolder
   activeLabelId: string | null
-  // The user labels to browse: system labels are filtered where the list
-  // is loaded (App), so the rail renders exactly what the rail owns.
   labels: MailLabel[]
   onSelect: (folder: MailFolder) => void
   onSelectLabel: (label: MailLabel) => void
@@ -127,69 +119,26 @@ export function FolderRail({
   onCreateLabel,
   onDeleteLabel
 }: FolderRailProps): React.JSX.Element {
-  // The name entry is an inline rail input, not window.prompt: Electron
-  // does not support prompt() and throws on it, while the 56px rail is
-  // wide enough for one line of text. The draft closes on commit and on
-  // Escape; blur never closes it so a stray click cannot eat the name.
   const [draftOpen, setDraftOpen] = useState(false)
   const [draftName, setDraftName] = useState('')
   const draftRef = useRef<HTMLInputElement | null>(null)
-  // The rail has two widths, collapsed (icon-only, default) and expanded
-  // (~220px rows): renderer-local presentation like labelsShown below,
-  // nothing persisted. Expanded makes the label section permanently
-  // visible, so labelsShown only gates the collapsed rail's Tag toggle.
   const [expanded, setExpanded] = useState(false)
-  // Collapsed mode keeps the Label chips behind a toggle (the user called
-  // the always-on chips out as clutter on 2026-10-20): the Tags button
-  // reveals them without overflowing the 56px column. Expanded mode above
-  // is the only always-visible chips surface.
   const [labelsShown, setLabelsShown] = useState(false)
-  // Tooltip dwell, the wait-then-costs-nothing-again rule: the first tip
-  // shows only after the pointer rests TOOLTIP_DWELL_MS on an affordance
-  // (the CSS transition-delay carries the wait), and once one tip is up
-  // the .tips-active class ends the wait for the rest of the rail —
-  // moving down the rail must not re-charge 0.5s on every neighbor, or
-  // reading the column feels like a slot machine. Leaving the rail
-  // revokes the mode so a fresh visit pays the wait again. The class is
-  // managed by ref, never React state: hover churn would re-render the
-  // whole folder list for a purely pointer-visual change.
   const railRef = useRef<HTMLElement | null>(null)
-  const tipTimerRef = useRef<number | null>(null)
-
-  useEffect(
-    () => () => {
-      // Unmount mid-dwell must not leave a timer that mutates a dead node.
-      if (tipTimerRef.current !== null) window.clearTimeout(tipTimerRef.current)
-    },
-    []
-  )
+  const tipTimers = useTimers()
 
   function handleTipHover(event: React.MouseEvent<HTMLElement>): void {
     const rail = railRef.current
     if (!rail) return
-    if (tipTimerRef.current !== null) {
-      window.clearTimeout(tipTimerRef.current)
-      tipTimerRef.current = null
-    }
-    // Mode is already on (neighbor switches pay nothing) or the pointer
-    // is over a tipless node (chips container, create input): nothing to
-    // charge or grant.
+    tipTimers.cancel(TOOLTIP_TIMER)
     if (rail.classList.contains('tips-active')) return
     if (!(event.target instanceof Element)) return
     if (!event.target.closest('[data-tip]')) return
-    tipTimerRef.current = window.setTimeout(() => {
-      tipTimerRef.current = null
-      rail.classList.add('tips-active')
-    }, TOOLTIP_DWELL_MS)
+    tipTimers.start(TOOLTIP_TIMER, TOOLTIP_DWELL_MS, () => rail.classList.add('tips-active'))
   }
 
   function handleTipLeave(): void {
-    // A dwell that never elapsed is cancelled, not banked; leaving the
-    // rail entirely also ends the already-paid mode.
-    if (tipTimerRef.current !== null) {
-      window.clearTimeout(tipTimerRef.current)
-      tipTimerRef.current = null
-    }
+    tipTimers.cancel(TOOLTIP_TIMER)
     railRef.current?.classList.remove('tips-active')
   }
 
@@ -201,14 +150,8 @@ export function FolderRail({
     setDraftOpen(false)
   }
 
-  // Expanded shows the label section permanently; collapsed keeps the
-  // existing Tag-toggle gate.
   const labelsVisible = expanded || labelsShown
 
-  // Selecting any view folds the drawer: it is an overlay over the mail,
-  // not a column of the layout, so a chosen destination gets the whole
-  // width back the moment it opens. Collapsed selection collapses a
-  // drawer that is already closed, which is nothing.
   function selectFolder(folder: MailFolder): void {
     onSelect(folder)
     setExpanded(false)
@@ -250,10 +193,6 @@ export function FolderRail({
             key={folder.id}
             type="button"
             className={`folder-rail-button${isActive ? ' active' : ''}${expanded ? ' expanded' : ''}`}
-            // Expanded rows read as text already; a tip would only repeat
-            // the label next to itself. The aria-label stays on either
-            // way: the mobile media query hides the text span, so the
-            // accessible name cannot live in the visible content alone.
             data-tip={expanded ? undefined : folder.label}
             aria-label={folder.label}
             aria-current={isActive ? 'page' : undefined}
@@ -266,12 +205,6 @@ export function FolderRail({
       })}
       {!expanded &&
         (activeLabel ? (
-          // A label view is active and the collapsed rail keeps its chips
-          // tucked away: the rail still has to say which view it is on,
-          // so the label takes the Tag toggle's place as a small tile in
-          // the label's own color carrying its first three letters (two
-          // identities on the tile, none on a plain highlight). Clicking
-          // it opens the same labels surface the Tag toggle opens.
           <button
             type="button"
             className="active-label-tile"
@@ -352,10 +285,8 @@ export function FolderRail({
             aria-label="New label"
             data-tip={expanded ? undefined : 'New label'}
             onClick={() => {
-              setDraftOpen(true)
-              // autofocus fires on mount, but an already-visited draft may
-              // not re-run it; focus explicitly too.
-              requestAnimationFrame(() => draftRef.current?.focus())
+              if (draftOpen) draftRef.current?.focus()
+              else setDraftOpen(true)
             }}
           >
             <Plus size={18} strokeWidth={2.2} aria-hidden="true" />

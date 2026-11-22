@@ -7,16 +7,10 @@ const FUSE_KEYS = [
   { name: 'snippet', weight: 0.1 }
 ]
 
-// Gmail operator queries (`from:`, `is:`...) are the server's job; the
-// local Fuse instances here only answer free-text, so tokens shaped like
-// `key:value` opt every local path out.
 export function hasGmailOperator(query: string): boolean {
   return /[a-zA-Z]+:/.test(query)
 }
 
-// While typing (before the debounced commit fires), Fuse previews instant
-// matches over already-loaded mail. Free, no API cost, and makes search
-// feel instant while the server query is still debouncing.
 export function previewMatches(pooled: ThreadSummary[], query: string): ThreadSummary[] {
   return new Fuse(pooled, {
     keys: FUSE_KEYS,
@@ -27,8 +21,6 @@ export function previewMatches(pooled: ThreadSummary[], query: string): ThreadSu
     .map((r) => r.item)
 }
 
-// The server result set reordered by Fuse relevance, or the input itself
-// when Fuse would drop everything (its score is a tiebreak, not a filter).
 export function rerankByFuse(threads: ThreadSummary[], query: string): ThreadSummary[] {
   if (threads.length === 0 || !query || hasGmailOperator(query)) return threads
   const fuse = new Fuse(threads, {

@@ -26,13 +26,7 @@ const api = {
   signOut: (): Promise<void> => ipcRenderer.invoke('auth:sign-out'),
   listFolder: (options?: ListFolderOptions): Promise<ThreadPage> =>
     ipcRenderer.invoke('gmail:list', options),
-  // The canonical refresh funnel: every path — the renderer's Refresh
-  // button here, main's adaptive clock and window-focus trigger inside
-  // sync — settles through the main-process sync.
   syncMail: (reason: SyncReason): Promise<SyncResult> => ipcRenderer.invoke('gmail:sync', reason),
-  // Pushed sweep results ('clock' and 'focus' have no awaiting caller):
-  // the subscription returns its own unsubscribe, the shape of a listener
-  // tie the renderer owns across sign-in flips.
   onSyncResult: (listener: (result: SyncResult) => void): (() => void) => {
     const wrapped = (_event: Electron.IpcRendererEvent, result: SyncResult): void =>
       listener(result)
@@ -52,13 +46,9 @@ const api = {
     ipcRenderer.invoke('gmail:save-draft', request),
   discardDraft: (draftId: string): Promise<void> =>
     ipcRenderer.invoke('gmail:discard-draft', draftId),
-  // Nothing picked resolves to [] so a cancelled dialog changes nothing.
   pickAttachments: (): Promise<ComposeAttachment[]> => ipcRenderer.invoke('attachments:pick'),
-  // One stored attachment's bytes, standard base64 (see fetchAttachment).
   getAttachment: (messageId: string, attachmentId: string): Promise<string> =>
     ipcRenderer.invoke('gmail:get-attachment', messageId, attachmentId),
-  // Saving a listed attachment to a local file; false means the dialog
-  // was cancelled.
   saveAttachment: (messageId: string, attachmentId: string, filename: string): Promise<boolean> =>
     ipcRenderer.invoke('attachments:save', messageId, attachmentId, filename),
   modifyLabels: (request: ModifyLabelsRequest): Promise<void> =>
@@ -82,8 +72,5 @@ if (process.contextIsolated) {
     console.error(error)
   }
 } else {
-  // @ts-ignore (define in dts)
-  window.electron = electronAPI
-  // @ts-ignore (define in dts)
-  window.api = api
+  Object.assign(window, { electron: electronAPI, api })
 }

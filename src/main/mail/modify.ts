@@ -19,9 +19,6 @@ function assertModifyFields(request: ModifyLabelsRequest): void {
   }
 }
 
-// Label membership is Gmail's domain model: archive, trash, read/unread, and
-// star are all add/remove of labels, so this unit stays generic rather than
-// becoming an archive-only endpoint.
 export async function modifyLabels(request: ModifyLabelsRequest): Promise<void> {
   assertModifyFields(request)
 

@@ -4,8 +4,6 @@ import type { gmail_v1 } from 'googleapis'
 import type { MailLabel } from '../../shared/types'
 import { withQuotaRetry } from './resilience'
 
-// Gmail answers colors as six-digit hex strings; the harness displays them
-// as CSS values, so only the hash needs prepending.
 function stripHexPrefix(hex: string): string {
   return hex.replace(/^#/, '')
 }
@@ -17,7 +15,6 @@ function toLabel(label: gmail_v1.Schema$Label): MailLabel {
     name: label.name ?? '',
     type: label.type === 'system' ? 'system' : 'user',
     color:
-      // A label without colors keeps the rail's neutral chip.
       color?.backgroundColor && color?.textColor
         ? {
             background: `#${stripHexPrefix(color.backgroundColor)}`,
@@ -29,8 +26,6 @@ function toLabel(label: gmail_v1.Schema$Label): MailLabel {
   }
 }
 
-// labels.list answers system and user labels alike; the renderer picks one
-// type per surface, so the boundary stays the whole honest list.
 export async function listLabels(): Promise<MailLabel[]> {
   const gmail: GmailClient = getGmailClient()
   const list = await withQuotaRetry(() => gmail.users.labels.list({ userId: 'me' }))
@@ -39,17 +34,11 @@ export async function listLabels(): Promise<MailLabel[]> {
   )
 }
 
-// labels.list answers system and user labels alike; user-label readers are
-// the only writers of mailbox state, so listing filters to the user set
-// (an undefined type name is a user label, per Gmail's schema default).
 async function listUserLabels(gmail: GmailClient): Promise<gmail_v1.Schema$Label[]> {
   const list = await withQuotaRetry(() => gmail.users.labels.list({ userId: 'me' }))
   return (list.data.labels ?? []).filter((label) => (label.type ?? 'user') !== 'system')
 }
 
-// The canonical find-by-name: names are unique case-insensitively the way
-// Gmail treats duplicate names, so a label differing only in case is the
-// same label. Answers null when absent.
 export async function findUserLabelByName(
   gmail: GmailClient,
   name: string
@@ -60,15 +49,6 @@ export async function findUserLabelByName(
   return found ?? null
 }
 
-// The canonical create: the raw labels.create write behind the quota retry,
-// answering Gmail's whole label so callers decide how to read it. The flat
-// write only — nesting and guards live in createUserLabel.
-//
-// Single-flight per name: two racing creates for the same name both find
-// nothing and both write, and Gmail rejects the loser with a 409 duplicate.
-// The pending map hands the runner-up the winner's in-flight write, so both
-// callers receive one label. Shared ancestors of nested names ride the same
-// map, so two nested creates racing on a missing parent create it once.
 const pendingCreates = new Map<string, Promise<gmail_v1.Schema$Label>>()
 
 export function createUserLabelByName(
@@ -82,27 +62,17 @@ export function createUserLabelByName(
     const created = await withQuotaRetry(() =>
       gmail.users.labels.create({ userId: 'me', requestBody: { name } })
     )
-    // A create without an id is unusable downstream (the chip, the view
-    // route, and the delete guard all key on it): fail loudly instead of
-    // inventing a '' id label.
     if (!created.data.id) throw new Error('Gmail did not return an id for the created label')
     return created.data
   })()
   pendingCreates.set(key, run)
   void run.catch(() => {})
   void run.finally(() => {
-    // Only the registered run evicts: a joiner that finished after a newer
-    // attempt must not clear it.
     if (pendingCreates.get(key) === run) pendingCreates.delete(key)
   })
   return run
 }
 
-// Gmail's nesting has no API tree: a "Work/Deep" label is the flat name
-// "Work/Deep", and the web UI nests it under a "Work" label shown alongside.
-// The parent chain is created when missing, so the web UI's tree shows both
-// levels. An already-existing label is returned from the first find instead
-// of a 409.
 export async function createUserLabel(name: string): Promise<MailLabel> {
   const gmail: GmailClient = getGmailClient()
   const labelName = name.trim()
@@ -129,8 +99,6 @@ export async function createUserLabel(name: string): Promise<MailLabel> {
   return toLabel(created)
 }
 
-// labels.get runs first as the boundary's own guard: a system label id 404s
-// or answers type SYSTEM before any delete call goes out at all.
 export async function deleteUserLabel(id: string): Promise<void> {
   if (!id.trim()) throw new Error('Label ID is required')
   const gmail: GmailClient = getGmailClient()

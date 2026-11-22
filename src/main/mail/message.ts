@@ -66,8 +66,6 @@ export async function toEmailDetail(
     starred: (msg.labelIds ?? []).includes('STARRED'),
     bodyText: out.text,
     bodyHtml,
-    // Content-less refs only; the draft editor resolves each back to bytes
-    // when it must re-emit the draft without losing its files.
     attachments: out.attachments
   }
 }
@@ -92,12 +90,6 @@ export function toEmailSummary(
   }
 }
 
-// A list row is a conversation, not a message: Gmail's row shows the thread's
-// original subject, the distinct senders, and the unread/starred state the
-// whole thread carries. These are flattened here so the renderer never reads
-// Gmail's labelIds or message array itself. The optional snooze label id is
-// the fetch layer's resolved id for Mailsy's parking label; when given, its
-// presence on any message flattens to snoozedByMailsy like the counts above.
 export function threadToSummary(
   thread: gmail_v1.Schema$Thread,
   snoozeLabelId?: string

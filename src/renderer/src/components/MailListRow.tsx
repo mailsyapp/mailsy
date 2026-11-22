@@ -3,9 +3,6 @@ import { StarIcon } from '@hugeicons/core-free-icons'
 import type { MailFolder, ThreadSummary } from '../../../shared/types'
 import { senderNameOf } from '../lib/format'
 
-// One list row: the opener (subject, participants, snippet) plus the
-// folder's inline action buttons. The action handlers stay App-side,
-// where the list truth they mutate lives.
 type MailListRowProps = {
   row: ThreadSummary
   folder: MailFolder
@@ -34,15 +31,10 @@ export function MailListRow({
         onClick={() => onOpen(row)}
         style={{ all: 'unset', display: 'block', cursor: 'pointer', width: '100%' }}
       >
-        {/* Bold is the unread affordance, so the row owns the
-            weight through li.unread; the subject itself is plain
-            markup. */}
         <span className="email-text">
           {row.subject}
           {row.unreadCount > 1 ? ` (${row.unreadCount})` : ''}
         </span>
-        {/* Sender names for the whole conversation, like Gmail's
-            participant summary on thread rows. */}
         <div className="from email-text">{row.participants.map(senderNameOf).join(', ')}</div>
         <div className="snippet email-text">{row.snippet}</div>
       </button>
@@ -74,9 +66,6 @@ export function MailListRow({
             aria-label={row.starred ? 'Unstar' : 'Star'}
             aria-pressed={row.starred}
           >
-            {/* The star glyph is a closed contour drawn unfilled by
-                the icon set; filling it with the row's gold when
-                starred is the whole state read. */}
             <HugeiconsIcon
               icon={StarIcon}
               size={18}

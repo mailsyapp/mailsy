@@ -1,59 +1,30 @@
-import { forwardRef, useImperativeHandle, useEffect, useRef } from 'react'
+import { forwardRef, useImperativeHandle, useRef } from 'react'
+import { useAfterCurrentTask } from '../hooks/useAfterCurrentTask'
+import { useLatest } from '../hooks/useLatest'
+import { useOnMount } from '../hooks/useOnMount'
 import { imageToPayload, looksLikeImageFile } from '../lib/attachmentFile'
 import { SIGNATURE_BLOCK_CLASS, SIGNATURE_BLOCK_SELECTOR } from '../lib/signature'
 
-// The compose body across all three composer surfaces: one rich-text field
-// where a line of text, a dropped screenshot, and another line of text all
-// live in place — Gmail's inline-image behavior. Dropping or pasting image
-// files inserts them into the text the way the paste marked them up;
-// non-image files never land here (the composer's drop routing sends them
-// to the attachment chips).
-//
-// The box is uncontrolled after mount: React re-renders never rewrite it
-// (rewriting would move the caret), so composers hand it a `key` when the
-// prefill identity changes instead. Every input reports the content in its
-// two forms at once — the html the send/autosave rides, and the plain text
-// fallback — through a single `onChange`.
 export interface BodyEditorHandle {
-  // File-drop routing that lands outside the editor's own surface (on the
-  // composer chrome) still wants its images here; inserts at the box's end.
   insertImages: (files: File[]) => Promise<void>
-  // The signature block: insert appends (or replaces — one block, never
-  // two) at the box's end, remove takes the block back out, and the
-  // presence check drives the composer's toggle state. The block is the
-  // caller's markup (lib/signature builds it); the editor only places it.
-  // `focusCaret` is whether the insert takes the caret: the bar's toggle
-  // does (the user just acted on the body); the fresh-compose auto-insert
-  // does not (see insertSignatureBlockInto below).
   insertSignatureBlock: (html: string, options?: { focusCaret?: boolean }) => void
   removeSignatureBlock: () => void
   hasSignatureBlock: () => boolean
 }
 
 type BodyEditorProps = {
-  // The rich content the box starts with (prefilled drafts, reply quotes).
   initialHtml: string
   placeholder?: string
   onChange: (content: { html: string; text: string }) => void
-  // Files dropped or pasted here that are not images never stay in the
-  // editor: the callback forwards them to the composer's chip routing.
   onNonImageFiles: (files: File[]) => void
 }
 
-// Reads the box in its two forms. A box that holds nothing but placeholder
-// line breaks (the engine keeps one when its last text is deleted) reports
-// the empty html `''`: empty is empty, both for sends and for what the
-// placeholder shows.
 function readContent(editor: HTMLDivElement): { html: string; text: string } {
   const html = editor.innerHTML
   const text = editor.innerText
   return { html: /^(\s|<br\/?>)*$/i.test(html) ? '' : html, text }
 }
 
-// True when the box shows no content a user would see: whitespace-only
-// text nodes and marker <br>s aside. Drives the placeholder attribute —
-// `:empty` cannot, because the engine's kept <br> makes the box not-empty
-// while looking empty.
 function isVisuallyEmpty(editor: HTMLDivElement): boolean {
   for (const node of editor.childNodes) {
     if (node.nodeType === Node.TEXT_NODE && node.textContent?.trim() === '') continue
@@ -63,21 +34,6 @@ function isVisuallyEmpty(editor: HTMLDivElement): boolean {
   return true
 }
 
-// Reports the box to the composer. Deferred out of the engine's edit
-// transaction on purpose: reading innerText (every report does layout)
-// synchronously during `input` makes Chromium abort a pending
-// deleteContentBackward over a trailing <br> — Backspace then cannot
-// remove line breaks. A macrotask boundary is what separates the
-// transaction: microtasks still run inside the keystroke's task.
-function reportLater(editor: HTMLDivElement, onChange: BodyEditorProps['onChange']): void {
-  setTimeout(() => {
-    editor.toggleAttribute('data-empty', isVisuallyEmpty(editor))
-    onChange(readContent(editor))
-  }, 0)
-}
-
-// Whitespace text and the engine's marker <br>s do not count as content
-// when walking a block chain.
 function isBlankNode(node: Node): boolean {
   if (node.nodeType === Node.TEXT_NODE) return (node.textContent ?? '').trim() === ''
   if (node.nodeName === 'BR') return true
@@ -109,25 +65,12 @@ function placeCaret(
   editor.focus()
 }
 
-// Chromium's Backspace no-ops in positions mail bodies are full of — the
-// vanilla-contenteditable probes confirmed it is engine behavior, not the
-// editor's: right behind a line-break marker (the box keeps one once the
-// last character is deleted), between blank markers and a following block
-// (a reply quote starts exactly like that), and at the box's very start
-// with the quote block ahead. This handler supplies the missing deletes at
-// the engine's own granularity — one visible unit per keystroke: a marker,
-// one merge across a block seam, or the following block when nothing is
-// left behind the caret (how backspacing through a quote reads). It
-// returns whether it handled the keystroke.
 function mergeBackward(editor: HTMLDivElement): boolean {
   const selection = window.getSelection()
   if (!selection || selection.rangeCount === 0) return false
   const range = selection.getRangeAt(0)
   if (!range.collapsed) return false
 
-  // Caret right behind a line-break marker: remove the marker. The engine
-  // stalls even when ordinary text follows, and removing the marker is
-  // exactly what the engine itself does in the positions it handles.
   if (range.startContainer.nodeType === Node.ELEMENT_NODE) {
     const container = range.startContainer
     const index = range.startOffset
@@ -144,9 +87,6 @@ function mergeBackward(editor: HTMLDivElement): boolean {
   const caretElement = start.nodeType === Node.TEXT_NODE ? start.parentElement : (start as Element)
   if (!caretElement || caretElement === editor) return eatAheadUnit(editor, selection)
 
-  // The caret must sit at the start of its whole chain inside the box: no
-  // visible content in any ancestor level before it. Content siblings
-  // anywhere make this an ordinary deletion, which the engine handles.
   let probe: Node | null = caretElement
   let anchor: Node | null = null
   while (probe && probe !== editor) {
@@ -161,8 +101,6 @@ function mergeBackward(editor: HTMLDivElement): boolean {
   if (!anchor) return eatAheadUnit(editor, selection)
 
   const anchorParent = anchor.parentElement as HTMLElement
-  // The empty-line markers between the anchor and the preceding content:
-  // collected so a merge can clear the seam without orphaning lines.
   const blanksBefore: Node[] = []
   let content: Node | null = null
   let sibling: Node | null = anchor.previousSibling
@@ -176,17 +114,12 @@ function mergeBackward(editor: HTMLDivElement): boolean {
   }
 
   if (!content) {
-    // Only blank markers precede the anchor: eat the one nearest the
-    // anchor (the engine's own blank-marker deletion, one per press).
     if (blanksBefore.length === 0) return false
     removeNode(blanksBefore[blanksBefore.length - 1])
     return true
   }
 
   if (isBlockElement(content)) {
-    // Merge: the anchor's children move into the preceding block's end;
-    // the blank markers between them leave with the boundary. The caret
-    // lands on the seam — the engine's deleting continues from there.
     const target = content as HTMLElement
     const moved = Array.from(anchor.childNodes)
     for (const blank of blanksBefore) removeNode(blank)
@@ -197,9 +130,6 @@ function mergeBackward(editor: HTMLDivElement): boolean {
     return true
   }
 
-  // A text or inline neighbor: unwrap the anchor into its own level. Its
-  // children take its place after the blank markers (which the user has
-  // not deleted yet), and the next presses operate normally from there.
   const moved = Array.from(anchor.childNodes)
   const anchorIndex = Array.prototype.indexOf.call(anchorParent.childNodes, anchor)
   for (const child of moved) anchorParent.insertBefore(child, anchor)
@@ -208,13 +138,6 @@ function mergeBackward(editor: HTMLDivElement): boolean {
   return true
 }
 
-// At the box's very start nothing sits behind the caret, so Backspace
-// there is a legitimate no-op for plain text — the engine's no-op stands.
-// When, however, blank markers and a block element follow the caret (the
-// reply quote opens with exactly `<br><br><div class=gmail_quote…>`), the
-// quote eats from its front: one marker per press until none are left,
-// then the block itself. Any text or inline content met before a block
-// calls the whole thing off — a delete-before start must stay inert.
 function eatAheadUnit(editor: HTMLDivElement, selection: Selection): boolean {
   if (selection.rangeCount === 0) return false
   const range = selection.getRangeAt(0)
@@ -222,16 +145,10 @@ function eatAheadUnit(editor: HTMLDivElement, selection: Selection): boolean {
   if (container.nodeType === Node.TEXT_NODE && (container.textContent ?? '').length > 0)
     return false
 
-  // The unit queue: blank markers met while walking toward the first
-  // block; one leaves per keystroke, so the press cadence matches the
-  // visible line structure.
   const markers: Node[] = []
   let node: Node = container
   let first = true
   while (true) {
-    // The scan stays inside the box: climbing past it would sight the
-    // composer's chrome (attachment bar, actions row) as "content ahead",
-    // and the body's keystrokes must never eat the composer.
     let follower: Node | null = null
     if (node === editor) {
       if (!first) return false
@@ -245,8 +162,6 @@ function eatAheadUnit(editor: HTMLDivElement, selection: Selection): boolean {
     }
     while (follower) {
       if (follower.nodeType === Node.TEXT_NODE) {
-        // Whitespace between markers is eatable alongside them; visible
-        // text ahead means a plain delete-before start — stop claiming.
         if ((follower.textContent ?? '').trim() !== '') return false
       } else if (follower.nodeName === 'BR') {
         markers.push(follower)
@@ -259,7 +174,6 @@ function eatAheadUnit(editor: HTMLDivElement, selection: Selection): boolean {
         placeCaret(editor, selection, parent, slot)
         return true
       } else {
-        // An inline element ahead: the engine's own delete-before stands.
         return false
       }
       follower = follower.nextSibling
@@ -270,10 +184,6 @@ function eatAheadUnit(editor: HTMLDivElement, selection: Selection): boolean {
   }
 }
 
-// Reports the box to the composer right away: the imperative paths (drop,
-// paste, insertImages) change the DOM outside any input event, so both the
-// content and the data-empty marker must be re-derived here or the
-// placeholder would linger over a box that now holds an image.
 function reportNow(editor: HTMLDivElement, onChange: BodyEditorProps['onChange']): void {
   editor.toggleAttribute('data-empty', isVisuallyEmpty(editor))
   onChange(readContent(editor))
@@ -283,8 +193,6 @@ function insertDataUrlAtCaret(editor: HTMLDivElement, dataUrl: string): void {
   const img = document.createElement('img')
   img.src = dataUrl
   const selection = window.getSelection()
-  // A caret inside the box inserts at the caret; a collapsed or foreign
-  // selection (clicking Send first, paste routing from outside) appends.
   if (
     selection &&
     selection.rangeCount > 0 &&
@@ -296,7 +204,6 @@ function insertDataUrlAtCaret(editor: HTMLDivElement, dataUrl: string): void {
   } else {
     editor.appendChild(img)
   }
-  // Collapse the caret after the image so typing continues where it landed.
   const after = document.createRange()
   after.setStartAfter(img)
   after.collapse(true)
@@ -304,11 +211,6 @@ function insertDataUrlAtCaret(editor: HTMLDivElement, dataUrl: string): void {
   selection?.addRange(after)
 }
 
-// One insertion path for every way an image file enters this box: dropped
-// at the caret, pasted, or inserted through the imperative handle from the
-// composer chrome. Each image becomes an <img> with its data URL where the
-// caret sits; anything not an image comes back to the caller for its chip
-// routing.
 async function insertImageFiles(editor: HTMLDivElement, files: File[]): Promise<File[]> {
   const leftovers: File[] = []
   for (const file of files) {
@@ -319,39 +221,14 @@ async function insertImageFiles(editor: HTMLDivElement, files: File[]): Promise<
   return leftovers
 }
 
-// The signature block, placed by the imperative handle below: a marked
-// div the composer toggles at the box's end. Inserted after typed content
-// it opens with a <br> seam so the signature sits one blank line below
-// the message, Gmail-style; in an empty box it is the content and needs
-// no seam. One insertion path for both the fresh-compose auto-insert and
-// the bar's toggle, and re-inserting replaces the previous block (an
-// edited signature re-applies without stacking a second copy).
-//
-// Every lookup is scoped to the editor's direct children: the block is
-// always appended at the top level, while quoted or forwarded content is
-// nested deeper — foreign html (sanitized, but classes survive) can carry
-// the same class name and must never read as the composer's signature or
-// fall to its remove.
 const SIGNATURE_OWNED_SELECTOR = `:scope > ${SIGNATURE_BLOCK_SELECTOR}`
 
-// The removal half of the block's lifecycle: insert runs it as its
-// replace step (one block, never two) and the handle's remove runs it
-// alone. Keeping it in one place keeps the scoped-lookup invariant —
-// foreign html nested deeper never reads as the composer's signature —
-// in one place too.
 function removeSignatureBlocks(editor: HTMLDivElement): void {
   for (const existing of Array.from(editor.querySelectorAll(SIGNATURE_OWNED_SELECTOR))) {
     existing.remove()
   }
 }
 
-// `focusCaret` splits the two callers' caret appetite. The bar's toggle
-// just acted on the body and typing continues above the signature, so it
-// takes the caret. The fresh-compose auto-insert runs before the user has
-// touched anything, and focus must not depend on whether a stored
-// signature happens to exist — otherwise the first-ever compose (nothing
-// stored) and every later one would open with the caret in different
-// places.
 function insertSignatureBlockInto(editor: HTMLDivElement, html: string, focusCaret: boolean): void {
   removeSignatureBlocks(editor)
   const block = document.createElement('div')
@@ -359,12 +236,8 @@ function insertSignatureBlockInto(editor: HTMLDivElement, html: string, focusCar
   block.innerHTML = (isVisuallyEmpty(editor) ? '' : '<br>') + html
   editor.appendChild(block)
   if (!focusCaret) return
-  // The caret goes to the seam before the block, so typing continues
-  // above the signature and never lands inside it.
   const index = Array.prototype.indexOf.call(editor.childNodes, block)
   const selection = window.getSelection()
-  // placeCaret needs a live Selection; with none to move (rare — no
-  // selection exists yet), the focus alone is what the placement ends in.
   if (selection) placeCaret(editor, selection, editor, Math.max(index, 0))
   else editor.focus()
 }
@@ -374,30 +247,17 @@ export const BodyEditor = forwardRef<BodyEditorHandle, BodyEditorProps>(function
   ref
 ) {
   const editorRef = useRef<HTMLDivElement | null>(null)
-  // The imperative handle reads the current callback through this ref: the
-  // handle installs once, so a stale `onChange` closure would silently
-  // report into a previous render's setter otherwise.
-  const onChangeRef = useRef(onChange)
-  useEffect(() => {
-    onChangeRef.current = onChange
+  const onChangeRef = useLatest(onChange)
+  const reportAfterEditTransaction = useAfterCurrentTask(() => {
+    if (editorRef.current) reportNow(editorRef.current, onChangeRef.current)
   })
 
-  // One-time prefill only: the uncontrolled box must not be rewritten on
-  // re-render (caret death). Composers remount via key when prefill changes.
-  useEffect(() => {
+  useOnMount(() => {
     const editor = editorRef.current
     if (!editor) return
     if (initialHtml) editor.innerHTML = initialHtml
-    editor.toggleAttribute('data-empty', isVisuallyEmpty(editor))
-    // The stall patches (mergeBackward, eatAheadUnit) ride the plain
-    // Backspace keydown: when the engine no-ops at all it may never report
-    // a beforeinput to veto, and keydown is the one hook that always sees
-    // the keystroke before it.
-    // The initial content counts as the first input: the composers' state
-    // starts in sync with what the box shows.
-    onChange(readContent(editor))
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+    reportNow(editor, onChange)
+  })
 
   useImperativeHandle(
     ref,
@@ -425,18 +285,13 @@ export const BodyEditor = forwardRef<BodyEditorHandle, BodyEditorProps>(function
       hasSignatureBlock: () => Boolean(editorRef.current?.querySelector(SIGNATURE_OWNED_SELECTOR))
     }),
 
-    []
+    [onChangeRef]
   )
 
   async function handleDrop(event: React.DragEvent<HTMLDivElement>): Promise<void> {
     if (event.dataTransfer.types.includes('Files')) event.preventDefault()
-    // Claimed synchronously: the composer's own form-level drop handler
-    // runs during bubbling, before this async continuation resumes, and it
-    // would route the same image back in — a double insert. Claiming the
-    // event here is also why non-image leftovers hand off explicitly below.
     event.stopPropagation()
     const editor = event.currentTarget
-    // The image lands where the drag let go, not at the stale caret.
     if (typeof document.caretRangeFromPoint === 'function') {
       const range = document.caretRangeFromPoint(event.clientX, event.clientY)
       if (range) {
@@ -446,9 +301,6 @@ export const BodyEditor = forwardRef<BodyEditorHandle, BodyEditorProps>(function
     }
     const files = Array.from(event.dataTransfer.files)
     const leftovers = await insertImageFiles(editor, files)
-    // Non-image files keep their chip routing through the composer's own
-    // addFiles; the synchronous stopPropagation above is what makes this
-    // handoff necessary.
     if (leftovers.length) onNonImageFiles(leftovers)
     editor.focus()
     reportNow(editor, onChange)
@@ -464,11 +316,8 @@ export const BodyEditor = forwardRef<BodyEditorHandle, BodyEditorProps>(function
       data-placeholder={placeholder}
       contentEditable
       suppressContentEditableWarning
-      onInput={(event) => reportLater(event.currentTarget, onChange)}
+      onInput={reportAfterEditTransaction}
       onDrop={(event) => void handleDrop(event)}
-      // A pasted screenshot is the same image-in-text the drop is; the file
-      // classifier is the shared module's image rule, the same one the drop
-      // and the composer routing speak.
       onPaste={(event) => {
         const editor = event.currentTarget
         const files = Array.from(event.clipboardData.files).filter(looksLikeImageFile)
@@ -479,15 +328,11 @@ export const BodyEditor = forwardRef<BodyEditorHandle, BodyEditorProps>(function
           reportNow(editor, onChangeRef.current)
         })
       }}
-      // A plain Enter inserts a line break node, not a new div; the html
-      // stays flat enough to round-trip as the same document. Backspace
-      // where the engine stalls (see mergeBackward) is claimed here, at
-      // the one hook that always sees the keystroke ahead of the engine.
       onKeyDown={(event) => {
         if (event.key === 'Enter' && !event.shiftKey) {
           event.preventDefault()
           document.execCommand('insertLineBreak')
-          reportLater(event.currentTarget, onChange)
+          reportAfterEditTransaction()
           return
         }
         if (
@@ -499,7 +344,7 @@ export const BodyEditor = forwardRef<BodyEditorHandle, BodyEditorProps>(function
           mergeBackward(event.currentTarget)
         ) {
           event.preventDefault()
-          reportLater(event.currentTarget, onChange)
+          reportAfterEditTransaction()
         }
       }}
     />

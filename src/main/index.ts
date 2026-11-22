@@ -55,9 +55,6 @@ function createWindow(): void {
     mainWindow.show()
   })
 
-  // Window focus is one of the sync triggers: mail that arrived while the
-  // app sat in the background appears at the regain, not at the next
-  // sweep tick. Failures count toward the clock's own backoff.
   mainWindow.on('focus', () => {
     void syncMail('focus').catch(() => {})
   })
@@ -85,34 +82,19 @@ app.whenReady().then(() => {
   ipcMain.handle('auth:save-credentials', (_e, creds) => saveOAuthCredentials(creds))
   ipcMain.handle('auth:credentials-status', () => getOAuthCredentialsStatus())
   ipcMain.handle('auth:is-signed-in', () => isSignedIn())
-  // Signing out ends the mailbox session: the stored grant's teardown
-  // (invalidateStoredGrant) fires the per-account state teardown
-  // registered in mail/sync.ts, so the history cursor can never survive
-  // into the next sign-in and sweep a different account from a random
-  // offset. A dead grant goes through the same teardown, so both paths
-  // out of a session land there.
   ipcMain.handle('auth:sign-out', () => signOut())
   ipcMain.handle('gmail:list', (_event, options?: ListFolderOptions) => fetchFolder(options))
   ipcMain.handle('gmail:get', (_event, id: string) => fetchMessage(id))
   ipcMain.handle('gmail:thread', (_event, threadId: string) => fetchThread(threadId))
-  // The canonical refresh: the renderer's Refresh button is the only
-  // renderer-invoked path; the adaptive clock and window focus fire
-  // inside main.
   ipcMain.handle('gmail:sync', (_event, reason: SyncReason) => syncMail(reason))
   ipcMain.handle('gmail:send', (_event, request: SendEmailRequest) => sendEmail(request))
   ipcMain.handle('gmail:send-draft', (_event, request: SendDraftRequest) => sendDraft(request))
   ipcMain.handle('gmail:save-draft', (_event, request: SaveDraftRequest) => saveDraft(request))
   ipcMain.handle('gmail:discard-draft', (_event, draftId: string) => discardDraft(draftId))
-  // The composer's file picker. Files ride back fully in memory (base64),
-  // so a picked file is the record the send/autosave payloads carry; a
-  // failed read or an over-limit pick throws the picker's own sentence.
   ipcMain.handle('attachments:pick', () => pickAttachments())
-  // One stored attachment's bytes for the draft-editor round trip.
   ipcMain.handle('gmail:get-attachment', (_event, messageId: string, attachmentId: string) =>
     fetchAttachment(messageId, attachmentId)
   )
-  // Saving a listed attachment to a chosen local file; resolves false on
-  // a cancelled dialog.
   ipcMain.handle(
     'attachments:save',
     (_event, messageId: string, attachmentId: string, filename: string) =>
@@ -128,9 +110,6 @@ app.whenReady().then(() => {
   ipcMain.handle('gmail:snooze-restore', (_event, threadId: string) => restoreThread(threadId))
   ipcMain.handle('gmail:snooze-tick', () => sweepDueSnoozed())
 
-  // The app was closed at some parked thread's wake time: the catch-up
-  // restores everything due now. Signed-out launches skip quietly; the
-  // sweep retries on the next tick after sign-in.
   void sweepDueSnoozed().catch((e: unknown) => {
     console.warn('startup snooze catch-up skipped:', e)
   })
