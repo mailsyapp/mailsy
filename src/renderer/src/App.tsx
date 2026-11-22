@@ -550,7 +550,8 @@ function App(): React.JSX.Element {
     target: sentinelRef,
     root: sidebarRef,
     rootMargin: '400px',
-    armKey: nextPageToken === null ? null : `${viewKey}\n${committedQuery}\n${nextPageToken ?? ''}`,
+    armKey:
+      typeof nextPageToken === 'string' ? `${viewKey}\n${committedQuery}\n${nextPageToken}` : null,
     onIntersect: loadMore
   })
 
