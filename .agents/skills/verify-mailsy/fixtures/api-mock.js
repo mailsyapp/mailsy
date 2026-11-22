@@ -709,7 +709,7 @@
       deletedDrafts.push(request.draftId)
     },
     // Mirrors saveDraft: a write with no draft id creates a draft-shaped
-    // seed entry (own singleton thread, DRAFT label) and answers its id;
+    // seed entry (its own or a supplied thread, DRAFT label) and answers its id;
     // a write with one updates the stored draft in place the way
     // drafts.update replaces the message. Send-style validation only:
     // Gmail keeps recipient-less drafts, so To may be empty here.
@@ -750,7 +750,7 @@
         const id = `msg-${draftId}`
         const message = {
           id,
-          threadId: id,
+          threadId: request.threadId || id,
           from: 'me@example.com',
           subject: request.subject,
           date: new Date().toUTCString(),

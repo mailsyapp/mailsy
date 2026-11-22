@@ -2,6 +2,10 @@ import { FOLDER_LABEL_ID } from '../../../shared/sync'
 import type { MailSyncDelta } from '../../../shared/sync'
 import type { MailFolder, ThreadSummary } from '../../../shared/types'
 
+export function listRowKey(row: ThreadSummary): string {
+  return row.draftId ? `draft:${row.draftId}` : `thread:${row.id}`
+}
+
 // List-merge logic shared by every load path: folding a fresh first page
 // (mergeIncoming) and applying a sync sweep's delta (applyMailDelta) both
 // keep dropped rows in view where needed and compare rows value by value.
@@ -39,8 +43,8 @@ export function mergeIncoming(
   if (prev.length === incoming.length && prev.every((row, i) => rowsEqual(row, incoming[i]))) {
     return prev
   }
-  const incomingIds = new Set(incoming.map((row) => row.id))
-  const dropped = prev.filter((row) => !incomingIds.has(row.id))
+  const incomingKeys = new Set(incoming.map(listRowKey))
+  const dropped = prev.filter((row) => !incomingKeys.has(listRowKey(row)))
   const tail = keepAllDropped ? dropped : dropped.filter((row) => row.id === selectedId)
   return [...incoming, ...tail]
 }

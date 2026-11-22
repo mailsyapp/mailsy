@@ -9,7 +9,7 @@ import type {
   MailLabel
 } from '../../shared/types'
 import { EmailDetail } from './components/EmailDetail'
-import { applyMailDelta, mergeIncoming, viewLabelOf } from './lib/syncApply'
+import { applyMailDelta, listRowKey, mergeIncoming, viewLabelOf } from './lib/syncApply'
 import { hasGmailOperator, previewMatches, rerankByFuse } from './lib/search'
 import { FOLDER_CONFIG } from './lib/folderViews'
 import type { SyncResult } from '../../shared/sync'
@@ -609,7 +609,7 @@ function App(): React.JSX.Element {
           ...(committedQuery ? { q: committedQuery } : {})
         })
         if (requestIdRef.current !== requestId || invalidCursorRef.current !== invalidCursor) return
-        for (const row of page.threads) incoming.set(row.id, row)
+        for (const row of page.threads) incoming.set(listRowKey(row), row)
         pageToken = page.nextPageToken
         depth++
       } while (pageToken !== null && depth <= previousDepth)
@@ -618,8 +618,8 @@ function App(): React.JSX.Element {
         setThreads((prev) => mergeIncoming(prev, rows, true, null))
       } else {
         setThreads((prev) => {
-          const seen = new Set(prev.map((row) => row.id))
-          return [...prev, ...rows.filter((row) => !seen.has(row.id))]
+          const seen = new Set(prev.map(listRowKey))
+          return [...prev, ...rows.filter((row) => !seen.has(listRowKey(row)))]
         })
       }
       setPageToken(pageToken, depth)
@@ -1009,7 +1009,7 @@ function App(): React.JSX.Element {
           <ul className="emails">
             {displayedThreads.map((row) => (
               <MailListRow
-                key={row.id}
+                key={listRowKey(row)}
                 row={row}
                 folder={activeFolder}
                 onOpen={handleSelect}

@@ -2287,8 +2287,10 @@ try {
     const inbox = page.getByRole('complementary', { name: 'Inbox', exact: true })
     const rows = inbox.getByRole('listitem')
     const loadMore = inbox.getByRole('button', { name: 'Load more', exact: true })
-    const activateLoadMore = async () => {
-      await loadMore.evaluate((button) => button.focus({ preventScroll: true }))
+    const activateLoadMore = async (view = inbox) => {
+      await view.getByRole('button', { name: 'Load more', exact: true }).evaluate((button) =>
+        button.focus({ preventScroll: true })
+      )
       await page.keyboard.press('Enter')
     }
     await inbox.getByText('Launch checklist', { exact: true }).waitFor({ timeout: 5000 })
@@ -2364,7 +2366,36 @@ try {
       'archive or delete left missing, duplicated or extra pages'
     )
     await snapshot(page, 'pagination')
-  } else if (FEATURE === 'signature') {
+
+    await page.getByRole('button', { name: 'Drafts', exact: true }).click()
+    const drafts = page.getByRole('complementary', { name: 'Drafts', exact: true })
+    await drafts.getByText('Draft: Q4 planning notes', { exact: true }).waitFor({ timeout: 5000 })
+    const draftFill = firstPageSize - (await drafts.getByRole('listitem').count()) - 1
+    await page.evaluate(async (count) => {
+      const save = (subject, threadId) => window.api.saveDraft({ to: '', body: '', subject, threadId })
+      for (let i = 1; i <= count; i++) await save(`Pagination draft ${i}`)
+      for (let i = 1; i <= 3; i++) await save(`Same-thread draft ${i}`, 'thread-launch')
+      window.__pushSync({ kind: 'reset' })
+    }, draftFill)
+    await drafts.getByText('Same-thread draft 1', { exact: true }).waitFor({ timeout: 5000 })
+    await activateLoadMore(drafts)
+    await drafts.getByRole('button', { name: 'Load more', exact: true }).waitFor({
+      state: 'detached',
+      timeout: 5000
+    })
+    await drafts.getByText('Loading more...', { exact: true }).waitFor({
+      state: 'detached',
+      timeout: 5000
+    })
+    for (let i = 1; i <= 3; i++) {
+      assert(
+        (await drafts.getByText(`Same-thread draft ${i}`, { exact: true }).count()) === 1,
+        `draft ${i} is listed separately from others in the same conversation`,
+        `pagination lost or duplicated draft ${i} in a shared conversation`
+      )
+    }
+    await snapshot(page, 'pagination-drafts')
+    } else if (FEATURE === 'signature') {
     // The per-compose signature across all three surfaces: the stored text
     // is born from the first toggle in a fresh compose, the block rides
     // every send/autosave as ordinary body html, the draft round trip
