@@ -25,7 +25,7 @@ Preconditions:
 
 - **Match.** Type `budget` in the searchbox. Run `node scripts/drive.mjs --feature search --run-id "$RUN_ID" --port "$VERIFY_MAILSY_PORT"`. `Q3 budget draft` remains visible and `Launch checklist` is filtered out.
 - **Clear.** Choose `Clear search` (same command). The box empties and `Launch checklist` returns.
-- **Pagination.** Search for a subject prefix with 34 matches, then load each page. Every matching thread appears exactly once.
+- **Pagination and refresh.** Load two pages of a 34-match search, then restore two older matches into page two via a delta and a reset. Keep paging to verify that all 36 matches appear exactly once.
 - **Proof.** The driver writes `search` and `search-pagination` ARIA snapshots and screenshots under `artifacts/<run-id>/`.
 
 ## Gotchas

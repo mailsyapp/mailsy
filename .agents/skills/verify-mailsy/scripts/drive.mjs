@@ -383,21 +383,48 @@ try {
     await snapshot(page, 'search')
 
     const inbox = page.getByRole('complementary', { name: 'Inbox' })
-    await page.evaluate(() => {
-      for (let i = 1; i <= 34; i++) window.__deliverMail({ subject: `Paged search ${i}` })
+    await page.evaluate(async () => {
+      const api = window.__packagedFixtureApi ?? window.api
+      const parked = new Map()
+      for (let i = 1; i <= 34; i++) {
+        window.__deliverMail({ subject: `Paged search ${i}` })
+        if (i === 14 || i === 16) {
+          const { delta } = window.__deliverMail({ subject: `Paged search restored ${i}` })
+          parked.set(i, delta)
+          await api.modifyLabels({ kind: 'thread', id: delta.threads[0].id, removeLabelIds: ['INBOX'] })
+        }
+      }
+      window.__restoreSearchMatch = async (i) => {
+        const delta = parked.get(i)
+        await api.modifyLabels({ kind: 'thread', id: delta.threads[0].id, addLabelIds: ['INBOX'] })
+        window.__pushSync(i === 14 ? delta : { kind: 'reset' })
+      }
     })
     await box.fill('Paged search')
     await box.press('Enter')
-    for (const count of [10, 20, 30]) {
+    await inbox.getByText('10 results for “Paged search”', { exact: true }).waitFor({ timeout: 5000 })
+    await activateLoadMore(page, inbox)
+    await inbox.getByText('20 results for “Paged search”', { exact: true }).waitFor({ timeout: 5000 })
+    for (const i of [14, 16]) {
+      const restored = inbox.getByText(`Paged search restored ${i}`, { exact: true })
+      assert((await restored.count()) === 0, 'the parked match is not in search yet', 'parked match appeared early')
+      await page.evaluate((id) => window.__restoreSearchMatch(id), i)
+      await restored.waitFor({ timeout: 5000 })
+    }
+    for (const count of [22, 30]) {
       await inbox.getByText(`${count} results for “Paged search”`, { exact: true }).waitFor({ timeout: 5000 })
       await activateLoadMore(page, inbox)
     }
     await inbox.getByText('End of results', { exact: true }).waitFor({ timeout: 5000 })
-    const subjects = Array.from({ length: 34 }, (_, i) => `Paged search ${i + 1}`)
+    const subjects = [
+      ...Array.from({ length: 34 }, (_, i) => `Paged search ${i + 1}`),
+      'Paged search restored 14',
+      'Paged search restored 16'
+    ]
     const counts = await Promise.all(subjects.map((subject) => inbox.getByText(subject, { exact: true }).count()))
     assert(
       counts.every((count) => count === 1) && (await inbox.getByRole('listitem').count()) === subjects.length,
-      'search reaches all 34 matches exactly once across four pages',
+      'search reaches all 36 matches exactly once across four pages after a delta and reset',
       'search over 30 results skipped, duplicated, or mixed in other rows'
     )
     await snapshot(page, 'search-pagination')
@@ -1713,14 +1740,17 @@ try {
     // tick sweeps the mock schedule, restores the pair, and the refreshed
     // Inbox lists the returned thread.
     await page.evaluate(() => {
-      for (let i = 1; i <= 31; i++) window.__deliverMail({ subject: `Wake pagination ${i}` })
-      const snoozeTick = window.api.snoozeTick
+      for (let i = 1; i <= 31; i++) {
+        window.__deliverMail({ subject: `Wake pagination ${i}`, snippet: 'Launch checklist notes', prepend: i <= 14 })
+      }
+      const api = window.__packagedFixtureApi ?? window.api
+      const snoozeTick = api.snoozeTick
       let held = false
-      window.api.snoozeTick = async () => {
+      api.snoozeTick = async () => {
         if (held) return 0
         held = true
         await new Promise((release) => { window.__releaseSnoozeTick = release })
-        window.api.snoozeTick = snoozeTick
+        api.snoozeTick = snoozeTick
         return snoozeTick()
       }
     })
@@ -1728,8 +1758,12 @@ try {
     await page.waitForFunction(() => Boolean(window.__releaseSnoozeTick), undefined, { timeout: 5000 })
     await page.getByRole('button', { name: 'Inbox', exact: true }).click()
     await inbox.getByText('Wake pagination 1', { exact: true }).waitFor({ timeout: 5000 })
+    const query = page.getByRole('searchbox', { name: 'Search emails' })
+    await query.fill('Launch checklist')
+    await query.press('Enter')
+    await inbox.getByText('10 results for “Launch checklist”', { exact: true }).waitFor({ timeout: 5000 })
     await activateLoadMore(page, inbox)
-    const tail = inbox.getByText('Wake pagination 31', { exact: true })
+    const tail = inbox.getByText('Wake pagination 20', { exact: true })
     const returned = inbox.getByText('Launch checklist', { exact: true }).first()
     await tail.waitFor({ timeout: 5000 })
     assert(
@@ -1738,30 +1772,46 @@ try {
       'the wake completed before Inbox pagination'
     )
     const inboxRows = await inbox.getByRole('listitem').count()
-    const refreshedFolders = await page.evaluate(async () => {
-      const listFolder = window.api.listFolder
-      const folders = []
-      window.api.listFolder = (options) => {
-        folders.push(options.folder)
+    await page.evaluate(() => {
+      const api = window.__packagedFixtureApi ?? window.api
+      const listFolder = api.listFolder
+      window.__wakeListings = []
+      api.listFolder = (options) => {
+        window.__wakeListings.push(options)
         return listFolder(options)
       }
+      window.__restoreWakeListings = () => { api.listFolder = listFolder }
       window.__releaseSnoozeTick()
-      await new Promise(requestAnimationFrame)
-      await new Promise(requestAnimationFrame)
-      window.api.listFolder = listFolder
-      return folders
     })
     await returned.waitFor({ timeout: 5000 }).catch(() => {
       throw new Error('ASSERT: the late wake forgot to refresh the open Inbox')
     })
+    const listings = await page.evaluate(() => {
+      window.__restoreWakeListings()
+      return window.__wakeListings
+    })
     assert(
-      !refreshedFolders.includes('all') &&
+      listings.length > 0 &&
+        listings.every(({ folder, q }) => folder === 'inbox' && q === 'Launch checklist') &&
         (await inbox.getByRole('listitem').count()) === inboxRows + 1 &&
         (await tail.count()) === 1,
-      'a late wake refreshes Inbox and keeps its second page',
-      'the late wake refreshed the wrong folder or lost loaded Inbox rows'
+      'a late wake refreshes the loaded Inbox search without dropping page two',
+      'the late wake refreshed the wrong view or lost loaded search results'
+    )
+    for (const count of [21, 30]) {
+      await inbox.getByText(`${count} results for “Launch checklist”`, { exact: true }).waitFor({ timeout: 5000 })
+      await activateLoadMore(page, inbox)
+    }
+    await inbox.getByText('End of results', { exact: true }).waitFor({ timeout: 5000 })
+    const matches = ['Launch checklist', ...Array.from({ length: 31 }, (_, i) => `Wake pagination ${i + 1}`)]
+    const matchesOnce = await Promise.all(matches.map((subject) => inbox.getByText(subject, { exact: true }).count()))
+    assert(
+      matchesOnce.every((count) => count === 1) && (await inbox.getByRole('listitem').count()) === matches.length,
+      'the resumed search reaches every match exactly once',
+      'the resumed search skipped or duplicated a result'
     )
     await snapshot(page, 'snooze-wake-view-switch')
+    await inbox.getByRole('button', { name: 'Clear search' }).click()
     const scheduleAfterWake = await page.evaluate(() => [...(window.__snoozeSchedule ?? [])])
     assert(
       scheduleAfterWake.length === 0,
@@ -1864,6 +1914,37 @@ try {
       .waitFor({ timeout: 10000 })
     assert(true, 'detail restore returned the thread to the Inbox', 'thread missing from the Inbox')
     await snapshot(page, 'snooze-emulation')
+
+    await page.evaluate(async () => {
+      const api = window.__packagedFixtureApi ?? window.api
+      await api.snoozeThread('thread-launch', Date.now() + 1000)
+    })
+    await page.getByRole('button', { name: 'All Mail', exact: true }).click()
+    await allMail.getByText('Launch checklist', { exact: true }).first().waitFor({ timeout: 5000 })
+    await activateLoadMore(page, allMail)
+    const allMailTail = allMail.getByText('Wake pagination 31', { exact: true })
+    await allMailTail.waitFor({ timeout: 5000 })
+    const allMailRows = await allMail.getByRole('listitem').count()
+    await page.evaluate(() => {
+      const api = window.__packagedFixtureApi ?? window.api
+      const listFolder = api.listFolder
+      window.__allMailRelists = 0
+      api.listFolder = (options) => {
+        if (options.folder === 'all') window.__allMailRelists++
+        return listFolder(options)
+      }
+    })
+    await page.clock.fastForward(30000)
+    await page.waitForFunction(() => [...window.__snoozeSchedule].length === 0, undefined, { timeout: 5000 })
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+    assert(
+      (await page.evaluate(() => window.__allMailRelists)) === 0 &&
+        (await allMailTail.count()) === 1 &&
+        (await allMail.getByRole('listitem').count()) === allMailRows,
+      'a wake in All Mail leaves both already loaded pages intact',
+      'a wake collapsed the loaded All Mail pages'
+    )
+    await snapshot(page, 'snooze-wake-all-mail')
   } else if (FEATURE === 'category-views') {
     // The Important view is the IMPORTANT label: it lists the seeded
     // important mail and nothing labeled for a category tab.

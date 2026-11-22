@@ -40,7 +40,7 @@ function formatFetchError(e: unknown): string {
   return message
 }
 
-type QuietFold = 'sync' | 'reset'
+type QuietFold = 'sync' | 'reset' | 'recheck'
 type FirstPageMode = 'load' | 'wake' | QuietFold
 
 function App(): React.JSX.Element {
@@ -664,10 +664,21 @@ function App(): React.JSX.Element {
   // of the behavior.
   const loadFirstPage = useCallback(
     (trigger: FirstPageMode): void => {
-      const mode = trigger === 'wake' ? (activeFolder === 'inbox' ? 'reset' : 'manual') : trigger
-      const quiet = mode === 'sync' || mode === 'reset'
+      if (
+        trigger === 'wake' &&
+        activeFolder !== 'inbox' &&
+        activeFolder !== 'snoozed' &&
+        !committedQuery
+      ) {
+        return
+      }
+      const mode =
+        trigger === 'wake' ? (activeFolder === 'snoozed' ? 'manual' : 'recheck') : trigger
+      const quiet = mode === 'sync' || mode === 'reset' || mode === 'recheck'
       function deferQuietFold(fold: QuietFold): void {
-        if (pendingSyncRef.current !== 'reset') pendingSyncRef.current = fold
+        const pending = pendingSyncRef.current
+        if (pending === null || fold === 'recheck' || pending === 'sync')
+          pendingSyncRef.current = fold
       }
       if (quiet && (searchingRef.current || pageRequestRef.current !== null)) {
         deferQuietFold(mode)
@@ -688,10 +699,13 @@ function App(): React.JSX.Element {
         ...(activeLabel ? { userLabelId: activeLabel.id } : {}),
         ...(committedQuery ? { q: committedQuery } : {})
       }
-      // A reset has no usable history delta. Recheck the loaded range of an
-      // exhausted list so deliveries behind page one can reopen pagination.
+      // A reset can hide deliveries behind an exhausted list. A wake or
+      // unknown search match can also enter the middle of an open cursor.
       const recheckDepth =
-        mode === 'reset' && nextPageTokenRef.current === null ? loadedPagesRef.current : 1
+        mode === 'recheck' ||
+        (mode === 'reset' && (nextPageTokenRef.current === null || committedQuery))
+          ? loadedPagesRef.current
+          : 1
       function ownsResult(): boolean {
         if (requestIdRef.current !== requestId) return false
         if (quiet && invalidCursor !== invalidCursorRef.current) {
@@ -809,6 +823,14 @@ function App(): React.JSX.Element {
           isSearchActive: committedQuery.length > 0
         }) ?? prev
     )
+    if (
+      committedQuery &&
+      result.threads.some(
+        (row) => row.labelIds.includes(viewLabel) && !threads.some((listed) => listed.id === row.id)
+      )
+    ) {
+      loadFirstPage('recheck')
+    }
   }
   // Pinned every render (effects are fine with refs; render bodies are
   // not): the subscription reads the latest handler, and the guard in it
