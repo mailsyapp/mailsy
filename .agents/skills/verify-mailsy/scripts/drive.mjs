@@ -10,6 +10,7 @@ import { constants } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { mkdirSync, writeFileSync } from 'node:fs'
+import { launchPackaged } from './packaged.mjs'
 
 const require2 = createRequire(new URL('../drive/', import.meta.url))
 const { chromium } = require2('playwright')
@@ -26,8 +27,13 @@ const FEATURE = arg('feature')
 const RUN_ID = arg('run-id')
 const PORT = arg('port')
 const SIGNED_OUT = process.argv.includes('--signed-out')
-if (!FEATURE || !RUN_ID || !PORT) {
-  console.error('usage: drive.mjs --feature <id> --run-id <id> --port <n> [--signed-out]')
+const EXECUTABLE = arg('executable')
+if (!FEATURE || !RUN_ID || (!PORT && !EXECUTABLE)) {
+  console.error('usage: drive.mjs --feature <id> --run-id <id> (--port <n> | --executable <packaged-binary>) [--signed-out]')
+  process.exit(2)
+}
+if (EXECUTABLE && (SIGNED_OUT || !['signature', 'compose-new', 'compose-send', 'draft-autosave'].includes(FEATURE))) {
+  console.error('infra: packaged mode supports signature, compose-new, compose-send and draft-autosave (signed in)')
   process.exit(2)
 }
 // RUN_ID names the artifacts dir under the skill; refuse any value that
@@ -45,7 +51,8 @@ try {
 
 const ART = resolve(SKILL_DIR, 'artifacts', RUN_ID)
 mkdirSync(ART, { recursive: true })
-const logLines = [`command: drive.mjs --feature ${FEATURE} --run-id ${RUN_ID} --port ${PORT}${SIGNED_OUT ? ' --signed-out' : ''}`, `entry: http://127.0.0.1:${PORT}/`]
+let entry = EXECUTABLE ? resolve(EXECUTABLE) : `http://127.0.0.1:${PORT}/`
+const logLines = [`command: drive.mjs --feature ${FEATURE} --run-id ${RUN_ID} ${EXECUTABLE ? `--executable ${entry}` : `--port ${PORT}`}${SIGNED_OUT ? ' --signed-out' : ''}`, `entry: ${entry}`]
 const log = (m) => { logLines.push(m); console.log(m) }
 function assert(cond, okMsg, failMsg) {
   if (!cond) throw new Error(`ASSERT: ${failMsg}`)
@@ -119,27 +126,37 @@ async function bodyTextOf(editor) {
 
 async function snapshot(page, name) {
   const snap = await page.locator('body').ariaSnapshot()
-  writeFileSync(resolve(ART, `${name}.aria.txt`), `feature: ${FEATURE}\nentry: http://127.0.0.1:${PORT}/\n${snap}\n`)
+  writeFileSync(resolve(ART, `${name}.aria.txt`), `feature: ${FEATURE}\nentry: ${entry}\n${snap}\n`)
   await page.screenshot({ path: resolve(ART, `${name}.png`) })
   log(`evidence: ${name}.aria.txt + ${name}.png`)
 }
 
 let browser
 try {
-  browser = await chromium.launch()
-  const context = await browser.newContext()
-  await context.addInitScript({ path: MOCK })
-  if (SIGNED_OUT) {
-    await context.addInitScript(() => {
-      window.api.isSignedIn = async () => false
-      window.api.signIn = async () => { window.__signInClicked = true }
-    })
+  let page
+  if (EXECUTABLE) {
+    const packaged = await launchPackaged({ executablePath: resolve(EXECUTABLE), artifactDir: ART, mockPath: MOCK })
+    browser = packaged.browser
+    page = packaged.page
+    entry = packaged.entry
+    log(`packaged: ${JSON.stringify(packaged.identity)}`)
+    log(`entry: ${entry}`)
+  } else {
+    browser = await chromium.launch()
+    const context = await browser.newContext()
+    await context.addInitScript({ path: MOCK })
+    if (SIGNED_OUT) {
+      await context.addInitScript(() => {
+        window.api.isSignedIn = async () => false
+        window.api.signIn = async () => { window.__signInClicked = true }
+      })
+    }
+    page = await context.newPage()
+    // Fast-forwarding journeys need fake timers installed before the app's
+    // intervals exist; other features run on real time, unchanged.
+    if (FEATURE === 'snooze-emulation') await page.clock.install()
+    await page.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: 'domcontentloaded' })
   }
-  const page = await context.newPage()
-  // Fast-forwarding journeys need fake timers installed before the app's
-  // intervals exist; other features run on real time, unchanged.
-  if (FEATURE === 'snooze-emulation') await page.clock.install()
-  await page.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: 'domcontentloaded' })
 
   if (FEATURE === 'sign-in') {
     const btn = page.getByRole('button', { name: 'Sign in with Google' })
@@ -2871,6 +2888,11 @@ try {
     await snapshot(page, 'background-work')
   } else {
     throw new Error(`unknown feature: ${FEATURE}`)
+  }
+  if (EXECUTABLE) {
+    const proof = await browser.evaluate(() => globalThis.__packagedVerification)
+    writeFileSync(resolve(ART, 'packaged.json'), JSON.stringify({ ...proof, entry }, null, 2))
+    log(`packaged IPC: ${JSON.stringify(proof.counts)}`)
   }
   log(`RESULT pass feature=${FEATURE}`)
 } catch (e) {

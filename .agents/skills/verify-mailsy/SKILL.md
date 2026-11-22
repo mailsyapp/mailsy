@@ -7,7 +7,7 @@ description: Drive and prove the Mailsy Electron mail client (React renderer + G
 
 Mailsy is an Electron desktop app (`npm run dev`): a React renderer (`src/renderer/src/`) talks through a preload bridge (`window.api`) to main-process IPC handlers (`src/main/`) that call the Gmail API with OAuth tokens. There is no repo test suite (no Playwright/Cypress/Vitest specs); this skill's harness *is* the test tooling.
 
-Scripted verification therefore runs the **real renderer code** in headless Chromium against a **fixture `window.api` mock** — no Google account, no network, no quota cost. The Electron shell and the live Gmail path are covered as a documented manual tier only.
+Default scripted verification runs the **real renderer code** in headless Chromium against a **fixture `window.api` mock** — no Google account, no network, no quota cost. The packaged mode below additionally runs selected journeys in the actual Electron executable with fixture IPC. The live Gmail path remains a documented manual tier.
 
 ## Paths
 
@@ -18,6 +18,7 @@ All paths below are relative to the skill directory `.agents/skills/verify-mails
 - Doctor: `scripts/doctor.sh` (read-only)
 - Server: `scripts/serve.sh start|stop` (disposable port, PID file in `/tmp`)
 - Driver: `scripts/drive.mjs` (Playwright; needs `drive/node_modules`, installed once)
+- Packaged adapter: `scripts/packaged.mjs` (launches an unmodified packaged executable with isolated fixture IPC)
 - Feature map: `features/` (the maintained verification source — read it before driving)
 - Evidence: `artifacts/<run-id>/` (survives cleanup; never delete; gitignored — evidence lives on the machine, not in git)
 
@@ -94,9 +95,49 @@ ls artifacts/<run-id>/   # proof still here — a cleanup that eats the proof fa
 
 Remove `/tmp/verify-mailsy-$RUN_ID/` only via `serve.sh stop`. Fixture mutations reset automatically: the mock holds all state in memory, so every server restart starts from the seed mailbox.
 
+## Packaged Electron with fixtures (Linux)
+
+Build the real production renderer, preload, main process and ASAR with
+`source ~/.nvm/nvm.sh && npm run build:unpack` from the repository root.
+The Linux executable is `dist/linux-unpacked/mailsy`; electron-builder also
+supports AppImage/deb via `npm run build:linux`.
+
+With an available Linux display (`DISPLAY`, or an Xvfb session), run from the
+repository root, without starting Vite:
+
+```bash
+node .agents/skills/verify-mailsy/scripts/drive.mjs --feature signature \
+  --run-id packaged-signature --executable "$PWD/dist/linux-unpacked/mailsy"
+```
+
+Supported features are `signature`, `compose-new`, `compose-send`, and
+`draft-autosave`. Run each with its own run ID. Their journey assertions and
+screenshots are identical to the Chromium tier; `--port` is not required.
+Run `doctor.sh` before driving as usual (its port check concerns only the
+scaffold tier). This mode requires the Electron executable and a display in
+addition to the ordinary harness prerequisites.
+
+`scripts/packaged.mjs` uses Playwright `_electron.launch({ executablePath })`.
+Each launch creates a fresh user-data/config profile under the run's artifacts
+and verifies the original native auth bridge reports signed out. It verifies
+`app.isPackaged`, an `app.asar` file URL, and the read-only preload API. The
+existing fixture runs in a separate namespace, leaving `window.api` intact;
+test-installed main-process IPC handlers forward packaged preload calls to
+that fixture namespace. Fixture recording arrays remain readable by the
+unchanged journeys. Production source, preload, and ASAR are never patched.
+
+This tests packaged renderer behavior and real preload/IPC serialization,
+not the production Gmail handlers: those handlers are replaced for the test.
+The fresh profile has no OAuth token, so native background sync remains
+signed out; HTTP(S) requests from Electron sessions are also blocked. Native
+dialogs, pushed background sync events, live Gmail, and persistent real-account
+behavior are not covered. Other features and signed-out journeys are rejected
+rather than silently falling back to Chromium. `packaged.json` records the
+artifact URL, Electron version, isolated profile, and intercepted IPC counts.
+
 ## Manual tier: live Electron + real Gmail
 
-Scripted runs do not cover the Electron shell (`src/main/`, preload, OAuth loopback server, `safeStorage` token store) or real Gmail quota behavior. When a change touches those, verify by hand and note it as manual-tier evidence:
+The Chromium tier does not cover the Electron shell. Packaged fixture runs exercise the shell and preload for the listed journeys, but neither tier covers production Gmail handlers, the OAuth loopback server, `safeStorage` token persistence, native dialogs, or real Gmail quota behavior. When a change touches those, verify by hand and note it as manual-tier evidence:
 
 1. `npm run dev` from the repo root, wait for the app window.
 2. `Sign in with Google` opens the system browser; approve; the window loads the real inbox.
