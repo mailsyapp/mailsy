@@ -43,6 +43,7 @@ export default defineConfig(
   {
     files: ['src/**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}'],
     plugins: { mailsy },
+    linterOptions: { noInlineConfig: true },
     rules: {
       'mailsy/no-comments': 'error',
       'mailsy/process-boundary': 'error'
