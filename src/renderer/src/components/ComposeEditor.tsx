@@ -16,6 +16,7 @@ type ComposeEditorProps = {
   // compose and an open email are mutually exclusive), so this is the same
   // close that selecting a row or switching folders runs.
   onClose: () => void
+  sessionSignal: AbortSignal
 }
 
 // A fresh message is a SendEmailRequest with no thread/in-reply fields; the
@@ -25,7 +26,7 @@ type ComposeEditorProps = {
 // closing the pane without Cancel or Send (row click, folder switch, reset)
 // leaves the draft in the Drafts folder instead of losing the text. Cancel
 // discards it; Send consumes it through drafts.send.
-export function ComposeEditor({ onClose }: ComposeEditorProps): React.JSX.Element {
+export function ComposeEditor({ onClose, sessionSignal }: ComposeEditorProps): React.JSX.Element {
   // One recipients block, not three loose lines: a recipient edit is one
   // spread and the send payloads reuse the object as-is.
   const [recipients, setRecipients] = useState<RecipientState>({ to: '', cc: '', bcc: '' })
@@ -48,7 +49,7 @@ export function ComposeEditor({ onClose }: ComposeEditorProps): React.JSX.Elemen
   // One payload for the autosave and every send path: identical field list,
   // built in the shared composer shape.
   const request = composeRequest({ recipients, subject, body, attachments: attach.attachments })
-  const autosave = useDraftAutosave(request, undefined, true)
+  const autosave = useDraftAutosave(request, undefined, true, sessionSignal)
 
   async function handleCancel(): Promise<void> {
     // Cancel is today's discard action: let any in-flight or queued write
@@ -58,6 +59,7 @@ export function ComposeEditor({ onClose }: ComposeEditorProps): React.JSX.Elemen
     // leaves the draft in the Drafts folder — visible there, never
     // silently lost.
     await autosave.flushPending()
+    if (sessionSignal.aborted) return
     const draftId = autosave.currentDraft()?.draftId
     autosave.stop()
     onClose()
@@ -79,6 +81,7 @@ export function ComposeEditor({ onClose }: ComposeEditorProps): React.JSX.Elemen
       // without one, the typed-and-sent-instantly case is still today's
       // fresh send.
       await autosave.flushPending()
+      if (sessionSignal.aborted) return
       const target = autosave.currentDraft()
       autosave.suspend()
       try {

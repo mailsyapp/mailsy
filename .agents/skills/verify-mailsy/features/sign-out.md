@@ -25,7 +25,7 @@ Preconditions:
 - **Offer.** Run `node scripts/drive.mjs --feature sign-out --run-id "$RUN_ID" --port "$VERIFY_MAILSY_PORT"`. The Inbox lists seeded mail and the `Sign out` button is visible in the top actions bar.
 - **Flip.** Choose the button. The `Sign in with Google` button becomes visible and the Inbox list shows no mail rows.
 - **Bridge proof.** A second assertion reads back the recorded call: `window.__signOutClicked === true`.
-- **Switch accounts.** Hold a page request and a refresh over sign-out, then sign in to a different fixture mailbox. Both controls work independently, and late results do not paint mail from the old account. Signing out from a label also returns the next session to Inbox.
+- **Switch accounts.** Hold a page request, refresh, and draft autosave over sign-out, then sign in to a different fixture mailbox. Both list controls work independently, late results don't paint old mail, and queued composer edits never write into the new account. Signing out from a label also returns the next session to Inbox.
 - **Main-side isolation.** With Node 24, run `node --test scripts/sync-session.test.mjs` to verify a stale sweep cannot publish results, seed the next cursor, clear a new request, or invalidate the new grant. A pending page still reports that sign-in is required when a background sweep expires the current grant.
 - **Proof.** The driver writes `sign-out` and `sign-in-pending-mail` ARIA snapshots and screenshots under `artifacts/<run-id>/`.
 

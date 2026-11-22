@@ -240,6 +240,16 @@ async function signInWithPendingMail(page) {
   await page.getByRole('button', { name: 'Sign in with Google' }).click()
   const inbox = page.getByRole('complementary', { name: 'Inbox', exact: true })
   await inbox.getByText('New account 1', { exact: true }).waitFor({ timeout: 5000 })
+  await page.evaluate(async () => {
+    window.__releaseOldDraftSave()
+    await new Promise(requestAnimationFrame)
+    await new Promise(requestAnimationFrame)
+  })
+  assert(
+    (await page.evaluate(() => window.__accountDraftWrites))?.join() === 'First edit in old account',
+    'the old composer cannot save into the new account after a held write settles',
+    'an old composer dispatched a draft save into the next account'
+  )
   const refresh = page.getByRole('button', { name: 'Refresh mail' })
   const oldRefreshCleared = (await refresh.getAttribute('aria-busy')) === 'false'
   await refresh.click()
@@ -324,6 +334,25 @@ try {
     await signOut.waitFor({ timeout: 10000 })
     assert(true, 'signed-in state offers the "Sign out" button', 'Sign out button missing while signed in')
     await holdAccountRequests(page, page.getByRole('complementary', { name: 'Inbox' }))
+    await page.evaluate(() => {
+      const api = window.__packagedFixtureApi ?? window.api
+      const saveDraft = api.saveDraft
+      window.__accountDraftWrites = []
+      api.saveDraft = (request) => {
+        window.__accountDraftWrites.push(request.subject)
+        if (request.subject !== 'First edit in old account') return saveDraft(request)
+        return new Promise((resolve) => {
+          window.__releaseOldDraftSave = () => resolve({
+            draftId: 'old-account-draft', messageId: 'old-account-message'
+          })
+        })
+      }
+    })
+    await page.getByRole('button', { name: 'Compose', exact: true }).click()
+    const draftSubject = page.getByRole('region', { name: 'Email content' }).getByRole('textbox', { name: 'Subject' })
+    await draftSubject.fill('First edit in old account')
+    await page.waitForFunction(() => typeof window.__releaseOldDraftSave === 'function')
+    await draftSubject.fill('Private pending edit in old account')
     await signOut.click()
     // Signed-out screen: the sign-in button returns and no mail rows stay
     // on the list. Both reads are the flip proof.

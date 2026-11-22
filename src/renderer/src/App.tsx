@@ -79,6 +79,7 @@ function App(): React.JSX.Element {
   )
 
   const selectionRef = useRef<string | null>(null)
+  const sessionAbortRef = useRef(new AbortController())
   const selectedDraftRef = useRef<{ key: string; id: string; threadId: string } | null>(null)
   const sentinelRef = useRef<HTMLDivElement | null>(null)
   const sidebarRef = useRef<HTMLElement | null>(null)
@@ -326,6 +327,8 @@ function App(): React.JSX.Element {
   // in-flight list response so it can't paint mail rows onto the
   // signed-out screen.
   function exitToSignedOut(): void {
+    sessionAbortRef.current.abort()
+    sessionAbortRef.current = new AbortController()
     replaceListRequest()
     pendingSyncRef.current = null
     refreshRequestRef.current = null
@@ -409,16 +412,19 @@ function App(): React.JSX.Element {
     // A Drafts-folder row always carries its server draft id (fetchDrafts
     // builds every row from drafts.get); without one no delete has a target.
     if (!row.draftId) return
+    const sessionSignal = sessionAbortRef.current.signal
     const rowKey = listRowKey(row)
     setDraftDiscard({ rowKey, error: null })
     window.api
       .discardDraft(row.draftId)
       .then(() => {
+        if (sessionSignal.aborted) return
         setDraftDiscard(null)
         invalidatePageCursor()
         removeListRow(rowKey)
       })
       .catch((e: unknown) => {
+        if (sessionSignal.aborted) return
         setDraftDiscard({ rowKey, error: errorMessage(e) })
         recordError(e)
       })
@@ -1205,7 +1211,7 @@ function App(): React.JSX.Element {
 
         <section className="email-content" aria-label="Email content">
           {composing ? (
-            <ComposeEditor onClose={closeEmail} />
+            <ComposeEditor onClose={closeEmail} sessionSignal={sessionAbortRef.current.signal} />
           ) : selectedThread ? (
             selectedIsDraft ? (
               <DraftEditor
@@ -1213,6 +1219,7 @@ function App(): React.JSX.Element {
                 row={selectedThread}
                 detail={draftDetail}
                 detailLoading={draftDetailLoading}
+                sessionSignal={sessionAbortRef.current.signal}
                 onSent={() => handleDraftSent(listRowKey(selectedThread))}
                 onDraftDiscard={() => handleDraftDiscard(selectedThread)}
                 discardError={

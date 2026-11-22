@@ -18,6 +18,7 @@ type DraftEditorProps = {
   row: ThreadSummary
   detail: EmailDetailData | null
   detailLoading: boolean
+  sessionSignal: AbortSignal
   onSent: () => void
   // Asks App to delete this draft. App owns the confirm, the bridge call
   // and the row prune; the editor only retires when App re-renders it away.
@@ -32,12 +33,14 @@ type DraftEditorProps = {
 function DraftForm({
   detail,
   draftId,
+  sessionSignal,
   onSent,
   onDraftDiscard,
   discardError
 }: {
   detail: EmailDetailData
   draftId?: string
+  sessionSignal: AbortSignal
   onSent: () => void
   onDraftDiscard: () => void
   discardError: string | null
@@ -99,6 +102,7 @@ function DraftForm({
     request,
     draftId ? { draftId, messageId: detail.id } : undefined,
     draftId !== undefined && attach.ready,
+    sessionSignal,
     edited || attach.edited
   )
 
@@ -113,6 +117,7 @@ function DraftForm({
     setNotice(null)
     try {
       await autosave.flushPending()
+      if (sessionSignal.aborted) return
       autosave.suspend()
       try {
         const target = autosave.currentDraft()
@@ -134,6 +139,7 @@ function DraftForm({
       } finally {
         autosave.resume()
       }
+      if (sessionSignal.aborted) return
       autosave.stop()
       setSent(true)
       onSent()
@@ -209,6 +215,7 @@ export function DraftEditor({
   row,
   detail,
   detailLoading,
+  sessionSignal,
   onSent,
   onDraftDiscard,
   discardError
@@ -226,6 +233,7 @@ export function DraftEditor({
       key={detail.id}
       detail={detail}
       draftId={row.draftId}
+      sessionSignal={sessionSignal}
       onSent={onSent}
       onDraftDiscard={onDraftDiscard}
       discardError={discardError}

@@ -41,6 +41,7 @@ export function useDraftAutosave(
   fields: AutosaveFields,
   initialDraft: DraftVersion | undefined,
   enabled: boolean,
+  sessionSignal: AbortSignal,
   hasEdits = true
 ): DraftAutosave {
   const [status, setStatus] = useState<DraftAutosave['status']>('idle')
@@ -78,7 +79,7 @@ export function useDraftAutosave(
         // Retired (send consumed the draft, Cancel discarded it) or
         // suspended (a send holds the bridge) means the queued write folds
         // into whatever the terminal action decided.
-        if (retiredRef.current || suspendedRef.current) return
+        if (sessionSignal.aborted || retiredRef.current || suspendedRef.current) return
         // Serialized once at dispatch: the content compare keeps a duplicate
         // write away, and the same string records what was written below.
         const written = JSON.stringify(fieldsRef.current)
@@ -108,7 +109,7 @@ export function useDraftAutosave(
     pendingSaveRef.current = run
     setStatus('saving')
     return run
-  }, [])
+  }, [sessionSignal])
 
   useEffect(() => {
     fieldsRef.current = fields
@@ -148,14 +149,14 @@ export function useDraftAutosave(
         window.clearTimeout(timerRef.current)
         timerRef.current = null
       }
-      if (!enabledRef.current || retiredRef.current) return
+      if (sessionSignal.aborted || !enabledRef.current || retiredRef.current) return
       if (JSON.stringify(fieldsRef.current) === lastSavedRef.current) return
       // A save may already sit in flight or queued from the debounce; this
       // chain-dispatches behind it, so a create that has not resolved yet
       // resolves first. On a version conflict, keep a separate draft.
       void save(true)
     }
-  }, [save])
+  }, [save, sessionSignal])
 
   return {
     flushPending: async (): Promise<void> => {
