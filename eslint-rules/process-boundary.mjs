@@ -64,6 +64,8 @@ export default {
       unreadableSpecifier:
         'This module name is computed, so the process boundary cannot be checked. Import or require a literal module name.',
       glob: 'import.meta.glob picks modules by pattern, so the process boundary cannot be checked. Import each module by name.',
+      unsupportedImportMeta:
+        'Only a statically named import.meta.resolve call is allowed. Other import.meta calls can hide module loading from the process boundary.',
       noZone:
         'Every file in src/ must live in src/main, src/preload, src/renderer or src/shared so the process boundary applies to it.'
     }
@@ -147,12 +149,13 @@ export default {
         if (node.callee.type === 'Identifier' && node.callee.name === 'require') {
           checkComputed(node, node.arguments[0])
         }
-        if (
-          node.callee.type === 'MemberExpression' &&
-          isImportMeta(node.callee.object) &&
-          !(node.callee.property.type === 'Identifier' && node.callee.property.name === 'resolve')
-        ) {
-          context.report({ node, messageId: 'glob' })
+        if (node.callee.type === 'MemberExpression' && isImportMeta(node.callee.object)) {
+          const name = node.callee.computed
+            ? staticSpecifier(node.callee.property)
+            : node.callee.property.name
+          if (name !== 'resolve') {
+            context.report({ node, messageId: name === 'glob' ? 'glob' : 'unsupportedImportMeta' })
+          }
         }
       }
     }

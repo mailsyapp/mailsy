@@ -175,3 +175,39 @@ test('an approved hook may create an observer', () =>
     'src/renderer/src/hooks/useIntersection.ts',
     'export const observe = (): IntersectionObserver => new IntersectionObserver(() => undefined)\n'
   ))
+
+test('renderer may resolve its own asset', () =>
+  accepts(COMPONENT, "export const icon = import.meta.resolve('./x.png')\n"))
+
+test('renderer may resolve its own asset through a static computed member', () =>
+  accepts(COMPONENT, "export const icon = import.meta['resolve']('./x.png')\n"))
+
+test('renderer may resolve its own asset through a static template member', () =>
+  accepts(COMPONENT, "export const icon = import.meta[`resolve`]('./x.png')\n"))
+
+test('renderer cannot disguise glob as a computed resolve member', () =>
+  rejects(
+    COMPONENT,
+    "const resolve = 'glob'\nexport const files = import.meta[resolve]('./*.ts')\n"
+  ))
+
+test('renderer cannot call an unknown import.meta member', () =>
+  rejects(
+    COMPONENT,
+    "export const load = (name: string): unknown => import.meta[name]('./x.png')\n"
+  ))
+
+test('renderer cannot call an empty import.meta member', () =>
+  rejects(COMPONENT, "export const load = import.meta['']('./x.png')\n"))
+
+test('renderer cannot call a static computed glob member', () =>
+  rejects(COMPONENT, "export const files = import.meta['glob']('./*.ts')\n"))
+
+test('renderer cannot call a dynamic template import.meta member', () =>
+  rejects(
+    COMPONENT,
+    "export const load = (name: string): unknown => import.meta[`${name}`]('./x.png')\n"
+  ))
+
+test('renderer cannot call an unsupported static import.meta member', () =>
+  rejects(COMPONENT, "export const load = import.meta['load']('./x.png')\n"))
