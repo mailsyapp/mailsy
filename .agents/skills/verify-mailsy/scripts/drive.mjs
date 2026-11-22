@@ -341,10 +341,12 @@ try {
     )
     await snapshot(page, 'compose-new')
   } else if (FEATURE === 'forward-attachments') {
+    const { collectBodies } = await import(resolve(SKILL_DIR, '../../../src/main/mail/mime.ts'))
     const content = page.getByRole('region', { name: 'Email content' })
     const form = content.locator('form.composer')
     const send = form.getByRole('button', { name: 'Send', exact: true })
     for (const scenario of [
+      'inline-data',
       'all',
       'remove',
       'retry',
@@ -353,8 +355,25 @@ try {
       'reply',
       'reply-all'
     ]) {
-      if (scenario !== 'all') await page.reload()
+      if (scenario !== 'inline-data') await page.reload()
       await page.getByText('Launch checklist', { exact: true }).first().waitFor()
+      if (scenario === 'inline-data') {
+        const bodies = { text: '', html: '', inlineImages: [], attachments: [] }
+        collectBodies(await page.evaluate(() => window.__inlineAttachmentPayload), bodies)
+        await page.evaluate((refs) => {
+          const getThread = window.api.getThread
+          window.__forwardInlineId = refs[0]?.attachmentId
+          window.api.getThread = async (id) => {
+            const thread = await getThread(id)
+            thread.messages = thread.messages.map((message) =>
+              message.id === 'msg-receipts-1'
+                ? { ...message, attachments: [...message.attachments, ...refs] }
+                : message
+            )
+            return thread
+          }
+        }, bodies.attachments)
+      }
       await page.evaluate((scenario) => {
         const getAttachment = window.api.getAttachment
         window.__forwardMode = ['retry', 'remove-failed'].includes(scenario)
@@ -455,14 +474,17 @@ try {
             ? ['receipt-b.pdf', 'cal-shot.png']
             : ['reply', 'reply-all', 'switch'].includes(scenario)
               ? []
-              : ['receipt-a.pdf', 'receipt-b.pdf', 'cal-shot.png']
+              : scenario === 'inline-data'
+                ? ['receipt-a.pdf', 'receipt-b.pdf', 'cal-shot.png', 'tiny-note.bin']
+                : ['receipt-a.pdf', 'receipt-b.pdf', 'cal-shot.png']
       assert(
         (await page.evaluate((names) => {
           const files = window.__sent[0]?.attachments ?? []
           const ids = {
             'receipt-a.pdf': 'att-receipts-1',
             'receipt-b.pdf': 'att-receipts-2',
-            'cal-shot.png': 'att-receipts-img'
+            'cal-shot.png': 'att-receipts-img',
+            'tiny-note.bin': window.__forwardInlineId
           }
           return (
             window.__sent.length === 1 &&
@@ -470,7 +492,9 @@ try {
             names.every((name) =>
               files.some(
                 (file) =>
-                  file.filename === name && file.data === window.__forwardExpected[ids[name]]
+                  file.filename === name &&
+                  file.data === window.__forwardExpected[ids[name]] &&
+                  (name !== 'tiny-note.bin' || file.data === '+/8=')
               )
             )
           )

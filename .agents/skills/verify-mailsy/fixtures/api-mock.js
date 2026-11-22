@@ -113,6 +113,21 @@
     ['msg-receipts-1~att-receipts-img', TINY_PNG]
   ])
   const FIXTURE_PICK = [{ filename: 'fixture-file.pdf', size: 7, data: 'Zml4dHVyZQ==' }]
+  window.__inlineAttachmentPayload = {
+    mimeType: 'multipart/mixed',
+    parts: [
+      {
+        mimeType: 'multipart/mixed',
+        parts: [
+          {
+            mimeType: 'application/octet-stream',
+            filename: 'tiny-note.bin',
+            body: { data: '-_8', size: 2 }
+          }
+        ]
+      }
+    ]
+  }
 
   // Reply-all fixture: one message carrying multi-recipient To plus Cc, so
   // the To line after reply all covers author + To + Cc with me dropped.
@@ -671,6 +686,14 @@
     // so a ref/text mismatch fails loudly instead of sending empty parts.
     getAttachment: async (messageId, attachmentId) => {
       ensureSignedIn()
+      if (messageId === 'msg-receipts-1' && attachmentId.startsWith('mailsy-part:')) {
+        let part = window.__inlineAttachmentPayload
+        for (const index of attachmentId.slice('mailsy-part:'.length).split('.').slice(1)) {
+          part = part?.parts?.[Number(index)]
+        }
+        if (typeof part?.body?.data !== 'string') throw new Error('mock: no inline attachment')
+        return btoa(atob(part.body.data.replace(/-/g, '+').replace(/_/g, '/')))
+      }
       const key = `${messageId}~${attachmentId}`
       if (!attachmentStore.has(key)) throw new Error(`mock: no attachment ${key}`)
       return attachmentStore.get(key)

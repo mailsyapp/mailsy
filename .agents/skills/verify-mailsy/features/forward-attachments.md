@@ -5,6 +5,7 @@ Forwarding preloads the selected message's original attachment bytes as removabl
 ## Sub-features
 
 - `originals` forwards all three files on Receipts for March travel, preserving their bytes and the quoted HTML.
+- `inline-data` adds a small named MIME part with `body.data` but no `attachmentId`; the real incoming MIME collector supplies its ref and forwarding sends all four files with exact bytes.
 - `remove` omits an explicitly removed original while sending the other two.
 - `failure` blocks Send and form submission until Retry succeeds or Remove explicitly drops the unavailable file.
 - `loading` keeps Send and picking disabled during Retry and initial prefill.
@@ -23,6 +24,7 @@ Preconditions: the standard signed-in fixture mailbox and a scaffold server pass
 
 - Run `node scripts/drive.mjs --feature forward-attachments --run-id "$RUN_ID" --port "$VERIFY_MAILSY_PORT"`.
 - The journey sends all three originals, removes one and sends two, injects one failed original and recovers by Retry, and repeats failure with explicit Remove.
+- An additional raw fixture part is parsed by production `collectBodies` in Node and its refs are supplied to the fixture thread boundary. The four-file send must include `tiny-note.bin` with the decoded inline bytes.
 - During delayed loading and failure it proves Send is disabled; direct form submission cannot bypass the failure block.
 - Switching an unresolved forward to reply cannot leak late attachment results. Fresh reply and reply-all also send no original attachments.
 - Each ready/failure/loading state has a screenshot and accessibility snapshot; the transcript asserts filenames and exact boundary-provided bytes in the recorded send request.
@@ -32,3 +34,4 @@ Preconditions: the standard signed-in fixture mailbox and a scaffold server pass
 - Failures and held reads are injected only at `window.api.getAttachment`. File controls, composer changes, and sends use the UI.
 - The image `cal-shot.png` is a regular attachment and remains a chip, not a newly inserted inline image.
 - Forwarded quoted HTML retains main's existing sanitization and image handling. This journey does not change or simulate Gmail MIME generation.
+- `node --experimental-strip-types .agents/harness/draft-retained-attachments.ts` exercises production full-message fetch resolution, nested/root/empty/missing parts, CID isolation, and inline-data draft retention, including no write when resolution fails.

@@ -1,7 +1,7 @@
 import { getAccountEmail, getGmailClient } from '../auth'
 import type { EmailDetail, EmailThread } from '../../shared/types'
 import { toEmailDetail } from './message'
-import { base64UrlToBuffer } from './mime'
+import { base64UrlToBuffer, INLINE_ATTACHMENT_PREFIX } from './mime'
 import { noteHistoryId } from './sync'
 import { DETAIL_CONCURRENCY, mapWithConcurrency, withQuotaRetry } from './resilience'
 
@@ -13,14 +13,24 @@ export async function fetchMessage(id: string): Promise<EmailDetail> {
   return toEmailDetail(gmail, msg.data)
 }
 
-// One stored attachment's bytes, standard base64. The draft-editor round
-// trip is the only consumer: a drafts.update rebuilds the raw message, so
-// an edit must fetch what the draft carries before the first autosave
-// write or those files would silently drop. Gmail returns the payload in
-// base64url; standard base64 is what the composer's records carry.
 export async function fetchAttachment(messageId: string, attachmentId: string): Promise<string> {
   if (!messageId.trim() || !attachmentId.trim()) throw new Error('Attachment ID is required')
   const gmail = getGmailClient()
+  if (attachmentId.startsWith(INLINE_ATTACHMENT_PREFIX)) {
+    const path = attachmentId.slice(INLINE_ATTACHMENT_PREFIX.length).split('.')
+    if (path.shift() !== '0' || path.some((index) => !/^(0|[1-9]\d*)$/.test(index))) {
+      throw new Error('Invalid attachment ID')
+    }
+    const message = await withQuotaRetry(() =>
+      gmail.users.messages.get({ userId: 'me', id: messageId, format: 'full' })
+    )
+    let part = message.data.payload
+    for (const index of path) part = part?.parts?.[Number(index)]
+    if (!part?.filename || typeof part.body?.data !== 'string') {
+      throw new Error('Attachment not found')
+    }
+    return base64UrlToBuffer(part.body.data).toString('base64')
+  }
   const attachment = await withQuotaRetry(() =>
     gmail.users.messages.attachments.get({ userId: 'me', messageId, id: attachmentId })
   )
