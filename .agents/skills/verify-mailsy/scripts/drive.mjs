@@ -124,6 +124,160 @@ async function snapshot(page, name) {
   log(`evidence: ${name}.aria.txt + ${name}.png`)
 }
 
+async function activateLoadMore(page, view) {
+  await view.getByRole('button', { name: 'Load more', exact: true }).evaluate(
+    (button) => button.focus({ preventScroll: true }), undefined, { timeout: 5000 }
+  )
+  await page.keyboard.press('Enter')
+}
+
+async function holdContinuations(page) {
+  await page.evaluate(() => {
+    const listFolder = window.api.listFolder
+    window.__heldContinuations = []
+    window.api.listFolder = async (options) => {
+      const result = await listFolder(options)
+      if (options.pageToken) {
+        await new Promise((resolve) => window.__heldContinuations.push(resolve))
+      }
+      return result
+    }
+  })
+}
+
+async function releaseContinuation(page, index) {
+  await page.evaluate(async (at) => {
+    window.__heldContinuations[at]()
+    await new Promise(requestAnimationFrame)
+    await new Promise(requestAnimationFrame)
+  }, index)
+}
+
+async function switchDuringPagination(page) {
+  const inbox = page.getByRole('complementary', { name: 'Inbox', exact: true })
+  const rail = page.getByRole('navigation', { name: 'Mail folders' })
+  const labels = rail.getByRole('button', { name: 'Labels', exact: true })
+  if (await labels.count()) await labels.click()
+  await page.evaluate(async () => {
+    const labels = await window.api.listLabels()
+    const receipts = labels.find(({ name }) => name === 'Receipts')
+    for (let i = 1; i <= 35; i++) {
+      const { delta } = window.__deliverMail({ subject: `Label paging ${i}` })
+      await window.api.modifyLabels({
+        kind: 'thread', id: delta.threads[0].id, addLabelIds: [receipts.id]
+      })
+    }
+  })
+  await holdContinuations(page)
+
+  for (const [index, name, lastSubject] of [[0, 'Drafts', 'Later draft 30'], [2, 'Receipts', 'Label paging 35']]) {
+    await rail.getByRole('button', { name: 'Inbox', exact: true }).click()
+    await inbox.getByRole('listitem').nth(29).waitFor({ timeout: 5000 })
+    if (!(await page.evaluate((n) => window.__heldContinuations.length > n, index))) {
+      await activateLoadMore(page, inbox)
+    }
+    await page.waitForFunction((n) => window.__heldContinuations.length === n, index + 1)
+
+    await rail.getByRole('button', { name, exact: true }).click()
+    const destination = page.getByRole('complementary', { name, exact: true })
+    await destination.getByRole('listitem').nth(29).waitFor({ timeout: 5000 })
+    const autoStarted = await page.evaluate((n) => window.__heldContinuations.length === n, index + 2)
+    assert(
+      autoStarted || (await destination.getByRole('button', { name: 'Load more', exact: true }).count()) === 1,
+      `${name} can load its next page while Inbox is still in flight`,
+      `the abandoned Inbox request blocked pagination in ${name}`
+    )
+    if (!autoStarted) await activateLoadMore(page, destination)
+    await page.waitForFunction((n) => window.__heldContinuations.length === n, index + 2)
+    await releaseContinuation(page, index)
+    const busy = destination.getByRole('status').filter({ hasText: 'Loading more...' })
+    assert(
+      (await busy.count()) === 1 && (await destination.getByText('Paging thread 31', { exact: true }).count()) === 0,
+      `the old Inbox response neither paints ${name} nor clears its busy state`,
+      `the superseded request changed the active ${name} list or its loading state`
+    )
+    await releaseContinuation(page, index + 1)
+    await destination.getByText(lastSubject, { exact: true }).waitFor({ timeout: 5000 })
+    await snapshot(page, `pagination-switch-${name.toLowerCase()}`)
+  }
+}
+
+async function holdAccountRequests(page, inbox) {
+  await page.evaluate(() => {
+    for (let i = 1; i <= 32; i++) window.__deliverMail({ subject: `Old account ${i}` })
+    window.__pushSync({ kind: 'reset' })
+    window.__heldRefreshes = []
+    window.api.syncMail = () => new Promise((resolve) => window.__heldRefreshes.push(resolve))
+  })
+  await holdContinuations(page)
+  await activateLoadMore(page, inbox)
+  await page.waitForFunction(() => window.__heldContinuations.length === 1)
+  await page.getByRole('button', { name: 'Refresh mail' }).click()
+  await page.waitForFunction(() => window.__heldRefreshes.length === 1)
+}
+
+async function signInWithPendingMail(page) {
+  await page.evaluate(() => {
+    const subjects = Array.from({ length: 32 }, (_, i) => `New account ${i + 1}`)
+    const rows = subjects.map((subject) => window.__deliverMail({ subject }).delta.threads[0])
+    window.api.listFolder = async (options) => options.pageToken
+      ? { threads: rows.slice(30), nextPageToken: null }
+      : { threads: rows.slice(0, 30), nextPageToken: '30' }
+  })
+  await page.getByRole('button', { name: 'Sign in with Google' }).click()
+  const inbox = page.getByRole('complementary', { name: 'Inbox', exact: true })
+  await inbox.getByText('New account 1', { exact: true }).waitFor({ timeout: 5000 })
+  const refresh = page.getByRole('button', { name: 'Refresh mail' })
+  const oldRefreshCleared = (await refresh.getAttribute('aria-busy')) === 'false'
+  await refresh.click()
+  const startedOwnRefresh = await page.evaluate(() => window.__heldRefreshes.length === 2)
+
+  await page.evaluate(async () => {
+    const { delta } = window.__deliverMail({ subject: 'Late refresh from prior account' })
+    window.__heldRefreshes[0](delta)
+    await new Promise(requestAnimationFrame)
+    await new Promise(requestAnimationFrame)
+  })
+  assert(
+    (await inbox.getByText('Late refresh from prior account', { exact: true }).count()) === 0,
+    'the late refresh never displays mail from the previous account',
+    'a refresh started before sign-out displayed its old account mail after sign-in'
+  )
+  assert(
+    oldRefreshCleared && startedOwnRefresh && (await refresh.getAttribute('aria-busy')) === 'true',
+    'the second account owns its refresh button independently',
+    'the old refresh blocked or cleared the second account refresh'
+  )
+  assert(
+    (await inbox.getByRole('button', { name: 'Load more', exact: true }).count()) === 1,
+    'the second account can page while the old list request is held',
+    'the previous account still owns the pagination control'
+  )
+  await activateLoadMore(page, inbox)
+  await inbox.getByText('New account 32', { exact: true }).waitFor({ timeout: 5000 })
+  await releaseContinuation(page, 0)
+  await page.evaluate(() => window.__heldRefreshes[1]({
+    kind: 'delta', historyId: 'new-account', threads: [], deletedThreadIds: []
+  }))
+  assert(
+    (await inbox.getByRole('listitem').count()) === 32 &&
+      (await inbox.getByText(/^Old account /).count()) === 0,
+    'the new mailbox keeps only its own results after both old requests settle',
+    'late page results changed the new mailbox'
+  )
+  await snapshot(page, 'sign-in-pending-mail')
+
+  const rail = page.getByRole('navigation', { name: 'Mail folders' })
+  const labels = rail.getByRole('button', { name: 'Labels', exact: true })
+  if (await labels.count()) await labels.click()
+  await rail.getByRole('button', { name: 'Receipts', exact: true }).click()
+  await page.getByRole('complementary', { name: 'Receipts', exact: true }).waitFor({ timeout: 5000 })
+  await page.getByRole('button', { name: 'Sign out' }).click()
+  await page.getByRole('button', { name: 'Sign in with Google' }).click()
+  await inbox.getByText('New account 1', { exact: true }).waitFor({ timeout: 5000 })
+  assert(true, 'signing back in after leaving a label opens Inbox', 'the previous account label was retained')
+}
+
 let browser
 try {
   browser = await chromium.launch()
@@ -156,6 +310,7 @@ try {
     const signOut = page.getByRole('button', { name: 'Sign out' })
     await signOut.waitFor({ timeout: 10000 })
     assert(true, 'signed-in state offers the "Sign out" button', 'Sign out button missing while signed in')
+    await holdAccountRequests(page, page.getByRole('complementary', { name: 'Inbox' }))
     await signOut.click()
     // Signed-out screen: the sign-in button returns and no mail rows stay
     // on the list. Both reads are the flip proof.
@@ -173,6 +328,7 @@ try {
       'sign-out bridge not invoked'
     )
     await snapshot(page, 'sign-out')
+    await signInWithPendingMail(page)
   } else if (FEATURE === 'inbox') {
     const inbox = page.getByRole('complementary', { name: 'Inbox' })
     await inbox.waitFor({ timeout: 10000 })
@@ -212,6 +368,26 @@ try {
     await page.getByText('Launch checklist').first().waitFor({ timeout: 10000 })
     assert(true, 'clear restores the full inbox', 'inbox not restored after clear')
     await snapshot(page, 'search')
+
+    const inbox = page.getByRole('complementary', { name: 'Inbox' })
+    await page.evaluate(() => {
+      for (let i = 1; i <= 34; i++) window.__deliverMail({ subject: `Paged search ${i}` })
+    })
+    await box.fill('Paged search')
+    await box.press('Enter')
+    for (const count of [10, 20, 30]) {
+      await inbox.getByText(`${count} results for “Paged search”`, { exact: true }).waitFor({ timeout: 5000 })
+      await activateLoadMore(page, inbox)
+    }
+    await inbox.getByText('End of results', { exact: true }).waitFor({ timeout: 5000 })
+    const subjects = Array.from({ length: 34 }, (_, i) => `Paged search ${i + 1}`)
+    const counts = await Promise.all(subjects.map((subject) => inbox.getByText(subject, { exact: true }).count()))
+    assert(
+      counts.every((count) => count === 1) && (await inbox.getByRole('listitem').count()) === subjects.length,
+      'search reaches all 34 matches exactly once across four pages',
+      'search over 30 results skipped, duplicated, or mixed in other rows'
+    )
+    await snapshot(page, 'search-pagination')
   } else if (FEATURE === 'read-thread') {
     await page.getByRole('complementary', { name: 'Inbox' }).waitFor({ timeout: 10000 })
     await page.getByText('Deploy window').first().click()
@@ -2291,12 +2467,6 @@ try {
     const inbox = page.getByRole('complementary', { name: 'Inbox', exact: true })
     const rows = inbox.getByRole('listitem')
     const loadMore = inbox.getByRole('button', { name: 'Load more', exact: true })
-    const activateLoadMore = async (view = inbox) => {
-      await view.getByRole('button', { name: 'Load more', exact: true }).evaluate((button) =>
-        button.focus({ preventScroll: true })
-      )
-      await page.keyboard.press('Enter')
-    }
     await inbox.getByText('Launch checklist', { exact: true }).waitFor({ timeout: 5000 })
     const firstPageSize = 30
     const deliveries = 64
@@ -2320,7 +2490,7 @@ try {
         return result
       }
     })
-    await activateLoadMore()
+    await activateLoadMore(page, inbox)
     await page.waitForFunction(() => Boolean(window.__releasePage))
     const arrival = 'Delivered during Load more'
     await page.evaluate((subject) => {
@@ -2356,7 +2526,7 @@ try {
       await content.getByRole('button', { name: action, exact: true }).click()
       await row.waitFor({ state: 'detached', timeout: 5000 })
     }
-    await activateLoadMore()
+    await activateLoadMore(page, inbox)
     await inbox.getByText(`Paging thread ${deliveries}`, { exact: true }).waitFor({ timeout: 5000 })
     for (let i = 1; i <= deliveries; i++) {
       const count = await inbox.getByText(`Paging thread ${i}`, { exact: true }).count()
@@ -2394,7 +2564,7 @@ try {
       window.__pushSync({ kind: 'reset' })
     }, { count: draftFill, pageSize: firstPageSize })
     await drafts.getByText('Same-thread draft 1', { exact: true }).waitFor({ timeout: 5000 })
-    await activateLoadMore(drafts)
+    await activateLoadMore(page, drafts)
     await drafts.getByText(`Later draft ${firstPageSize - 2}`, { exact: true }).waitFor({
       timeout: 5000
     })
@@ -2425,7 +2595,7 @@ try {
       'the sent draft is still in the list during the confirmation',
       'the test did not reach the send confirmation window'
     )
-    await activateLoadMore(drafts)
+    await activateLoadMore(page, drafts)
     const laterSubjects = Array.from({ length: firstPageSize }, (_, i) => `Later draft ${i + 1}`)
     await drafts.getByText(laterSubjects.at(-1), { exact: true }).waitFor({ timeout: 5000 })
     const laterCounts = await Promise.all(
@@ -2470,6 +2640,7 @@ try {
       'deleting one draft changed other rows'
     )
     await snapshot(page, 'pagination-draft-discard')
+    await switchDuringPagination(page)
   } else if (FEATURE === 'signature') {
     // The per-compose signature across all three surfaces: the stored text
     // is born from the first toggle in a fresh compose, the block rides

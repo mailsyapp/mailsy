@@ -8,6 +8,7 @@ Search lets a signed-in user filter mail from the inbox sidebar: typing commits 
 - `search-match` keeps title/body/snippet matches and removes non-matches.
 - `search-clear` restores the full inbox and empties the box.
 - `search-fallback` fuzzy-matches cached inbox mail when the server returns nothing.
+- `search-pagination` reaches every match across four result pages.
 
 ## How to get to it (user POV)
 
@@ -24,7 +25,8 @@ Preconditions:
 
 - **Match.** Type `budget` in the searchbox. Run `node scripts/drive.mjs --feature search --run-id "$RUN_ID" --port "$VERIFY_MAILSY_PORT"`. `Q3 budget draft` remains visible and `Launch checklist` is filtered out.
 - **Clear.** Choose `Clear search` (same command). The box empties and `Launch checklist` returns.
-- **Proof.** Capture the restored inbox. The driver writes `artifacts/<run-id>/search.aria.txt` and `artifacts/<run-id>/search.png`. Both identify the feature, the query, and the visible result.
+- **Pagination.** Search for a subject prefix with 34 matches, then load each page. Every matching thread appears exactly once.
+- **Proof.** The driver writes `search` and `search-pagination` ARIA snapshots and screenshots under `artifacts/<run-id>/`.
 
 ## Gotchas
 

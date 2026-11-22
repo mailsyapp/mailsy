@@ -550,7 +550,9 @@
   }
 
   window.api = {
-    signIn: async () => undefined,
+    signIn: async () => {
+      signedIn = true
+    },
     isSignedIn: async () => signedIn,
     // Mirrors the sign-out bridge: the stored token is dropped in memory the
     // way the real bridge deletes the token file, so isSignedIn() flips to

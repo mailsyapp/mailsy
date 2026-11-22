@@ -104,13 +104,23 @@ function App(): React.JSX.Element {
   // mounted IntersectionObserver can fire several times during the first
   // fetch, before any of those states have committed, so loadMore's guards
   // read these instead of render-scoped state.
-  const loadingMoreRef = useRef(false)
+  const pageRequestRef = useRef<number | null>(null)
   const searchingRef = useRef(false)
   const pendingSyncRef = useRef(false)
   const nextPageTokenRef = useRef<string | null | undefined>(undefined)
   const loadedPagesRef = useRef(0)
   const invalidCursorRef = useRef<symbol | null>(null)
   const listedThreadsRef = useRef<ThreadSummary[]>([])
+  const refreshRequestRef = useRef<symbol | null>(null)
+  const [syncing, setSyncing] = useState(false)
+
+  function replaceListRequest(): number {
+    if (pageRequestRef.current !== null) {
+      pageRequestRef.current = null
+      setLoadingMore(false)
+    }
+    return ++requestIdRef.current
+  }
 
   // The sync mirrors above are read by the IntersectionObserver before any
   // state has committed, so every write pairs the state with its ref. One
@@ -300,13 +310,16 @@ function App(): React.JSX.Element {
   // in-flight list response so it can't paint mail rows onto the
   // signed-out screen.
   function exitToSignedOut(): void {
-    ++requestIdRef.current
+    replaceListRequest()
     pendingSyncRef.current = false
+    refreshRequestRef.current = null
+    setSyncing(false)
     setSignedIn(false)
     setCommittedQuery('')
     setSearchInput('')
     closeEmail()
     setThreads([])
+    setActiveFolder('inbox')
     setActiveLabel(null)
     setLabels([])
     // No per-folder mail content may survive: nothing typed or cached.
@@ -515,7 +528,7 @@ function App(): React.JSX.Element {
   // label-view plumbing and activeLabel the id, together the whole view.
   function handleLabelSelect(label: MailLabel): void {
     if (activeLabel?.id === label.id) return
-    ++requestIdRef.current
+    replaceListRequest()
     setActiveLabel(label)
     setActiveFolder('label')
     setSearchInput('')
@@ -575,7 +588,7 @@ function App(): React.JSX.Element {
 
   function handleFolderSelect(folder: MailFolder): void {
     if (folder === activeFolder && activeLabel === null) return
-    ++requestIdRef.current
+    replaceListRequest()
     setActiveFolder(folder)
     setActiveLabel(null)
     setSearchInput('')
@@ -595,11 +608,11 @@ function App(): React.JSX.Element {
     // within one fetch's window, before the states it mirrors have
     // committed, and a stale false here appends duplicate pages.
     const continuation = nextPageTokenRef.current
-    if (loadingMoreRef.current || searchingRef.current || continuation === null) return
+    if (pageRequestRef.current !== null || searchingRef.current || continuation === null) return
     // Same request guard as the list effect below: a slower overlapping
     // response must never write after a response a later request superseded.
     const requestId = ++requestIdRef.current
-    loadingMoreRef.current = true
+    pageRequestRef.current = requestId
     setLoadingMore(true)
     const loadPages = async (): Promise<void> => {
       const invalidCursor = invalidCursorRef.current
@@ -636,7 +649,8 @@ function App(): React.JSX.Element {
         if (requestIdRef.current === requestId) recordError(e)
       })
       .finally(() => {
-        loadingMoreRef.current = false
+        if (pageRequestRef.current !== requestId) return
+        pageRequestRef.current = null
         setLoadingMore(false)
         flushPendingSync()
       })
@@ -649,11 +663,11 @@ function App(): React.JSX.Element {
   // of the behavior.
   const loadFirstPage = useCallback(
     (mode: FirstPageMode): void => {
-      if (mode === 'sync' && (searchingRef.current || loadingMoreRef.current)) {
+      if (mode === 'sync' && (searchingRef.current || pageRequestRef.current !== null)) {
         pendingSyncRef.current = true
         return
       }
-      const requestId = ++requestIdRef.current
+      const requestId = replaceListRequest()
       if (mode === 'sync') {
         setQuietSearching(true)
       } else {
@@ -723,7 +737,7 @@ function App(): React.JSX.Element {
   const signedInRef = useRef<boolean | null>(null)
 
   function flushPendingSync(): void {
-    if (!pendingSyncRef.current || searchingRef.current || loadingMoreRef.current) return
+    if (!pendingSyncRef.current || searchingRef.current || pageRequestRef.current !== null) return
     pendingSyncRef.current = false
     syncResultHandlerRef.current({ kind: 'reset' })
   }
@@ -752,7 +766,7 @@ function App(): React.JSX.Element {
     ])
     if (
       departingIds.size > 0 &&
-      (loadingMoreRef.current ||
+      (pageRequestRef.current !== null ||
         searchingRef.current ||
         threads.some((row) => departingIds.has(row.id)))
     ) {
@@ -785,19 +799,22 @@ function App(): React.JSX.Element {
   // while the button is already showing the sweep, and main coalesces
   // anything that reaches it onto the running sweep. Failures surface
   // through the shared error line.
-  const [syncing, setSyncing] = useState(false)
-  const syncingRef = useRef(false)
-
   function handleRefresh(): void {
-    if (syncingRef.current) return
-    syncingRef.current = true
+    if (refreshRequestRef.current !== null) return
+    const request = Symbol()
+    refreshRequestRef.current = request
     setSyncing(true)
     window.api
       .syncMail('button')
-      .then((result) => syncResultHandlerRef.current(result))
-      .catch((e: unknown) => recordError(e))
+      .then((result) => {
+        if (refreshRequestRef.current === request) syncResultHandlerRef.current(result)
+      })
+      .catch((e: unknown) => {
+        if (refreshRequestRef.current === request) recordError(e)
+      })
       .finally(() => {
-        syncingRef.current = false
+        if (refreshRequestRef.current !== request) return
+        refreshRequestRef.current = null
         setSyncing(false)
       })
   }
@@ -868,7 +885,7 @@ function App(): React.JSX.Element {
       : undefined
     if (cached) {
       setThreads(cached.threads)
-      ++requestIdRef.current
+      replaceListRequest()
       setPageToken(cached.nextPageToken, 1)
       setActiveSearching(false)
       flushPendingSync()
