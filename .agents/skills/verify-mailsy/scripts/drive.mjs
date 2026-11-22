@@ -1197,10 +1197,15 @@ try {
     await page.getByRole('button', { name: 'Inbox', exact: true }).click()
     await page.getByRole('button', { name: 'Drafts', exact: true }).click()
     await drafts.getByText('Draft: Q4 attachments', { exact: true }).first().waitFor({ timeout: 5000 })
+    const pendingWrites = await page.evaluate((subject) =>
+      window.__draftSaves.filter((draft) => draft.subject === subject), unsavedSubject)
     assert(
-      !(await page.evaluate((subject) => window.__draftSaves.some(
-        (draft) => draft.copyOnConflict && draft.subject === subject
-      ), unsavedSubject)) && (await drafts.getByText(unsavedSubject, { exact: true }).count()) === 0,
+      !pendingWrites.some((draft) => !draft.copyOnConflict),
+      'the edit was still pending when delete closed the editor',
+      'an ordinary autosave committed the edit before delete could exercise recovery'
+    )
+    assert(
+      pendingWrites.length === 0 && (await drafts.getByText(unsavedSubject, { exact: true }).count()) === 0,
       'confirming delete discards pending edits without a recovery copy',
       'closing a deliberately deleted draft recovered the pending edits as a new draft'
     )
