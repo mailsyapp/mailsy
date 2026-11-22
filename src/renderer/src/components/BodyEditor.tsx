@@ -290,8 +290,7 @@ function insertSignatureBlockInto(editor: HTMLDivElement, html: string, focusCar
     while (
       offset > 0 &&
       container.childNodes[offset - 1].nodeType === Node.TEXT_NODE &&
-      !container.childNodes[offset - 1].textContent?.trim() &&
-      !/[\r\n]/.test(container.childNodes[offset - 1].textContent ?? '')
+      container.childNodes[offset - 1].textContent === ''
     )
       offset--
     const last = container.childNodes[offset - 1]

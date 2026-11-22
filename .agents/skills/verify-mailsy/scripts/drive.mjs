@@ -2414,6 +2414,35 @@ try {
     )
     await snapshot(page, 'signature-inline-text')
     await toggle.click()
+    for (const { html, text, visibleText, evidence } of [
+      { html: '<b>Label:</b> ', text: 'Label: ', visibleText: 'Label: ', evidence: 'label-space' },
+      { html: 'Line<br>  ', text: 'Line  ', visibleText: 'Line\n  ', evidence: 'br-indent' }
+    ]) {
+      await autoBody.evaluate((editor, html) => {
+        editor.innerHTML = html
+        editor.dispatchEvent(new InputEvent('input', { bubbles: true }))
+      }, html)
+      await toggle.click()
+      await autoBody.pressSequentially('Plain continuation.')
+      await toggle.click()
+      assert(
+        await autoBody.evaluate((editor, { text, visibleText }) => {
+          const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT)
+          let continuation = walker.nextNode()
+          while (continuation && !continuation.textContent.includes('Plain continuation.'))
+            continuation = walker.nextNode()
+          return editor.textContent === `${text}Plain continuation.` &&
+            editor.innerText.trimEnd() === `${visibleText}Plain continuation.` &&
+            continuation && !continuation.parentElement.closest('b, strong, .mailsy-signature') &&
+            Number(getComputedStyle(continuation.parentElement).fontWeight) < 600
+        }, { text, visibleText }),
+        evidence === 'label-space'
+          ? 'typing after a bold label and separate space keeps the space and stays unbold'
+          : 'typing after a BR and separate spaces preserves indentation',
+        'signature insertion skipped meaningful whitespace or inherited bold formatting'
+      )
+      await snapshot(page, `signature-${evidence}`)
+    }
     for (const enters of [1, 2]) {
       await autoBody.evaluate((editor) => {
         editor.replaceChildren(document.createTextNode('Line start'))
@@ -2525,7 +2554,7 @@ try {
       await autoBody.pressSequentially('Continued after toggling.')
       await toggle.click()
       assert(
-        await autoBody.evaluate((editor, tail) => {
+        await autoBody.evaluate((editor, { tail, wrapImage }) => {
           const body = editor.firstElementChild
           const image = body.querySelector('img')
           const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT)
@@ -2535,12 +2564,12 @@ try {
           return editor.childNodes.length === 1 && body.tagName === 'DIV' &&
             !body.querySelector('div, p, br, .mailsy-signature') &&
             body.querySelectorAll('img').length === 1 &&
-            body.textContent.trimEnd() === `Before image.${tail}Continued after toggling.` &&
+            body.textContent === `Before image.${wrapImage ? ' \t  \t ' : ''}${tail}Continued after toggling.` &&
             editor.innerText.trimEnd() === body.textContent.trimEnd() && continuation &&
             Boolean(image.compareDocumentPosition(continuation) & Node.DOCUMENT_POSITION_FOLLOWING)
-        }, existingTail),
+        }, { tail: existingTail, wrapImage }),
         wrapImage
-          ? 'image-containing inline content ignores trailing whitespace at both nesting levels'
+          ? 'image-containing inline content preserves trailing whitespace before subsequent typing'
           : existingTail
           ? 'text/image/text stays on one line and survives signature toggling'
           : 'text plus pasted image keeps subsequent typing in the body after signature removal',
