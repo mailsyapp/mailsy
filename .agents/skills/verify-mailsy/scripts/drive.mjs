@@ -2358,6 +2358,57 @@ try {
       'normal typing survives signature removal',
       'signature removal deleted normally typed text or kept the signature'
     )
+    await autoBody.evaluate((editor) => {
+      editor.replaceChildren(document.createTextNode('A continuous'))
+      editor.dispatchEvent(new InputEvent('input', { bubbles: true }))
+    })
+    assert(
+      await autoBody.evaluate((editor) =>
+        editor.childNodes.length === 1 && editor.firstChild.nodeType === Node.TEXT_NODE
+      ),
+      'the sentence starts as a bare top-level text node',
+      'the bare-text caret regression precondition was not met'
+    )
+    await toggle.click()
+    await autoBody.pressSequentially(' sentence.')
+    assert(
+      await autoBody.evaluate((editor) =>
+        editor.childNodes.length === 2 &&
+        editor.firstChild.nodeType === Node.TEXT_NODE &&
+        editor.firstChild.textContent === 'A continuous sentence.' &&
+        editor.lastChild.matches('.mailsy-signature')
+      ),
+      'continuing bare body text after signature insertion adds no DIV or BR to the sentence',
+      'signature insertion split the body sentence across lines or typed inside the signature'
+    )
+    await snapshot(page, 'signature-bare-text')
+    await toggle.click()
+    await autoBody.fill('Inline sentence')
+    await autoBody.press('Control+a')
+    await autoBody.press('Control+b')
+    await autoBody.press('Control+End')
+    assert(
+      await autoBody.evaluate((editor) =>
+        editor.childNodes.length === 1 &&
+        editor.firstChild.nodeType === Node.ELEMENT_NODE &&
+        getComputedStyle(editor.firstChild).display === 'inline'
+      ),
+      'the inline sentence is a top-level formatted element',
+      'the inline-element caret regression precondition was not met'
+    )
+    await toggle.click()
+    await autoBody.pressSequentially(' continues.')
+    assert(
+      await autoBody.evaluate((editor) => {
+        const body = editor.cloneNode(true)
+        body.querySelector('.mailsy-signature').remove()
+        return body.textContent === 'Inline sentence continues.' && !body.querySelector('div, p, br')
+      }),
+      'continuing inline body content after signature insertion adds no line break',
+      'signature insertion split inline body content across lines or entered the signature'
+    )
+    await snapshot(page, 'signature-inline-text')
+    await toggle.click()
     await autoBody.fill('')
     await autoBody.evaluate((editor) => {
       const bytes = Uint8Array.from(
@@ -2434,6 +2485,22 @@ try {
       'the stored text survives the per-message removal',
       'per-message removal wiped the stored signature'
     )
+    await toggle.click()
+    await content.locator('.body-editor').pressSequentially(' Continuing the reopened draft.')
+    assert(
+      await content.locator('.body-editor').evaluate((editor) => {
+        const signature = editor.querySelector('.mailsy-signature')
+        const body = Array.from(editor.childNodes).find((node) =>
+          node.textContent.includes('Continuing the reopened draft.')
+        )
+        return body && body !== signature && !signature.contains(body) &&
+          Boolean(body.compareDocumentPosition(signature) & Node.DOCUMENT_POSITION_FOLLOWING)
+      }),
+      'reopened draft off/on typing stays in the body before the signature',
+      'reopened draft typing after reinsertion entered the signature or left the body'
+    )
+    await snapshot(page, 'signature-draft-caret')
+    await toggle.click()
     await content.getByRole('button', { name: 'Send', exact: true }).click()
     await content.getByText('Message sent.').waitFor({ timeout: 10000 })
     const draftSent = await page.evaluate(() => window.__sent)

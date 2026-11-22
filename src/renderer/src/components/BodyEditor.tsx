@@ -232,19 +232,23 @@ function removeSignatureBlocks(editor: HTMLDivElement): void {
   if (isVisuallyEmpty(editor)) editor.replaceChildren()
 }
 
-function signatureBodyParagraph(editor: HTMLDivElement): HTMLElement {
+function signatureBodyTarget(editor: HTMLDivElement): Node {
   const quoteSelector = 'blockquote, .gmail_quote, .gmail_quote_container'
   const quote =
     Array.from(editor.children).find(
       (child) => child.matches(quoteSelector) || child.querySelector(quoteSelector)
     ) ?? null
   const preceding = quote ? quote.previousSibling : editor.lastChild
+  if (preceding?.nodeType === Node.TEXT_NODE && preceding.textContent?.trim()) return preceding
   if (
     preceding instanceof HTMLElement &&
-    (preceding.tagName === 'DIV' || preceding.tagName === 'P') &&
+    !preceding.matches(`img, br, ${quoteSelector}, ${SIGNATURE_BLOCK_SELECTOR}`) &&
     !preceding.querySelector(`img, ${quoteSelector}, ${SIGNATURE_BLOCK_SELECTOR}`)
-  )
-    return preceding
+  ) {
+    if (preceding.tagName === 'DIV' || preceding.tagName === 'P') return preceding
+    if (preceding.textContent?.trim() && getComputedStyle(preceding).display.startsWith('inline'))
+      return preceding
+  }
   const paragraph = document.createElement('div')
   paragraph.appendChild(document.createElement('br'))
   editor.insertBefore(paragraph, quote)
@@ -256,7 +260,7 @@ function insertSignatureBlockInto(editor: HTMLDivElement, html: string, focusCar
   const block = document.createElement('div')
   block.className = SIGNATURE_BLOCK_CLASS
   block.innerHTML = (isVisuallyEmpty(editor) ? '' : '<br>') + html
-  const paragraph = signatureBodyParagraph(editor)
+  const target = signatureBodyTarget(editor)
   editor.appendChild(block)
   if (!focusCaret) return
   const selection = window.getSelection()
@@ -264,8 +268,12 @@ function insertSignatureBlockInto(editor: HTMLDivElement, html: string, focusCar
     placeCaret(
       editor,
       selection,
-      paragraph,
-      isVisuallyEmpty(paragraph) ? 0 : paragraph.childNodes.length
+      target,
+      target.nodeType === Node.TEXT_NODE
+        ? (target.textContent ?? '').length
+        : isVisuallyEmpty(target as HTMLElement)
+          ? 0
+          : target.childNodes.length
     )
   else editor.focus()
 }
