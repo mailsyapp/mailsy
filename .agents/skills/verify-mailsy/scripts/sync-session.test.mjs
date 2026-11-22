@@ -5,11 +5,13 @@ import { test } from 'node:test'
 
 const fixture = (globalThis.mailSyncFixture = {
   session: Symbol(),
+  signedIn: true,
   history: [],
   pushed: [],
   endSession: () => {},
-  switchAccount() {
+  switchAccount(signedIn = true) {
     this.session = Symbol()
+    this.signedIn = signedIn
     this.endSession()
   }
 })
@@ -24,7 +26,7 @@ const hooks = registerHooks({
       return moduleFrom(`
         const f = globalThis.mailSyncFixture
         export const getMailSession = () => f.session
-        export const isSignedIn = () => true
+        export const isSignedIn = () => f.signedIn
         export const getGmailClient = () => ({ users: {
           history: { list: ({ startHistoryId }) => {
             const request = Promise.withResolvers()
@@ -34,7 +36,7 @@ const hooks = registerHooks({
           threads: { get: ({ id }) => ({ data: { id } }) }
         } })
         export const onSessionEnded = (fn) => { f.endSession = fn }
-        export const invalidateStoredGrant = () => f.switchAccount()
+        export const invalidateStoredGrant = () => f.switchAccount(false)
       `)
     }
     if (specifier === 'electron') {
@@ -55,6 +57,7 @@ const hooks = registerHooks({
   }
 })
 const { noteHistoryId, syncMail } = await import('../../../../src/main/mail/sync.ts')
+const { withQuotaRetry } = await import('../../../../src/main/mail/resilience.ts')
 hooks.deregister()
 
 test('an old sweep cannot publish mail or interfere with the next account sweep', async () => {
@@ -100,6 +103,7 @@ test('a late invalid_grant from the old account does not revoke the new grant', 
 })
 
 test('invalid_grant from the current account still ends its session', async () => {
+  fixture.switchAccount()
   noteHistoryId('30', fixture.session)
   assert.equal((await syncMail('button')).kind, 'reset')
   const activeSession = fixture.session
@@ -107,4 +111,18 @@ test('invalid_grant from the current account still ends its session', async () =
   fixture.history.at(-1).reject(new Error('invalid_grant'))
   await assert.rejects(current, /session has expired/i)
   assert.notEqual(fixture.session, activeSession)
+})
+
+test('a pending page still reports sign-in is required when the background sweep expires its grant', async () => {
+  fixture.switchAccount()
+  noteHistoryId('40', fixture.session)
+  assert.equal((await syncMail('button')).kind, 'reset')
+  const page = Promise.withResolvers()
+  const pendingPage = withQuotaRetry(() => page.promise)
+  const sweep = syncMail('focus')
+  fixture.history.at(-1).reject(new Error('invalid_grant'))
+  await assert.rejects(sweep, /session has expired/i)
+
+  page.reject(new Error('invalid_grant'))
+  await assert.rejects(pendingPage, /not signed in yet/i)
 })
