@@ -2318,6 +2318,47 @@ try {
       'the auto-insert left the body empty'
     )
     // The autosave round trip: the block rides the draft payload...
+    const autoBody = content.locator('.body-editor')
+    const firstSignatureHtml = await autoBody.innerHTML()
+    const signatureOffset = () => autoBody.evaluate((editor) =>
+      editor.querySelector('.mailsy-signature').getBoundingClientRect().top -
+        editor.getBoundingClientRect().top
+    )
+    const firstSignatureOffset = await signatureOffset()
+    const savesBeforeRemoval = await page.evaluate(() => (window.__draftSaves ?? []).length)
+    await toggle.click()
+    assert(
+      (await autoBody.innerHTML()) === '' &&
+        (await autoBody.getAttribute('data-empty')) !== null &&
+        (await autoBody.evaluate((editor) => getComputedStyle(editor, '::before').content)) ===
+          '"Type your message..."',
+      'removing an untouched signature restores the empty body and placeholder',
+      'removing an untouched signature left body markup or hid the placeholder'
+    )
+    await page.waitForTimeout(2500)
+    assert(
+      (await page.evaluate(() => (window.__draftSaves ?? []).length)) === savesBeforeRemoval,
+      'an untouched signature toggled off saves no draft after 2500ms',
+      'an empty draft was autosaved after signature removal'
+    )
+    await snapshot(page, 'signature-empty')
+    await toggle.click()
+    assert(
+      (await autoBody.innerHTML()) === firstSignatureHtml &&
+        Math.abs((await signatureOffset()) - firstSignatureOffset) < 0.5,
+      'off/on restores the original signature structure and position',
+      'off/on added signature spacing or changed its structure'
+    )
+    await snapshot(page, 'signature-reinserted')
+    await autoBody.pressSequentially('Normal typing stays.')
+    await toggle.click()
+    assert(
+      (await bodyTextOf(autoBody)).includes('Normal typing stays.') &&
+        !(await bodyTextOf(autoBody)).includes('Analytical Engine Dept.'),
+      'normal typing survives signature removal',
+      'signature removal deleted normally typed text or kept the signature'
+    )
+    await toggle.click()
     const savesBefore = await page.evaluate(() => (window.__draftSaves ?? []).length)
     await content.locator('.composerField input').first().fill('brook@example.com')
     await content.locator('.composerField input').nth(1).fill('Draft with signature')

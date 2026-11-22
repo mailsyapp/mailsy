@@ -25,10 +25,12 @@ function readContent(editor: HTMLDivElement): { html: string; text: string } {
   return { html: /^(\s|<br\/?>)*$/i.test(html) ? '' : html, text }
 }
 
-function isVisuallyEmpty(editor: HTMLDivElement): boolean {
+function isVisuallyEmpty(editor: HTMLElement): boolean {
   for (const node of editor.childNodes) {
     if (node.nodeType === Node.TEXT_NODE && node.textContent?.trim() === '') continue
     if (node.nodeName === 'BR') continue
+    if ((node.nodeName === 'DIV' || node.nodeName === 'P') && isVisuallyEmpty(node as HTMLElement))
+      continue
     return false
   }
   return true
@@ -227,6 +229,7 @@ function removeSignatureBlocks(editor: HTMLDivElement): void {
   for (const existing of Array.from(editor.querySelectorAll(SIGNATURE_OWNED_SELECTOR))) {
     existing.remove()
   }
+  if (isVisuallyEmpty(editor)) editor.replaceChildren()
 }
 
 function insertSignatureBlockInto(editor: HTMLDivElement, html: string, focusCaret: boolean): void {
@@ -241,10 +244,17 @@ function insertSignatureBlockInto(editor: HTMLDivElement, html: string, focusCar
   }
   editor.appendChild(block)
   if (!focusCaret) return
-  const index = Array.prototype.indexOf.call(editor.childNodes, block)
+  const before = block.previousSibling
   const selection = window.getSelection()
-  if (selection) placeCaret(editor, selection, editor, Math.max(index, 0))
-  else editor.focus()
+  if (selection && before) {
+    const offset =
+      before.nodeType === Node.TEXT_NODE
+        ? (before.textContent ?? '').length
+        : isVisuallyEmpty(before as HTMLElement)
+          ? 0
+          : before.childNodes.length
+    placeCaret(editor, selection, before, offset)
+  } else editor.focus()
 }
 
 export const BodyEditor = forwardRef<BodyEditorHandle, BodyEditorProps>(function BodyEditor(

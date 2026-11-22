@@ -30,6 +30,7 @@ Run `node scripts/drive.mjs --feature signature --run-id "$RUN_ID" --port "$VERI
 - **Body boundary regression.** Click the body, press Ctrl+Home, type text, and toggle off: only the signature disappears. Capture `signature-removed` before restoring the signature for send.
 - **Send proof.** The outbox record carries the signature in both forms — `body` (plain text) and `bodyHtml` with the `mailsy-signature` block.
 - **Auto-insert.** A second fresh compose opens with the block already present, no toggle click.
+- **Untouched removal.** Toggle the auto-inserted signature off without typing: the editor HTML is empty and its placeholder returns. After 2500ms the draft-save count is unchanged (`signature-empty`). Toggle on again: HTML and signature offset match the first insertion (`signature-reinserted`). Normal typing at the insertion caret also survives toggling off.
 - **Draft round trip.** The signed compose autosaves (`__draftSaves` grows); the Drafts row reopens with the block and its pressed state restored; toggling off clears this message only (storage keeps the text); the send carries no signature.
 - **Reply surface.** The reply composer starts unpressed, the toggle appends after the quote, and the send keeps `gmail_quote_container` beside the `mailsy-signature` block.
 - **Proof.** `artifacts/<run-id>/signature-compose.aria.txt`/`.png` at the composed-with-signature moment and `signature.aria.txt`/`.png` after the reply send.
