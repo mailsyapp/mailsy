@@ -1,4 +1,4 @@
-import { ElectronAPI } from '@electron-toolkit/preload'
+export {}
 
 declare global {
   type EmailSummary = import('../shared/types').EmailSummary
@@ -15,7 +15,6 @@ declare global {
   type SyncResult = import('../shared/sync').SyncResult
 
   interface Window {
-    electron: ElectronAPI
     api: {
       signIn(): Promise<void>
       saveOAuthCredentials(creds: import('../shared/types').OAuthCredentials): Promise<void>

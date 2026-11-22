@@ -30,6 +30,10 @@ const BANNED_PACKAGES = {
   preload: [REACT]
 }
 
+function isImportMeta(node) {
+  return node?.type === 'MetaProperty' && node.meta.name === 'import'
+}
+
 function staticSpecifier(node) {
   if (!node) return null
   if (node.type === 'Literal') return node.value
@@ -129,9 +133,23 @@ export default {
       ImportExpression(node) {
         checkComputed(node, node.source)
       },
+      TSImportType(node) {
+        const specifier = node.source ?? node.argument?.literal ?? node.argument
+        check(node, staticSpecifier(specifier), true)
+      },
+      NewExpression(node) {
+        if (isImportMeta(node.arguments[1]?.object)) {
+          check(node, staticSpecifier(node.arguments[0]), false)
+        }
+      },
       CallExpression(node) {
         if (node.callee.type === 'Identifier' && node.callee.name === 'require') {
           checkComputed(node, node.arguments[0])
+        }
+        if (node.callee.type === 'MemberExpression' && isImportMeta(node.callee.object)) {
+          const [patterns] = node.arguments
+          const list = patterns?.type === 'ArrayExpression' ? patterns.elements : [patterns]
+          for (const pattern of list) checkComputed(node, pattern)
         }
       }
     }

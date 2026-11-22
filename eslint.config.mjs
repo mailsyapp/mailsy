@@ -10,7 +10,10 @@ const EFFECT_MESSAGE =
   'Raw effects are banned outside src/renderer/src/hooks. Work caused by a user action belongs in that event handler; values computed from props or state belong in render or useMemo. For what is left, use the hook that names the intent: useOnMount, useOnUnmount, useReaction (state changed), useSubscription, useInterval, useSettledValue (debounce), useIntersection. If none fits, add a new named hook in src/renderer/src/hooks and list it in APPROVED_HOOKS in eslint.config.mjs.'
 
 const EFFECT_NAMES =
-  'useEffect|useLayoutEffect|useInsertionEffect|componentDidMount|componentDidUpdate|componentWillUnmount|getSnapshotBeforeUpdate|componentDidCatch'
+  'useEffect|useLayoutEffect|useInsertionEffect|useSyncExternalStore|componentDidMount|componentDidUpdate|componentWillUnmount|getSnapshotBeforeUpdate|componentDidCatch'
+
+const OBSERVER_MESSAGE =
+  'Observers are subscriptions that need a disconnect on unmount, so they are banned outside src/renderer/src/hooks. Use useIntersection, or add a named hook and list it in APPROVED_HOOKS in eslint.config.mjs.'
 
 const RAW_BRIDGE_MESSAGE =
   "window.electron is the raw Electron bridge and bypasses the IPC contract. Add the call to src/preload/index.ts and use it through 'window.api'."
@@ -79,7 +82,12 @@ export default defineConfig(
           paths: [
             {
               name: 'react',
-              importNames: ['useEffect', 'useLayoutEffect', 'useInsertionEffect'],
+              importNames: [
+                'useEffect',
+                'useLayoutEffect',
+                'useInsertionEffect',
+                'useSyncExternalStore'
+              ],
               message: EFFECT_MESSAGE
             }
           ]
@@ -110,6 +118,10 @@ export default defineConfig(
         {
           selector: `TemplateElement[value.cooked=/^(${TIMER_NAMES})$/]`,
           message: TIMER_MESSAGE
+        },
+        {
+          selector: 'Identifier[name=/^(Intersection|Mutation|Resize|Performance)Observer$/]',
+          message: OBSERVER_MESSAGE
         },
         {
           selector:

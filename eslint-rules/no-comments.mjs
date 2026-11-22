@@ -54,7 +54,10 @@ export default {
 
     return {
       ExpressionStatement(node) {
-        const { expression } = node
+        const expression =
+          node.expression.type === 'UnaryExpression' && node.expression.operator === 'void'
+            ? node.expression.argument
+            : node.expression
         const isString =
           (expression.type === 'Literal' && typeof expression.value === 'string') ||
           expression.type === 'TemplateLiteral'
