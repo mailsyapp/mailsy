@@ -234,7 +234,7 @@ function removeSignatureBlocks(editor: HTMLDivElement): void {
 
 function signatureBodyParagraph(editor: HTMLDivElement): HTMLElement {
   const quoteSelector = 'blockquote, .gmail_quote, .gmail_quote_container'
-  const excluded = `img, ${quoteSelector}, ${SIGNATURE_BLOCK_SELECTOR}`
+  const excluded = `${quoteSelector}, ${SIGNATURE_BLOCK_SELECTOR}`
   const quote =
     Array.from(editor.children).find(
       (child) => child.matches(quoteSelector) || child.querySelector(quoteSelector)
@@ -285,23 +285,33 @@ function insertSignatureBlockInto(editor: HTMLDivElement, html: string, focusCar
     return
   }
   let container = paragraph
-  while (
-    container.lastChild instanceof HTMLElement &&
-    container.lastChild.tagName !== 'BR' &&
-    !isBlockElement(container.lastChild)
-  )
-    container = container.lastChild
-  if (
-    container.lastChild?.nodeName === 'BR' &&
-    container.childNodes.length > 1 &&
-    container.lastChild.previousSibling?.nodeName !== 'BR'
-  )
-    container.appendChild(document.createElement('br'))
-  const last = container.lastChild
-  const placeholder =
-    last?.nodeName === 'BR' &&
-    (container.childNodes.length === 1 || last.previousSibling?.nodeName === 'BR')
-  placeCaret(editor, selection, container, container.childNodes.length - (placeholder ? 1 : 0))
+  let offset = container.childNodes.length
+  while (true) {
+    while (
+      offset > 0 &&
+      container.childNodes[offset - 1].nodeType === Node.TEXT_NODE &&
+      !container.childNodes[offset - 1].textContent?.trim() &&
+      !/[\r\n]/.test(container.childNodes[offset - 1].textContent ?? '')
+    )
+      offset--
+    const last = container.childNodes[offset - 1]
+    if (
+      !(last instanceof HTMLElement) ||
+      last.tagName === 'BR' ||
+      last.tagName === 'IMG' ||
+      isBlockElement(last)
+    )
+      break
+    container = last
+    offset = container.childNodes.length
+  }
+  const last = container.childNodes[offset - 1]
+  if (last?.nodeName === 'BR') {
+    if (offset > 1 && last.previousSibling?.nodeName !== 'BR')
+      container.insertBefore(document.createElement('br'), container.childNodes[offset] ?? null)
+    else offset--
+  }
+  placeCaret(editor, selection, container, offset)
 }
 
 export const BodyEditor = forwardRef<BodyEditorHandle, BodyEditorProps>(function BodyEditor(

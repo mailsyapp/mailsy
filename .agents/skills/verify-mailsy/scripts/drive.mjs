@@ -2452,7 +2452,7 @@ try {
       await snapshot(page, `signature-inline-break-${breaks}`)
     }
     await autoBody.fill('')
-    await autoBody.evaluate((editor) => {
+    const pasteSignatureImage = () => autoBody.evaluate((editor) => {
       const bytes = Uint8Array.from(
         atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='),
         (character) => character.charCodeAt(0)
@@ -2461,6 +2461,7 @@ try {
       clipboardData.items.add(new File([bytes], 'signature-image.png', { type: 'image/png' }))
       editor.dispatchEvent(new ClipboardEvent('paste', { clipboardData, bubbles: true }))
     })
+    await pasteSignatureImage()
     await autoBody.locator(':scope > img').waitFor({ timeout: 10000 })
     await toggle.click()
     await autoBody.pressSequentially('Typing after the image.')
@@ -2471,15 +2472,83 @@ try {
         const paragraph = Array.from(editor.children).find((node) =>
           node.textContent.includes('Typing after the image.')
         )
-        return paragraph && !paragraph.contains(image) && !paragraph.contains(signature) &&
+        const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT)
+        let continuation = walker.nextNode()
+        while (continuation && !continuation.textContent.includes('Typing after the image.'))
+          continuation = walker.nextNode()
+        return paragraph && continuation && !paragraph.contains(signature) &&
           !signature.contains(paragraph) &&
-          Boolean(image.compareDocumentPosition(paragraph) & Node.DOCUMENT_POSITION_FOLLOWING) &&
+          Boolean(image.compareDocumentPosition(continuation) & Node.DOCUMENT_POSITION_FOLLOWING) &&
           Boolean(paragraph.compareDocumentPosition(signature) & Node.DOCUMENT_POSITION_FOLLOWING)
       }),
       'signature insertion types after a trailing inline image and before the signature',
       'signature insertion typed before the inline image or inside the signature'
     )
     await snapshot(page, 'signature-image-caret')
+    await toggle.click()
+    assert(
+      (await bodyTextOf(autoBody)).includes('Typing after the image.') &&
+        (await autoBody.locator('img').count()) === 1,
+      'typing after a trailing image survives signature removal',
+      'signature removal deleted text typed after the trailing image'
+    )
+    for (const { existingTail, wrapImage, evidence } of [
+      { existingTail: '', evidence: 'empty-tail' },
+      { existingTail: 'Existing tail.', evidence: 'sentence' },
+      { existingTail: '', wrapImage: true, evidence: 'wrapped-whitespace' }
+    ]) {
+      await autoBody.evaluate((editor) => {
+        editor.replaceChildren(document.createTextNode('Before image.'))
+        editor.dispatchEvent(new InputEvent('input', { bubbles: true }))
+      })
+      await autoBody.press('Control+End')
+      await pasteSignatureImage()
+      await autoBody.locator(':scope > img').waitFor({ timeout: 10000 })
+      assert(
+        await autoBody.evaluate((editor) => {
+          const tail = editor.querySelector('img').nextSibling
+          return tail?.nodeType === Node.TEXT_NODE && tail.textContent === ''
+        }),
+        'pasting after bare text leaves the native empty trailing text node',
+        'the empty-node image regression precondition was not met'
+      )
+      if (wrapImage) await autoBody.evaluate((editor) => {
+        const image = editor.querySelector('img')
+        const inline = document.createElement('span')
+        image.replaceWith(inline)
+        inline.append(image, document.createTextNode(' \t '))
+        editor.append(document.createTextNode(' \t '))
+        editor.dispatchEvent(new InputEvent('input', { bubbles: true }))
+      })
+      if (existingTail) await autoBody.pressSequentially(existingTail)
+      await toggle.click()
+      await autoBody.pressSequentially('Continued after toggling.')
+      await toggle.click()
+      assert(
+        await autoBody.evaluate((editor, tail) => {
+          const body = editor.firstElementChild
+          const image = body.querySelector('img')
+          const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT)
+          let continuation = walker.nextNode()
+          while (continuation && !continuation.textContent.includes('Continued after toggling.'))
+            continuation = walker.nextNode()
+          return editor.childNodes.length === 1 && body.tagName === 'DIV' &&
+            !body.querySelector('div, p, br, .mailsy-signature') &&
+            body.querySelectorAll('img').length === 1 &&
+            body.textContent.trimEnd() === `Before image.${tail}Continued after toggling.` &&
+            editor.innerText.trimEnd() === body.textContent.trimEnd() && continuation &&
+            Boolean(image.compareDocumentPosition(continuation) & Node.DOCUMENT_POSITION_FOLLOWING)
+        }, existingTail),
+        wrapImage
+          ? 'image-containing inline content ignores trailing whitespace at both nesting levels'
+          : existingTail
+          ? 'text/image/text stays on one line and survives signature toggling'
+          : 'text plus pasted image keeps subsequent typing in the body after signature removal',
+        'signature toggling split the image sentence or deleted the continuation'
+      )
+      await snapshot(page, `signature-image-${evidence}`)
+    }
+    await toggle.click()
     const savesBefore = await page.evaluate(() => (window.__draftSaves ?? []).length)
     await content.locator('.composerField input').first().fill('brook@example.com')
     await content.locator('.composerField input').nth(1).fill('Draft with signature')
