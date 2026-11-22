@@ -45,6 +45,7 @@ Keep implementation details out of the map. Name only user paths, stable handles
 - [Sign out](./sign-out.md) covers the signed-in sign-out button, the flip to the signed-out screen, and the clearing of mail and search state.
 - [Inbox](./inbox.md) covers conversation list rendering, thread grouping, selecting a thread, and pagination state.
 - [Search](./search.md) covers debounced server search, filtering, empty states, and clear.
+- [Search state](./search-state.md) covers cached star/unread flags, plain operator membership, and rejected writes.
 - [Read thread](./read-thread.md) covers conversation view, message count, and expand/collapse.
 - [Compose send](./compose-send.md) covers reply, forward, cancel, and send with outbox proof.
 - [Reply all](./reply-all.md) covers the whole-participant reply from the detail pane: author plus To/Cc recipients with the own address excluded, and the unchanged single reply.

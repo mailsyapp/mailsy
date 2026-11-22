@@ -521,14 +521,20 @@
   }
 
   // Minimal Gmail-style query support: plain text matches subject/from/snippet,
-  // tokens shaped like `key:value` are passed through as a literal filter.
+  // is:starred and is:unread filter the corresponding Gmail labels.
   function matches(m, q) {
     if (!q || !q.trim()) return true
     const hay = `${m.subject} ${m.from} ${m.snippet}`.toLowerCase()
     return q
       .toLowerCase()
       .split(/\s+/)
-      .every((tok) => hay.includes(tok))
+      .every((tok) =>
+        tok === 'is:starred'
+          ? (m.labelIds || []).includes('STARRED')
+          : tok === 'is:unread'
+            ? (m.labelIds || []).includes('UNREAD')
+            : hay.includes(tok)
+      )
   }
 
   window.__sent = sent

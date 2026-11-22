@@ -394,16 +394,29 @@ function App(): React.JSX.Element {
     if (selectionRef.current === threadId) closeEmail()
   }
 
+  function updateThreadLists(
+    update: (rows: ThreadSummary[], query: string, view: string) => ThreadSummary[]
+  ): void {
+    setThreads((prev) => update(prev, committedQuery, viewKey))
+    for (const [view, pages] of searchPageCacheRef.current) {
+      for (const [query, page] of pages) {
+        pages.set(query, { ...page, threads: update(page.threads, query, view) })
+      }
+    }
+  }
+
   // Read/unread is thread-level: Gmail marks whole conversations, and
   // threads.modify on UNREAD does the same batch shape as archive above.
   // The row's unread count collapses to the whole thread or clears to zero.
   function handleThreadReadChanged(threadId: string, unread: boolean): void {
-    setThreads((prev) =>
-      prev.map((e) => {
-        if (e.id !== threadId) return e
-        const next = unread ? e.messageIds.length : 0
-        return e.unreadCount === next ? e : { ...e, unreadCount: next }
-      })
+    updateThreadLists((rows, query) =>
+      !unread && query.trim().toLowerCase() === 'is:unread'
+        ? rows.filter((e) => e.id !== threadId)
+        : rows.map((e) => {
+            if (e.id !== threadId) return e
+            const next = unread ? e.messageIds.length : 0
+            return e.unreadCount === next ? e : { ...e, unreadCount: next }
+          })
     )
   }
 
@@ -451,10 +464,10 @@ function App(): React.JSX.Element {
   function handleThreadStarChanged(threadId: string, starred: boolean): void {
     // In the Starred folder an unstar removes the mail from this view, the
     // same way archive leaves the Inbox list.
-    setThreads((prev) =>
-      activeFolder === 'starred' && !starred
-        ? prev.filter((e) => e.id !== threadId)
-        : prev.map((e) => (e.id === threadId && e.starred !== starred ? { ...e, starred } : e))
+    updateThreadLists((rows, query, view) =>
+      !starred && (view === 'starred' || query.trim().toLowerCase() === 'is:starred')
+        ? rows.filter((e) => e.id !== threadId)
+        : rows.map((e) => (e.id === threadId && e.starred !== starred ? { ...e, starred } : e))
     )
   }
 

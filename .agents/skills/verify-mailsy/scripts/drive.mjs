@@ -212,6 +212,143 @@ try {
     await page.getByText('Launch checklist').first().waitFor({ timeout: 10000 })
     assert(true, 'clear restores the full inbox', 'inbox not restored after clear')
     await snapshot(page, 'search')
+  } else if (FEATURE === 'search-state') {
+    const cases = [
+      'cached-star',
+      'cached-read',
+      'cached-outside',
+      'starred-query',
+      'unread-query',
+      'complex-query',
+      'failed-write'
+    ]
+    for (const scenario of cases.filter(
+      (value) => !arg('search-case') || value === arg('search-case')
+    )) {
+      await page.reload({ waitUntil: 'domcontentloaded' })
+      const inbox = page.getByRole('complementary', { name: 'Inbox' })
+      await inbox.getByText('Launch checklist', { exact: true }).waitFor()
+      await page.evaluate(() => {
+        window.__searchCalls = []
+        const listFolder = window.api.listFolder
+        window.api.listFolder = async (options) => {
+          if (options?.q) window.__searchCalls.push(options.q)
+          return listFolder(options)
+        }
+      })
+      const box = page.getByRole('searchbox', { name: 'Search emails' })
+      const row = inbox.locator('li', { hasText: 'Q3 budget draft' }).first()
+      const cached = scenario.startsWith('cached-')
+      const operator = scenario === 'starred-query' || scenario === 'unread-query'
+      const unread = scenario === 'unread-query'
+      const query = unread
+        ? 'is:unread'
+        : scenario === 'starred-query'
+          ? 'is:starred'
+          : scenario === 'complex-query'
+            ? 'is:starred budget'
+            : 'budget'
+      if (operator || scenario === 'complex-query') {
+        await row
+          .getByRole('button', { name: unread ? 'mark unread' : 'Star', exact: true })
+          .click()
+        await row
+          .getByRole('button', { name: unread ? 'mark read' : 'Unstar', exact: true })
+          .waitFor()
+      }
+      await box.fill(query)
+      await box.press('Enter')
+      await inbox.getByText('Launch checklist', { exact: true }).waitFor({ state: 'detached' })
+      await row.waitFor()
+      if (scenario === 'cached-outside') {
+        await box.press('Escape')
+        await inbox.getByText('Launch checklist', { exact: true }).waitFor()
+      }
+      if (cached) {
+        if (scenario !== 'cached-read') {
+          await row.getByRole('button', { name: 'Star', exact: true }).click()
+          await row.getByRole('button', { name: 'Unstar', exact: true }).waitFor()
+        }
+        if (scenario !== 'cached-star') {
+          await row.getByRole('button', { name: 'mark unread', exact: true }).click()
+          await row.getByRole('button', { name: 'mark read', exact: true }).waitFor()
+        }
+      } else if (scenario === 'failed-write') {
+        await page.evaluate(() => {
+          window.api.modifyLabels = async () => {
+            throw new Error('Fixture mutation rejected')
+          }
+        })
+        await row.getByRole('button', { name: 'Star', exact: true }).click()
+        await page.getByText('Fixture mutation rejected', { exact: true }).waitFor()
+        assert(
+          (await row.getByRole('button', { name: 'Star', exact: true }).count()) === 1,
+          'a rejected mutation leaves current flags unchanged',
+          'a rejected mutation changed current flags'
+        )
+      } else {
+        await row
+          .getByRole('button', { name: unread ? 'mark read' : 'Unstar', exact: true })
+          .click()
+        if (operator) {
+          await row.waitFor({ state: 'detached', timeout: 3000 }).catch(() => {})
+          assert(
+            (await row.count()) === 0,
+            `${query}: the nonmatching row leaves active results`,
+            `${query}: the nonmatching row remained in active results`
+          )
+          await snapshot(page, `search-state-${scenario}-empty`)
+        } else {
+          await row.getByRole('button', { name: 'Star', exact: true }).waitFor()
+          assert(
+            (await row.count()) === 1,
+            'compound queries are not interpreted as a plain operator',
+            'compound query was pruned locally'
+          )
+        }
+      }
+      if (scenario !== 'cached-outside') {
+        await box.press('Escape')
+        await inbox.getByText('Launch checklist', { exact: true }).waitFor()
+      }
+      await box.fill(query)
+      await box.press('Enter')
+      await inbox.getByText('Launch checklist', { exact: true }).waitFor({ state: 'detached' })
+      if (operator) {
+        assert(
+          (await row.count()) === 0,
+          `${query}: cached results also omit the row`,
+          `${query}: a cached nonmatching row reappeared`
+        )
+      } else {
+        await row.waitFor()
+        if (cached) {
+          const correctStar =
+            scenario === 'cached-read' ||
+            (await row.getByRole('button', { name: 'Unstar', exact: true }).count()) === 1
+          const correctRead =
+            scenario === 'cached-star' ||
+            (await row.getByRole('button', { name: 'mark read', exact: true }).count()) === 1
+          assert(
+            correctStar && correctRead,
+            `${scenario}: cached search keeps current flags`,
+            `${scenario}: cached search restored stale star/unread flags`
+          )
+        } else {
+          assert(
+            (await row.getByRole('button', { name: 'Star', exact: true }).count()) === 1,
+            `${scenario}: cached flags stay unstarred`,
+            `${scenario}: cached flags changed unexpectedly`
+          )
+        }
+      }
+      assert(
+        await page.evaluate(() => window.__searchCalls.length === 1),
+        `${scenario}: reopening reuses the cached page`,
+        `${scenario}: a refetch masked stale cache state`
+      )
+      await snapshot(page, `search-state-${scenario}`)
+    }
   } else if (FEATURE === 'read-thread') {
     await page.getByRole('complementary', { name: 'Inbox' }).waitFor({ timeout: 10000 })
     await page.getByText('Deploy window').first().click()
