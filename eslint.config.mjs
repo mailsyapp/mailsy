@@ -41,7 +41,7 @@ export default defineConfig(
     }
   },
   {
-    files: ['src/**/*.{ts,tsx}'],
+    files: ['src/**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}'],
     plugins: { mailsy },
     rules: {
       'mailsy/no-comments': 'error',
@@ -49,7 +49,7 @@ export default defineConfig(
     }
   },
   {
-    files: ['src/renderer/**/*.{ts,tsx}'],
+    files: ['src/renderer/**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}'],
     ignores: ['src/renderer/src/hooks/use*.ts'],
     rules: {
       'no-restricted-imports': [
