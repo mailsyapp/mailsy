@@ -356,6 +356,7 @@ function App(): React.JSX.Element {
   // unmount of the editor.
   function handleDraftSent(rowKey: string): void {
     if (draftPruneTimersRef.current.has(rowKey)) return
+    invalidatePageCursor()
     draftPruneTimersRef.current.set(
       rowKey,
       window.setTimeout(() => {
@@ -388,6 +389,7 @@ function App(): React.JSX.Element {
       .discardDraft(row.draftId)
       .then(() => {
         setDraftDiscard(null)
+        invalidatePageCursor()
         removeListRow(rowKey)
       })
       .catch((e: unknown) => {
@@ -401,12 +403,12 @@ function App(): React.JSX.Element {
   // Only the pane showing the removed thread folds along: deleting row B
   // must not slam a compose or an unrelated open conversation.
   function removeListRow(rowKey: string): void {
-    invalidatePageCursor()
     setThreads((prev) => prev.filter((e) => listRowKey(e) !== rowKey))
     if (selectionRef.current === rowKey) closeEmail()
   }
 
   function handleThreadRemoved(threadId: string): void {
+    invalidatePageCursor()
     removeListRow(listRowKey({ id: threadId }))
   }
 
