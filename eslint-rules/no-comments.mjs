@@ -1,4 +1,5 @@
 const ALLOWED = /^\/\s*<reference\s/
+const WORD = /[\w$]/
 
 export default {
   meta: {
@@ -54,7 +55,11 @@ export default {
           context.report({
             loc: comment.loc,
             messageId: isDisable ? 'disable' : 'banned',
-            fix: (fixer) => fixer.removeRange(removalRange(comment))
+            fix: (fixer) => {
+              const [start, end] = removalRange(comment)
+              const joinsWords = WORD.test(text[start - 1] ?? '') && WORD.test(text[end] ?? '')
+              return fixer.replaceTextRange([start, end], joinsWords ? ' ' : '')
+            }
           })
         }
       }

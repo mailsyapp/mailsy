@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { ruleIds } from './lint.mjs'
+import { fixed, ruleIds } from './lint.mjs'
 
 const COMPONENT = 'src/renderer/src/components/Probe.tsx'
 
@@ -77,3 +77,28 @@ test('renderer reaches main through the @main style absolute path', () =>
 
 test('shared file reaching the renderer alias', () =>
   rejects('src/shared/probe.ts', "import { x } from '@renderer/lib/format'\nx()\n"))
+
+test('a file-wide eslint-disable does not silence the comment ban', async () => {
+  const ids = await ruleIds('src/shared/probe.ts', '/* eslint-disable */\nexport const x = 1\n')
+  assert.ok(ids.includes('mailsy/no-comments'))
+})
+
+test('an inline disable does not silence the timer ban', () =>
+  rejects(
+    COMPONENT,
+    '/* eslint-disable no-restricted-syntax, mailsy/no-comments */\nsetTimeout(() => undefined, 0)\n'
+  ).then(async () => {
+    const ids = await ruleIds(
+      COMPONENT,
+      '/* eslint-disable no-restricted-syntax, mailsy/no-comments */\nsetTimeout(() => undefined, 0)\n'
+    )
+    assert.ok(ids.includes('no-restricted-syntax'))
+  }))
+
+test('the comment autofix does not join the words around a comment', async () => {
+  const output = await fixed(
+    'src/shared/probe.ts',
+    'export function probe(value: number): number {\n  return/* note */value\n}\n'
+  )
+  assert.match(output, /return value/)
+})

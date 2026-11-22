@@ -12,3 +12,10 @@ export async function ruleIds(file, code) {
   if (fatal) throw new Error(`${file} does not parse: ${fatal.message}`)
   return result.messages.map((message) => message.ruleId)
 }
+
+const fixer = new ESLint({ cwd: root, fix: true })
+
+export async function fixed(file, code) {
+  const [result] = await fixer.lintText(code, { filePath: path.join(root, file) })
+  return result.output ?? code
+}
