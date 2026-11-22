@@ -545,6 +545,7 @@
   window.__seedIds = seed.map((m) => m.id)
   window.__draftSaves = draftSaves
   window.__draftDiscards = draftDiscards
+  window.__deleteDraftRemotely = (draftId) => deletedDrafts.push(draftId)
 
   // Mirrors the real boundary: getGmailClient throws this exact sentence
   // when no stored token exists, and recordError flips to the sign-in
@@ -757,6 +758,9 @@
       const target = request.draftId ? findDraft(request.draftId, request.copyOnConflict === true) : null
       const conflict = request.draftId && (!target || hasDraftConflict(target, request.expectedMessageId))
       if (conflict && request.copyOnConflict !== true) throw draftConflict()
+      if (conflict && draftDiscards.some((entry) => entry.draftId === request.draftId)) {
+        throw new Error('Draft was discarded')
+      }
       let draftId
       if (target && !conflict) {
         draftId = target.draftId

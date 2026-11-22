@@ -1066,10 +1066,7 @@ try {
     )
     await page.evaluate(() => window.__pushSync({ kind: 'reset' }))
     await remoteCopy.waitFor({ state: 'detached', timeout: 5000 })
-    await page.evaluate(async () => {
-      const api = window.__packagedFixtureApi ?? window.api
-      await api.discardDraft('draft-q4')
-    })
+    await page.evaluate(() => window.__deleteDraftRemotely('draft-q4'))
     const deletedDraftEdit = 'Pending edits after Gmail deleted the draft'
     await subjectField.fill(deletedDraftEdit)
     await page.evaluate(() =>
@@ -1175,6 +1172,8 @@ try {
       .click()
     await content.getByRole('heading', { name: 'Draft', exact: true }).waitFor({ timeout: 10000 })
     const editorId = await page.evaluate(() => window.__draftSaves?.at(-1)?.draftId)
+    const unsavedSubject = 'Confirmed delete discards my pending edit'
+    await content.getByRole('textbox', { name: 'Subject' }).fill(unsavedSubject)
     const acceptEditor = page.waitForEvent('dialog').then((d) => d.accept())
     // Scoped to the pane: the live row behind this editor also renders a
     // "delete draft" button in the list.
@@ -1194,6 +1193,16 @@ try {
       lastDiscard === editorId && editorId !== 'draft-1',
       `boundary recorded the editor discard (${lastDiscard})`,
       `editor discard record wrong or the wrong draft died: last=${lastDiscard} editor=${editorId}`
+    )
+    await page.getByRole('button', { name: 'Inbox', exact: true }).click()
+    await page.getByRole('button', { name: 'Drafts', exact: true }).click()
+    await drafts.getByText('Draft: Q4 attachments', { exact: true }).first().waitFor({ timeout: 5000 })
+    assert(
+      !(await page.evaluate((subject) => window.__draftSaves.some(
+        (draft) => draft.copyOnConflict && draft.subject === subject
+      ), unsavedSubject)) && (await drafts.getByText(unsavedSubject, { exact: true }).count()) === 0,
+      'confirming delete discards pending edits without a recovery copy',
+      'closing a deliberately deleted draft recovered the pending edits as a new draft'
     )
     await snapshot(page, 'delete-draft')
   } else if (FEATURE === 'draft-autosave') {

@@ -17,7 +17,8 @@ const fixture = (globalThis.draftVersionFixture = {
     fixture.messageId = 'msg-2'
     return { data: { id: params.id, message: { id: fixture.messageId } } }
   },
-  send: (params) => fixture.calls.push(['send', params])
+  send: (params) => fixture.calls.push(['send', params]),
+  delete: async (params) => fixture.calls.push(['delete', params])
 })
 
 const hooks = registerHooks({
@@ -33,7 +34,8 @@ const hooks = registerHooks({
           get: (...args) => f.get(...args),
           create: (...args) => f.create(...args),
           update: (...args) => f.update(...args),
-          send: (...args) => f.send(...args)
+          send: (...args) => f.send(...args),
+          delete: (...args) => f.delete(...args)
         } } })
       `
       return { url: `data:text/javascript,${encodeURIComponent(mock)}`, shortCircuit: true }
@@ -44,7 +46,7 @@ const hooks = registerHooks({
     )
   }
 })
-const { saveDraft, sendDraft } = await import('../../../../src/main/mail/send.ts')
+const { discardDraft, saveDraft, sendDraft } = await import('../../../../src/main/mail/send.ts')
 hooks.deregister()
 
 const request = {
@@ -154,5 +156,39 @@ test('unmount recovery handles deletion between the version check and update', a
     assert.deepEqual(fixture.calls, [])
   } finally {
     fixture.update = originalUpdate
+  }
+})
+
+test('recovery waits for a confirmed local discard and never copies it', async () => {
+  fixture.calls.length = 0
+  const originalGet = fixture.get
+  const originalDelete = fixture.delete
+  const { promise: heldDelete, resolve: releaseDelete } = Promise.withResolvers()
+  const { promise: lookupStarted, resolve: sawLookup } = Promise.withResolvers()
+  fixture.get = () => {
+    sawLookup()
+    throw Object.assign(new Error('Requested entity was not found'), { code: 404 })
+  }
+  fixture.delete = async (params) => {
+    fixture.calls.push(['delete', params])
+    await heldDelete
+  }
+  const edited = { ...request, expectedMessageId: 'msg-1', copyOnConflict: true }
+  try {
+    const discard = discardDraft(request.draftId)
+    const recovery = assert.rejects(saveDraft(edited), /Draft was discarded/)
+    await lookupStarted
+    releaseDelete()
+    await discard
+    await recovery
+    await assert.rejects(saveDraft(edited), /Draft was discarded/)
+    assert.deepEqual(fixture.calls.map(([verb]) => verb), ['delete'])
+    fixture.session = Symbol()
+    await saveDraft(edited)
+    assert.deepEqual(fixture.calls.map(([verb]) => verb), ['delete', 'create'])
+  } finally {
+    releaseDelete()
+    fixture.get = originalGet
+    fixture.delete = originalDelete
   }
 })

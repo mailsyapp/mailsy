@@ -399,11 +399,8 @@ function App(): React.JSX.Element {
   // open draft editor call into this handler, so the confirm (the
   // label-delete idiom), the bridge verb, and the list prune are written
   // once. The editor of the deleted draft stays mounted for the bridge
-  // round trip; that is safe by convergence — its autosave only ever
-  // updates this same draft id, so a straggling save (in flight, or the
-  // unmount flush the close below fires) either lands before the delete
-  // or resolves a 404 after it. The draft ends deleted either way, and the
-  // unmounted hook's save-error state dies with the component.
+  // round trip. The main process also remembers the discard so the
+  // editor's unmount flush cannot recover it as a new draft.
   function handleDraftDiscard(row: ThreadSummary): void {
     const confirmed = window.confirm(
       `Delete draft “${row.subject || '(no subject)'}”? This permanently discards it; not even Trash keeps a copy.`

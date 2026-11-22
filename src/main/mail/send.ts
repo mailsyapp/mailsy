@@ -13,6 +13,17 @@ import { isNotFoundError, rethrowDeadGrant, withQuotaRetry } from './resilience'
 import { buildRawMessage } from './mime'
 import type { gmail_v1 } from 'googleapis'
 
+let discardSession: symbol | undefined
+let localDiscards = new Map<string, Promise<void>>()
+
+function discardsFor(session: symbol): Map<string, Promise<void>> {
+  if (discardSession !== session) {
+    discardSession = session
+    localDiscards = new Map()
+  }
+  return localDiscards
+}
+
 // Field checks for the two bridge verbs. A send requires a recipient; a
 // draft save does not (Gmail keeps recipient-less drafts), but nothing
 // else about the field set differs, so one check carries both.
@@ -167,6 +178,15 @@ export async function saveDraft(request: SaveDraftRequest): Promise<DraftVersion
           if (copyOnConflict !== true || !isNotFoundError(e)) throw e
         }
         if (getMailSession() !== session) throw new Error('Mail account changed')
+        const discard = discardsFor(session).get(draftId)
+        if (discard) {
+          const discarded = await discard.then(
+            () => true,
+            () => false
+          )
+          if (discarded) throw new Error('Draft was discarded')
+          if (getMailSession() !== session) throw new Error('Mail account changed')
+        }
         return gmail.users.drafts.create({ userId: 'me', requestBody: { message: { raw } } })
       }
       return gmail.users.drafts.create({ userId: 'me', requestBody })
@@ -186,14 +206,25 @@ export async function saveDraft(request: SaveDraftRequest): Promise<DraftVersion
 export async function discardDraft(draftId: string): Promise<void> {
   if (typeof draftId !== 'string' || !draftId.trim()) throw new Error('Draft ID is required')
 
-  try {
-    const gmail = getGmailClient()
-    await withQuotaRetry(() => gmail.users.drafts.delete({ userId: 'me', id: draftId }))
-  } catch (e) {
-    rethrowDeadGrant(e)
-    if (isNotFoundError(e)) return
-    throw e
-  }
+  const session = getMailSession()
+  const discards = discardsFor(session)
+  const existing = discards.get(draftId)
+  if (existing) return existing
+
+  const gmail = getGmailClient()
+  const discard = withQuotaRetry(
+    () => gmail.users.drafts.delete({ userId: 'me', id: draftId }),
+    session
+  ).then(
+    () => undefined,
+    (e: unknown) => {
+      if (isNotFoundError(e)) return
+      discards.delete(draftId)
+      throw e
+    }
+  )
+  discards.set(draftId, discard)
+  return discard
 }
 
 export async function draftExists(draftId: string): Promise<boolean> {

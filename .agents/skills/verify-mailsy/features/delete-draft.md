@@ -24,11 +24,10 @@ Run `node scripts/drive.mjs --feature delete-draft --run-id "$RUN_ID" --port "$V
 
 - **Refuse.** Click the row's `delete draft`; the confirm dialog is read (message must name the permanent cost) and dismissed; the boundary records zero discards and the row stays listed.
 - **Delete from the row.** Accept the confirm; the row leaves, `__draftDiscards[0]` is `draft-1`, and an Inbox→Drafts round trip proves the server-side exclusion survives a refetch.
-- **Delete from the editor.** Compose until `__draftSaves` records a save, open Drafts, open the new row, and use the editor pane's `delete draft` (scoped to `Email content` — the live row behind it also renders one). The editor heading detaches and the row leaves; the last discard id is the editor draft's autosave id, distinct from the seed's.
+- **Delete from the editor.** Compose until `__draftSaves` records a save, open Drafts, edit the new draft, and confirm `delete draft` before autosave. The editor and row disappear, the last discard id is the editor's draft id, and a refetch shows no recovery copy.
 
 ## Gotchas
 
 - Opening the compose from the Drafts view itself and then clicking `Drafts` hits the same-folder guard (`folder === activeFolder`), which skips both the close and the refetch — the autosaved row never enters the list. The journey round-trips through Inbox, like the seeded `draft-autosave` flow closes over an Inbox row.
 - Playwright auto-dismisses dialogs with no listener, so the journey always arms `page.waitForEvent('dialog')` before the click; the refused first pass depends on that processing order.
-- The mid-edit safety is by convergence, not by an editor notification: the editor stays mounted while the boundary call is in flight, and its autosave only ever updates the deleted draft's id, so a straggling write lands before the delete or 404s after it. Nothing models a "draft deleted under the editor" crash.
-- Mock wiring is unchanged: `discardDraft` already existed in the fixtures (compose-Cancel path) and records `window.__draftDiscards`.
+- Explicit deletes take precedence over recovery: an editor can flush pending edits during unmount, but it cannot turn that discard into a new draft. Remote deletion is exercised separately by the Drafts journey.
