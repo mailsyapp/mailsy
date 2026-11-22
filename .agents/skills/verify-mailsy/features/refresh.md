@@ -7,6 +7,7 @@ Refresh is the live channel: new mail arrives from main's incremental sweep (pus
 - `refresh-button` turns the button busy (`aria-busy` + `.syncing` spinner) for as long as the sweep runs, dedupes spam clicks to one sweep (the mock counts `button` reasons it was invoked with), and after an injected failure shows the shared `Gmail rate limit hit` error line.
 - `refresh-push` adds a mailbox thread via `window.__deliverMail` and pushes its delta through `window.__pushSync` (the channel main's clock and focus results use); the new row appears in the Inbox with no click anywhere.
 - `refresh-reset` pushes `{kind:'reset'}` after another delivery; the view takes a full quiet fold of the first page and the delivered mail appears.
+- `refresh-pagination` fills the open inbox to exactly one page, then delivers one more thread and pushes a reset. `Load more` appears without reopening Inbox and reaches the overflow thread.
 
 ## How to get to it (user POV)
 
@@ -27,6 +28,7 @@ Run `node scripts/drive.mjs --feature refresh --run-id "$RUN_ID" --port "$VERIFY
 - **Errors.** With `window.__setSyncError('mock: rate limit')`, the next click keeps the same dedupe and surfaces `Gmail rate limit hit` in `p.error`.
 - **Push delta.** `window.__deliverMail` + `window.__pushSync(delta)` adds the row `Delivered between sweeps` to the Inbox without any click.
 - **Push reset.** Delivering again and pushing `{kind:'reset'}` re-folds the first page; `Delivered at the fold` appears.
+- **Pagination after reset.** After the open inbox grows from 30 to 31 threads, the reset exposes `Load more`. Activating it shows `Delivered onto page two` exactly once and removes the continuation.
 - **Proof.** `artifacts/<run-id>/refresh-button.aria.txt`/`.png` for the busy-state moment and `refresh.aria.txt`/`.png` after the push journeys.
 
 ## Gotchas

@@ -114,12 +114,14 @@ function App(): React.JSX.Element {
   const loadingMoreRef = useRef(false)
   const searchingRef = useRef(false)
   const nextPageTokenRef = useRef<string | null | undefined>(undefined)
+  const hasLoadedMoreRef = useRef(false)
 
   // The sync mirrors above are read by the IntersectionObserver before any
   // state has committed, so every write pairs the state with its ref. One
   // setter per pair makes an unpaired write unrepresentable.
-  function setPageToken(token: string | null | undefined): void {
+  function setPageToken(token: string | null | undefined, hasLoadedMore = false): void {
     nextPageTokenRef.current = token
+    hasLoadedMoreRef.current = hasLoadedMore
     setNextPageToken(token)
   }
 
@@ -572,7 +574,8 @@ function App(): React.JSX.Element {
     // Guards read the synchronous refs: the observer can fire repeatedly
     // within one fetch's window, before the states it mirrors have
     // committed, and a stale false here appends duplicate pages.
-    if (loadingMoreRef.current || searchingRef.current || nextPageTokenRef.current === null) return
+    const pageToken = nextPageTokenRef.current
+    if (loadingMoreRef.current || searchingRef.current || pageToken === null) return
     // Same request guard as the list effect below: a slower overlapping
     // response must never write after a response a later request superseded.
     const requestId = ++requestIdRef.current
@@ -581,7 +584,7 @@ function App(): React.JSX.Element {
     window.api
       .listFolder({
         maxResults: committedQuery ? SEARCH_PAGE_SIZE : LIST_PAGE_SIZE,
-        pageToken: nextPageTokenRef.current ?? undefined,
+        pageToken,
         folder: activeFolder,
         ...(activeLabel ? { userLabelId: activeLabel.id } : {}),
         ...(committedQuery ? { q: committedQuery } : {})
@@ -594,7 +597,7 @@ function App(): React.JSX.Element {
           const seen = new Set(prev.map((row) => row.id))
           return [...prev, ...page.threads.filter((row) => !seen.has(row.id))]
         })
-        setPageToken(page.nextPageToken)
+        setPageToken(page.nextPageToken, pageToken !== undefined)
       })
       .catch((e: unknown) => recordError(e))
       .finally(() => {
@@ -636,11 +639,9 @@ function App(): React.JSX.Element {
               ? page.threads
               : mergeIncoming(prev, page.threads, mode === 'sync', selectionRef.current)
           )
-          // A deeper token survives a pushed fold or manual refresh: string
-          // when more pages remain, null when exhausted. Resetting it to the
-          // fresh first page would re-walk pages the user already loaded on
-          // the next Load more.
-          if (mode === 'load' || nextPageTokenRef.current === undefined) {
+          // Use the fresh continuation until a later page has been fetched.
+          // Its cursor (including null at the end) must not rewind on sync.
+          if (mode !== 'sync' || !hasLoadedMoreRef.current) {
             setPageToken(page.nextPageToken)
           }
           storeFirstPage(page, committedQuery)

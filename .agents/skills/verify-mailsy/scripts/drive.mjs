@@ -2180,6 +2180,43 @@ try {
     })
     await inbox.getByText('Delivered at the fold', { exact: true }).first().waitFor({ timeout: 5000 })
     assert(true, 'a pushed reset re-folds the first page with its new mail', 'pushed reset did not re-fold')
+
+    const firstPageSize = 30
+    const rows = inbox.getByRole('listitem')
+    const loadMore = inbox.getByRole('button', { name: 'Load more', exact: true })
+    const remaining = firstPageSize - (await rows.count())
+    assert(remaining > 0, 'the starting inbox fits on one page', 'fixtures already fill the first page')
+    await page.evaluate((count) => {
+      for (let i = 0; i < count; i++) window.__deliverMail({ subject: `Fill first page ${i + 1}` })
+      window.__pushSync({ kind: 'reset' })
+    }, remaining)
+    await inbox.getByText(`Fill first page ${remaining}`, { exact: true }).waitFor({ timeout: 5000 })
+    assert(
+      (await rows.count()) === firstPageSize && (await loadMore.count()) === 0,
+      'the open inbox has exactly one full page and no continuation',
+      'expected a full first page without a Load more button'
+    )
+
+    // The fixture appends this delivery after page one, so the only route
+    // to it is the continuation returned by the quiet first-page fold.
+    const overflowSubject = 'Delivered onto page two'
+    await page.evaluate((subject) => {
+      window.__deliverMail({ subject })
+      window.__pushSync({ kind: 'reset' })
+    }, overflowSubject)
+    await loadMore.waitFor({ timeout: 5000 }).catch(() => {
+      throw new Error('ASSERT: Load more did not appear after the open inbox grew past 30 threads')
+    })
+    assert(true, 'a pushed reset exposes Load more without reopening the inbox', 'missing continuation')
+    // Focus without scrolling so the observer does not load the page first.
+    await loadMore.evaluate((button) => button.focus({ preventScroll: true }))
+    await page.keyboard.press('Enter')
+    await inbox.getByText(overflowSubject, { exact: true }).waitFor({ timeout: 5000 })
+    assert(
+      (await rows.count()) === firstPageSize + 1 && (await loadMore.count()) === 0,
+      'Load more reaches the new thread exactly once and exhausts the inbox',
+      'page two did not append exactly one thread and exhaust pagination'
+    )
     await snapshot(page, 'refresh')
   } else if (FEATURE === 'signature') {
     // The per-compose signature across all three surfaces: the stored text
