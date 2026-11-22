@@ -29,7 +29,8 @@ Preconditions:
 - **Wake.** The clock fast-forwards 48 hours; the Inbox refetch lists `Launch checklist` again, the schedule is empty, and the second mod is the reverse pair.
 - **Row restore overrides the wake.** `Q3 budget draft` is parked through `Next week`, then `unsnooze` on its Snoozed row removes it there, empties the schedule, and records the reverse pair without waiting for the wake.
 - **Detail restore.** `Launch checklist` is parked once more through `Later this week`; opening it in the Snoozed view and choosing `unsnooze` records the same reverse pair and empties the schedule; the Inbox refetch lists it.
-- **Proof.** The driver writes `artifacts/<run-id>/snooze-emulation.aria.txt`, `snooze-emulation.png`, and the transcript `snooze-emulation.log` quoting the recorded mods and schedule states.
+- **Switch views during a wake.** Hold the wake result in All Mail, switch to Inbox, and release the result. The returned thread shows in Inbox without a stale All Mail refresh.
+- **Proof.** The driver writes snapshots for `snooze-emulation` and `snooze-wake-view-switch`, and the transcript `snooze-emulation.log` quoting the recorded mods and schedule states.
 
 ## Gotchas
 

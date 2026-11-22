@@ -1712,7 +1712,16 @@ try {
     // The wake: fast-forward past the preset's absolute time. The renderer's
     // tick sweeps the mock schedule, restores the pair, and the refreshed
     // Inbox lists the returned thread.
+    await page.evaluate(() => {
+      const snoozeTick = window.api.snoozeTick
+      window.api.snoozeTick = async () => {
+        const restored = await snoozeTick()
+        if (restored > 0) await new Promise((release) => { window.__releaseSnoozeTick = release })
+        return restored
+      }
+    })
     await page.clock.fastForward(48 * 60 * 60 * 1000)
+    await page.waitForFunction(() => Boolean(window.__releaseSnoozeTick), undefined, { timeout: 5000 })
     await page.getByRole('button', { name: 'Inbox', exact: true }).click()
     await inbox.waitFor({ timeout: 10000 })
     await inbox
@@ -1720,6 +1729,26 @@ try {
       .first()
       .waitFor({ timeout: 10000 })
     assert(true, 'wake returned the thread to the Inbox', 'thread missing from the Inbox after wake')
+    const inboxRows = await inbox.getByRole('listitem').count()
+    const refreshedFolders = await page.evaluate(async () => {
+      const listFolder = window.api.listFolder
+      const folders = []
+      window.api.listFolder = (options) => {
+        folders.push(options.folder)
+        return listFolder(options)
+      }
+      window.__releaseSnoozeTick()
+      await new Promise(requestAnimationFrame)
+      await new Promise(requestAnimationFrame)
+      window.api.listFolder = listFolder
+      return folders
+    })
+    assert(
+      !refreshedFolders.includes('all') && (await inbox.getByRole('listitem').count()) === inboxRows,
+      'a late snooze wake never repaints Inbox with All Mail',
+      'the wake refreshed All Mail after the user switched to Inbox'
+    )
+    await snapshot(page, 'snooze-wake-view-switch')
     const scheduleAfterWake = await page.evaluate(() => [...(window.__snoozeSchedule ?? [])])
     assert(
       scheduleAfterWake.length === 0,

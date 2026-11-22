@@ -857,17 +857,21 @@ function App(): React.JSX.Element {
   // error line.
   useEffect(() => {
     if (signedIn !== true) return
+    let cancelled = false
     const snoozeSweep = (): void => {
       window.api
         .snoozeTick()
         .then((restored) => {
-          if (restored > 0) loadFirstPage('manual')
+          if (!cancelled && restored > 0) loadFirstPage('manual')
         })
         .catch(() => {})
     }
     snoozeSweep()
     const timer = window.setInterval(snoozeSweep, SNOOZE_TICK_MS)
-    return () => window.clearInterval(timer)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
   }, [loadFirstPage, signedIn])
 
   useEffect(() => {
