@@ -132,6 +132,7 @@ async function snapshot(page, name) {
 }
 
 let browser
+let exitCode = 0
 try {
   let page
   if (EXECUTABLE) {
@@ -2889,18 +2890,25 @@ try {
   } else {
     throw new Error(`unknown feature: ${FEATURE}`)
   }
-  if (EXECUTABLE) {
-    const proof = await browser.evaluate(() => globalThis.__packagedVerification)
-    writeFileSync(resolve(ART, 'packaged.json'), JSON.stringify({ ...proof, entry }, null, 2))
-    log(`packaged IPC: ${JSON.stringify(proof.counts)}`)
-  }
-  log(`RESULT pass feature=${FEATURE}`)
 } catch (e) {
   log(`RESULT fail feature=${FEATURE} reason=${e instanceof Error ? e.message : String(e)}`)
+  exitCode = e instanceof Error && e.message.startsWith('ASSERT') ? 1 : 2
+} finally {
+  if (EXECUTABLE && browser) {
+    try {
+      const proof = await browser.evaluate(() => globalThis.__packagedVerification)
+      writeFileSync(resolve(ART, 'packaged.json'), JSON.stringify({ ...proof, entry }, null, 2))
+      log(`packaged IPC: ${JSON.stringify(proof.counts)}`)
+    } catch (error) {
+      log(`infra: could not record final packaged IPC: ${error instanceof Error ? error.message : String(error)}`)
+      if (exitCode === 0) {
+        exitCode = 2
+        log(`RESULT fail feature=${FEATURE} reason=final packaged IPC evidence unavailable`)
+      }
+    }
+  }
+  if (exitCode === 0) log(`RESULT pass feature=${FEATURE}`)
   writeFileSync(resolve(ART, `${FEATURE}.log`), logLines.join('\n') + '\n')
   await browser?.close()
-  process.exit(e instanceof Error && e.message.startsWith('ASSERT') ? 1 : 2)
 }
-writeFileSync(resolve(ART, `${FEATURE}.log`), logLines.join('\n') + '\n')
-await browser?.close()
-process.exit(0)
+process.exit(exitCode)

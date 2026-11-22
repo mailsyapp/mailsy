@@ -1,7 +1,15 @@
 #!/bin/bash
 # Doctor: read-only check that answers "is this instance worth driving?"
-# Usage: RUN_ID=<id> VERIFY_MAILSY_PORT=<port> ./scripts/doctor.sh
+# Usage: RUN_ID=<id> VERIFY_MAILSY_PORT=<port> ./scripts/doctor.sh [--executable <packaged-binary>]
 set -u
+EXECUTABLE=""
+if [ "$#" -gt 0 ]; then
+  if [ "$#" -ne 2 ] || [ "$1" != "--executable" ] || [ -z "$2" ]; then
+    echo "usage: doctor.sh [--executable <packaged-binary>]" >&2
+    exit 2
+  fi
+  EXECUTABLE="$2"
+fi
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SKILL_DIR="$(dirname "$HERE")"
 if [ -n "${VERIFY_MAILSY_REPO:-}" ]; then
@@ -30,12 +38,23 @@ ok() { echo "OK: $1"; }
 
 command -v node >/dev/null || fail "node not on PATH"
 command -v npm >/dev/null || fail "npm not on PATH"
-[ -d "$REPO/node_modules" ] || fail "$REPO/node_modules missing (run npm install at repo root)"
-[ -f "$SKILL_DIR/scaffold/vite.verify.config.mjs" ] || fail "scaffold vite config missing"
 [ -f "$SKILL_DIR/fixtures/api-mock.js" ] || fail "fixture api mock missing"
 [ -d "$SKILL_DIR/drive/node_modules/playwright" ] || fail "playwright lib missing (run npm --prefix $SKILL_DIR/drive install)"
-[ -d "${HOME}/Library/Caches/ms-playwright" ] || [ -d "${HOME}/.cache/ms-playwright" ] || fail "playwright browser binary missing (run npx --prefix $SKILL_DIR/drive playwright install chromium)"
 command -v node >/dev/null && ok "node $(node --version)" || true
+if [ -n "$EXECUTABLE" ]; then
+  if [ ! -f "$EXECUTABLE" ]; then
+    fail "packaged executable missing: $EXECUTABLE"
+  elif [ ! -x "$EXECUTABLE" ]; then
+    fail "packaged executable is not executable: $EXECUTABLE"
+  else
+    ok "packaged executable exists and is executable: $EXECUTABLE"
+  fi
+  exit $FAIL
+fi
+
+[ -d "$REPO/node_modules" ] || fail "$REPO/node_modules missing (run npm install at repo root)"
+[ -f "$SKILL_DIR/scaffold/vite.verify.config.mjs" ] || fail "scaffold vite config missing"
+[ -d "${HOME}/Library/Caches/ms-playwright" ] || [ -d "${HOME}/.cache/ms-playwright" ] || fail "playwright browser binary missing (run npx --prefix $SKILL_DIR/drive playwright install chromium)"
 [ -f "$REPO/.env" ] || echo "WARN: $REPO/.env missing — scripted mock runs unaffected; manual live tier needs MAIN_VITE_GOOGLE_CLIENT_ID"
 
 if [ -f "$RUN_DIR/server.pid" ]; then

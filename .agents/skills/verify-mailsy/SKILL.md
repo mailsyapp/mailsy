@@ -106,6 +106,7 @@ With an available Linux display (`DISPLAY`, or an Xvfb session), run from the
 repository root, without starting Vite:
 
 ```bash
+.agents/skills/verify-mailsy/scripts/doctor.sh --executable "$PWD/dist/linux-unpacked/mailsy"
 node .agents/skills/verify-mailsy/scripts/drive.mjs --feature signature \
   --run-id packaged-signature --executable "$PWD/dist/linux-unpacked/mailsy"
 ```
@@ -113,9 +114,11 @@ node .agents/skills/verify-mailsy/scripts/drive.mjs --feature signature \
 Supported features are `signature`, `compose-new`, `compose-send`, and
 `draft-autosave`. Run each with its own run ID. Their journey assertions and
 screenshots are identical to the Chromium tier; `--port` is not required.
-Run `doctor.sh` before driving as usual (its port check concerns only the
-scaffold tier). This mode requires the Electron executable and a display in
-addition to the ordinary harness prerequisites.
+Run `doctor.sh --executable <packaged-binary>` before driving. It checks the
+fixture, Playwright library, and that the packaged executable exists and has
+execute permission; it skips the Chromium cache, Vite dependencies/config,
+and scaffold port checks. No-argument doctor runs retain the scaffold checks.
+Packaged mode also requires an available display at launch.
 
 `scripts/packaged.mjs` uses Playwright `_electron.launch({ executablePath })`.
 Each launch creates a fresh user-data/config profile under the run's artifacts
@@ -134,6 +137,10 @@ dialogs, pushed background sync events, live Gmail, and persistent real-account
 behavior are not covered. Other features and signed-out journeys are rejected
 rather than silently falling back to Chromium. `packaged.json` records the
 artifact URL, Electron version, isolated profile, and intercepted IPC counts.
+The driver refreshes this evidence in `finally`, before closing Electron,
+on both journey success and failure. If Electron has crashed or the final
+snapshot cannot be written, the driver reports the evidence failure instead
+of silently treating the launch snapshot as final counts.
 
 ## Manual tier: live Electron + real Gmail
 
