@@ -208,6 +208,17 @@ try {
     await page.getByText('Launch checklist', { exact: true }).waitFor({ state: 'detached', timeout: 10000 })
     await page.getByText('Q3 budget draft').first().waitFor({ timeout: 10000 })
     assert(true, 'search "budget" surfaces the budget draft and filters the rest', 'filtering did not happen')
+    await page.getByText('End of results', { exact: true }).waitFor({ timeout: 10000 })
+    await box.fill('from:nobody@example.invalid')
+    await box.press('Enter')
+    await page.getByRole('status').filter({ hasText: 'No results for' }).waitFor({ timeout: 10000 })
+    assert(
+      (await page.getByText('End of results', { exact: true }).count()) === 0 &&
+        (await page.locator('.emails > li').count()) === 0,
+      'a zero-result search has no End of results footer or mail rows',
+      'a zero-result search retained the results footer or mail rows'
+    )
+    await snapshot(page, 'search-empty')
     await page.getByRole('button', { name: 'Clear search' }).click()
     await page.getByText('Launch checklist').first().waitFor({ timeout: 10000 })
     assert(true, 'clear restores the full inbox', 'inbox not restored after clear')
@@ -2098,6 +2109,28 @@ try {
       'label-apply modifyLabels side effect not recorded'
     )
     await snapshot(page, 'labels')
+    await rail.getByRole('button', { name: 'Labels', exact: true }).click()
+    await rail.getByRole('button', { name: 'Receipts', exact: true }).click()
+    const labelList = page.getByRole('complementary', { name: 'Receipts', exact: true })
+    await labelList.getByText('Receipts for March travel', { exact: true }).first().waitFor()
+    assert(
+      (await labelList.getByText('No mail with this label', { exact: true }).count()) === 0,
+      'a populated label has no empty-state footer',
+      'a populated label also shows the empty state'
+    )
+    await snapshot(page, 'labels-populated')
+    await labelList.getByText('Receipts for March travel', { exact: true }).first().click()
+    if ((await content.getByRole('group', { name: 'Apply labels' }).count()) === 0) {
+      await content.getByRole('button', { name: 'Labels', exact: true }).click()
+    }
+    await content.getByRole('checkbox', { name: 'Receipts', exact: true }).click()
+    await labelList.getByText('No mail with this label', { exact: true }).waitFor()
+    assert(
+      (await labelList.getByText('Receipts for March travel', { exact: true }).count()) === 0,
+      'removing the last labeled thread shows only the empty state',
+      'the empty label retained a thread'
+    )
+    await snapshot(page, 'labels-empty')
   } else if (FEATURE === 'refresh') {
     // The live refresh channel: the Refresh button must acknowledge a
     // click instantly, dedupe in-flight clicks, and surface failures;

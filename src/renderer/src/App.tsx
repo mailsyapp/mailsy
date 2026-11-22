@@ -727,8 +727,8 @@ function App(): React.JSX.Element {
               )}
             </>
           ) : (
-            displayedThreads.length > 0 &&
-            !searching && (
+            !searching &&
+            (isSearchActive ? displayedThreads.length > 0 : displayedThreads.length === 0) && (
               <p className="snippet">
                 {isSearchActive ? 'End of results' : FOLDER_CONFIG[activeFolder].empty}
               </p>

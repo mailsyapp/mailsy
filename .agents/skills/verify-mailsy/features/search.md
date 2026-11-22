@@ -24,11 +24,12 @@ Preconditions:
 
 - **Match.** Type `budget` in the searchbox. Run `node scripts/drive.mjs --feature search --run-id "$RUN_ID" --port "$VERIFY_MAILSY_PORT"`. `Q3 budget draft` remains visible and `Launch checklist` is filtered out.
 - **Clear.** Choose `Clear search` (same command). The box empties and `Launch checklist` returns.
+- **Footer regression.** The populated `budget` search shows `End of results`. Submit `from:nobody@example.invalid`: the no-results status appears with no mail rows and no `End of results` footer. Capture `search-empty` before clearing.
 - **Proof.** Capture the restored inbox. The driver writes `artifacts/<run-id>/search.aria.txt` and `artifacts/<run-id>/search.png`. Both identify the feature, the query, and the visible result.
 
 ## Gotchas
 
 - Single characters never hit the API and `Searching…` appears only for committed queries. Wait for the result text, not a fixed sleep.
 - Typing a `key:value` token (e.g. `from:ada`) switches to Gmail-operator mode and skips local fuzzy re-ranking.
-- The empty-state fallback (`No results for ...` plus cached-mail fuzzy matches) needs a query with zero server hits; the scripted query `budget` always hits, so the dead-end state is not asserted here.
+- The zero-result query uses a Gmail operator to bypass local fuzzy fallback and prove a true empty result.
 - Clearing via Escape versus the `Clear search` button takes the same code path; the journey proves the button.

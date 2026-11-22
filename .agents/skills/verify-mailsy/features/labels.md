@@ -22,6 +22,7 @@ Preconditions:
 - **Hidden default view.** Run `node scripts/drive.mjs --feature labels --run-id "$RUN_ID" --port "$VERIFY_MAILSY_PORT"`. Neither a `Receipts` chip nor a `New label` affordance renders in the rail.
 - **Remove.** Open `Receipts for March travel` from the Inbox; the detail `Labels` menu shows `Receipts` checked; unchecking records a thread modify with `removeLabelIds: ['label-receipts']` in `window.__mods[0]`.
 - **Persistence.** An Inbox round trip re-derives the menu from the boundary's label state: the box is unchecked, and re-checking records the add in `__mods[1]`.
+- **Browse regression.** Reveal Labels, open Receipts, and assert the matching thread has no empty-state footer (`labels-populated`). Remove its label through the detail menu; the now-empty list shows the empty state and no thread (`labels-empty`).
 
 ## Gotchas
 
