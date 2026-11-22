@@ -3,6 +3,8 @@ productName: mailsy
 directories:
   buildResources: build
 files:
+  - '!.agents/**'
+  - '!eslint-rules/**'
   - '!**/.vscode/*'
   - '!src/*'
   - '!electron.vite.config.{js,ts,mjs,cjs}'
