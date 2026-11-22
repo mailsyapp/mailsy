@@ -19,6 +19,15 @@ const BANNED_PACKAGES = {
   preload: [/^react(-dom)?(\/|$)/]
 }
 
+function staticSpecifier(node) {
+  if (!node) return null
+  if (node.type === 'Literal') return node.value
+  if (node.type === 'TemplateLiteral' && node.expressions.length === 0) {
+    return node.quasis[0].value.cooked
+  }
+  return null
+}
+
 function zoneOf(file) {
   const parts = file.split(path.sep)
   for (let i = 0; i < parts.length - 1; i++) {
@@ -59,6 +68,8 @@ export default {
         target = zoneOf(path.resolve(path.dirname(context.filename), source))
       } else if (source.startsWith('@renderer/')) {
         target = 'renderer'
+      } else if (source.startsWith('src/')) {
+        target = zoneOf(path.join(path.sep, source))
       } else {
         const banned = BANNED_PACKAGES[from].some((pattern) => pattern.test(source))
         if (banned && !isTypeOnly) {
@@ -89,15 +100,11 @@ export default {
         check(node, node.source.value, node.exportKind === 'type')
       },
       ImportExpression(node) {
-        if (node.source.type === 'Literal') check(node, node.source.value, false)
+        check(node, staticSpecifier(node.source), false)
       },
       CallExpression(node) {
-        if (
-          node.callee.type === 'Identifier' &&
-          node.callee.name === 'require' &&
-          node.arguments[0]?.type === 'Literal'
-        ) {
-          check(node, node.arguments[0].value, false)
+        if (node.callee.type === 'Identifier' && node.callee.name === 'require') {
+          check(node, staticSpecifier(node.arguments[0]), false)
         }
       }
     }
