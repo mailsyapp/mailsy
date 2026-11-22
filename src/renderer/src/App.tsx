@@ -701,9 +701,11 @@ function App(): React.JSX.Element {
       }
       // A reset can hide deliveries behind an exhausted list. A wake or
       // unknown search match can also enter the middle of an open cursor.
+      const reconcileSearch = committedQuery !== '' && (mode === 'recheck' || mode === 'reset')
       const recheckDepth =
         mode === 'recheck' ||
-        (mode === 'reset' && (nextPageTokenRef.current === null || committedQuery))
+        reconcileSearch ||
+        (mode === 'reset' && nextPageTokenRef.current === null)
           ? loadedPagesRef.current
           : 1
       function ownsResult(): boolean {
@@ -721,9 +723,9 @@ function App(): React.JSX.Element {
         let depth = 1
         const tail = new Map<string, ThreadSummary>()
         if (token !== null && recheckDepth > 1) {
-          const skipRowIds = [...listedThreadsRef.current, ...page.threads].map(
-            (row) => row.draftId ?? row.id
-          )
+          const skipRowIds = reconcileSearch
+            ? undefined
+            : [...listedThreadsRef.current, ...page.threads].map((row) => row.draftId ?? row.id)
           while (token !== null && depth < recheckDepth) {
             const next = await window.api.listFolder({ ...options, pageToken: token, skipRowIds })
             if (!ownsResult()) return
@@ -734,6 +736,11 @@ function App(): React.JSX.Element {
         }
         setThreads((prev) => {
           if (mode === 'load') return page.threads
+          if (reconcileSearch) {
+            const incoming = new Map(page.threads.map((row) => [listRowKey(row), row]))
+            for (const [key, row] of tail) incoming.set(key, row)
+            return mergeIncoming(prev, [...incoming.values()], false, null)
+          }
           const merged = mergeIncoming(prev, page.threads, quiet, selectionRef.current)
           if (tail.size === 0) return merged
           const seen = new Set(merged.map(listRowKey))
@@ -796,6 +803,18 @@ function App(): React.JSX.Element {
       return
     }
     const viewLabel = viewLabelOf(activeFolder, activeLabel?.id ?? null)
+    if (committedQuery) {
+      const listedIds = new Set(threads.map((row) => row.id))
+      if (
+        result.deletedThreadIds.some((id) => listedIds.has(id)) ||
+        result.threads.some(
+          (row) => viewLabel === null || row.labelIds.includes(viewLabel) || listedIds.has(row.id)
+        )
+      ) {
+        loadFirstPage('recheck')
+      }
+      return
+    }
     // Query-defined views and server-search results cannot be judged by
     // the swept label sets; they take a full quiet fold, but only when
     // the sweep actually saw mailbox movement — an idle sweep costs
@@ -820,17 +839,9 @@ function App(): React.JSX.Element {
       (prev) =>
         applyMailDelta(prev, result, {
           labelId: viewLabel,
-          isSearchActive: committedQuery.length > 0
+          isSearchActive: false
         }) ?? prev
     )
-    if (
-      committedQuery &&
-      result.threads.some(
-        (row) => row.labelIds.includes(viewLabel) && !threads.some((listed) => listed.id === row.id)
-      )
-    ) {
-      loadFirstPage('recheck')
-    }
   }
   // Pinned every render (effects are fine with refs; render bodies are
   // not): the subscription reads the latest handler, and the guard in it

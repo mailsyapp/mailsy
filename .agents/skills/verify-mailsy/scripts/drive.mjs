@@ -411,7 +411,7 @@ try {
       await page.evaluate((id) => window.__restoreSearchMatch(id), i)
       await restored.waitFor({ timeout: 5000 })
     }
-    for (const count of [22, 30]) {
+    for (const count of [20, 30]) {
       await inbox.getByText(`${count} results for “Paged search”`, { exact: true }).waitFor({ timeout: 5000 })
       await activateLoadMore(page, inbox)
     }
@@ -1763,7 +1763,7 @@ try {
     await query.press('Enter')
     await inbox.getByText('10 results for “Launch checklist”', { exact: true }).waitFor({ timeout: 5000 })
     await activateLoadMore(page, inbox)
-    const tail = inbox.getByText('Wake pagination 20', { exact: true })
+    const tail = inbox.getByText('Wake pagination 19', { exact: true })
     const returned = inbox.getByText('Launch checklist', { exact: true }).first()
     await tail.waitFor({ timeout: 5000 })
     assert(
@@ -1793,12 +1793,12 @@ try {
     assert(
       listings.length > 0 &&
         listings.every(({ folder, q }) => folder === 'inbox' && q === 'Launch checklist') &&
-        (await inbox.getByRole('listitem').count()) === inboxRows + 1 &&
+        (await inbox.getByRole('listitem').count()) === inboxRows &&
         (await tail.count()) === 1,
       'a late wake refreshes the loaded Inbox search without dropping page two',
       'the late wake refreshed the wrong view or lost loaded search results'
     )
-    for (const count of [21, 30]) {
+    for (const count of [20, 30]) {
       await inbox.getByText(`${count} results for “Launch checklist”`, { exact: true }).waitFor({ timeout: 5000 })
       await activateLoadMore(page, inbox)
     }
@@ -1945,6 +1945,23 @@ try {
       'a wake collapsed the loaded All Mail pages'
     )
     await snapshot(page, 'snooze-wake-all-mail')
+
+    await page.evaluate(async () => {
+      const api = window.__packagedFixtureApi ?? window.api
+      await api.snoozeThread('thread-launch', Date.now() + 1000)
+    })
+    await query.fill('-in:inbox')
+    await query.press('Enter')
+    const excludedAfterWake = allMail.getByText('Launch checklist', { exact: true }).first()
+    await allMail.getByText(/results for “-in:inbox”/).waitFor({ timeout: 5000 })
+    await excludedAfterWake.waitFor({ timeout: 5000 })
+    await page.clock.fastForward(30000)
+    await excludedAfterWake.waitFor({ state: 'detached', timeout: 5000 }).catch(() => {
+      throw new Error('ASSERT: search keeps a stale match after the snoozed mail returned to Inbox')
+    })
+    await allMail.getByText('Vendor pricing follow-up', { exact: true }).first().waitFor({ timeout: 5000 })
+    assert(true, 'a wake removes a no-longer-matching search result', 'excluded mail stayed in search')
+    await snapshot(page, 'snooze-wake-search-exclusion')
   } else if (FEATURE === 'category-views') {
     // The Important view is the IMPORTANT label: it lists the seeded
     // important mail and nothing labeled for a category tab.

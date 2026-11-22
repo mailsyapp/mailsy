@@ -523,15 +523,19 @@
     }
   }
 
-  // Minimal Gmail-style query support: plain text matches subject/from/snippet,
-  // tokens shaped like `key:value` are passed through as a literal filter.
+  // Minimal Gmail-style query support: plain text and the Inbox label predicate.
   function matches(m, q) {
     if (!q || !q.trim()) return true
     const hay = `${m.subject} ${m.from} ${m.snippet}`.toLowerCase()
     return q
       .toLowerCase()
       .split(/\s+/)
-      .every((tok) => hay.includes(tok))
+      .every((tok) => {
+        const inInbox = (m.labelIds ?? []).includes('INBOX')
+        if (tok === 'in:inbox') return inInbox
+        if (tok === '-in:inbox') return !inInbox
+        return hay.includes(tok)
+      })
   }
 
   window.__sent = sent
