@@ -45,7 +45,7 @@ type FirstPageMode = 'load' | 'wake' | QuietFold
 
 function App(): React.JSX.Element {
   const [threads, setThreads] = useState<ThreadSummary[]>([])
-  const [openedRow, setOpenedRow] = useState<ThreadSummary | null>(null)
+  const [opened, setOpened] = useState<{ row: ThreadSummary; query: string } | null>(null)
   const [nextPageToken, setNextPageToken] = useState<string | null | undefined>(undefined)
   const [loadingMore, setLoadingMore] = useState(false)
   const [searching, setSearching] = useState(false)
@@ -175,7 +175,7 @@ function App(): React.JSX.Element {
   const isSearchActive = committedQuery.length > 0
   const hasPendingInput = searchInput.trim() !== committedQuery
 
-  const selectedKey = openedRow ? listRowKey(openedRow) : null
+  const selectedKey = opened ? listRowKey(opened.row) : null
 
   // Both pane entries clear all pane state through closeEmail first, so a
   // compose and an open email can never be on screen together.
@@ -187,7 +187,7 @@ function App(): React.JSX.Element {
 
   function closeEmail(): void {
     selectionRef.current = null
-    setOpenedRow(null)
+    setOpened(null)
     setDraftDetail(null)
     setDraftDetailLoading(false)
     setComposing(false)
@@ -239,7 +239,7 @@ function App(): React.JSX.Element {
 
   const selectedThread =
     displayedThreads.find((e) => listRowKey(e) === selectedKey) ??
-    (isSearchActive ? openedRow : null)
+    (isSearchActive && opened?.query === committedQuery && !selectedIsDraft ? opened.row : null)
 
   function handleSelect(row: ThreadSummary): void {
     // The pane is exclusive: a selected row replaces an open compose (and
@@ -247,7 +247,7 @@ function App(): React.JSX.Element {
     closeEmail()
     const rowKey = listRowKey(row)
     selectionRef.current = rowKey
-    setOpenedRow(row)
+    setOpened({ row, query: committedQuery })
     setError(null)
     // Drafts open the editor, not the conversation pane. In All Mail the
     // carrying row's hasDraft decides; in the drafts folder every row is
@@ -436,7 +436,11 @@ function App(): React.JSX.Element {
       return row.unreadCount === next ? row : { ...row, unreadCount: next }
     }
     setThreads((prev) => prev.map(updateRead))
-    setOpenedRow((row) => row && updateRead(row))
+    setOpened((prev) => {
+      if (!prev) return prev
+      const row = updateRead(prev.row)
+      return row === prev.row ? prev : { ...prev, row }
+    })
   }
 
   function handleRowReadToggle(row: ThreadSummary): void {
@@ -492,7 +496,11 @@ function App(): React.JSX.Element {
         ? prev.filter((e) => e.id !== threadId)
         : prev.map(updateStar)
     )
-    setOpenedRow((row) => row && updateStar(row))
+    setOpened((prev) => {
+      if (!prev) return prev
+      const row = updateStar(prev.row)
+      return row === prev.row ? prev : { ...prev, row }
+    })
   }
 
   function handleRowStarToggle(row: ThreadSummary): void {
@@ -808,6 +816,13 @@ function App(): React.JSX.Element {
     }
     const viewLabel = viewLabelOf(activeFolder, activeLabel?.id ?? null)
     if (committedQuery) {
+      if (!selectedIsDraft) {
+        setOpened((prev) => {
+          if (!prev || prev.query !== committedQuery) return prev
+          const row = result.threads.find((thread) => thread.id === prev.row.id)
+          return row ? { ...prev, row } : prev
+        })
+      }
       const listedIds = new Set(threads.map((row) => row.id))
       if (
         result.deletedThreadIds.some((id) => listedIds.has(id)) ||
@@ -956,6 +971,11 @@ function App(): React.JSX.Element {
       ? searchPageCacheRef.current.get(viewKey)?.get(committedQuery)
       : undefined
     if (cached) {
+      if (selectionRef.current !== null) {
+        const row = cached.threads.find((thread) => listRowKey(thread) === selectionRef.current)
+        if (row) setOpened({ row, query: committedQuery })
+        else closeEmail()
+      }
       setThreads(cached.threads)
       replaceListRequest()
       setPageToken(cached.nextPageToken, 1)

@@ -376,6 +376,7 @@ try {
     // strict-mode waitFor trips on the locator, not the app.
     await page.getByText('Launch checklist', { exact: true }).waitFor({ state: 'detached', timeout: 10000 })
     await page.getByText('Q3 budget draft').first().waitFor({ timeout: 10000 })
+    await page.getByText(/results? for “budget”/).waitFor({ timeout: 5000 })
     assert(true, 'search "budget" surfaces the budget draft and filters the rest', 'filtering did not happen')
     await page.getByRole('button', { name: 'Clear search' }).click()
     await page.getByText('Launch checklist').first().waitFor({ timeout: 10000 })
@@ -459,7 +460,43 @@ try {
       'the search drops an auto-read result without losing its open reply',
       'background search refresh discarded the unsent reply'
     )
+    await page.evaluate(async () => {
+      const api = window.__packagedFixtureApi ?? window.api
+      await api.modifyLabels({ kind: 'thread', id: 'thread-launch', addLabelIds: ['STARRED'] })
+      const { threads } = await api.listFolder({ folder: 'inbox', q: 'Launch checklist' })
+      window.__pushSync({
+        kind: 'delta', historyId: 'mark-starred',
+        threads: [{ ...threads.find(({ id }) => id === 'thread-launch'), labelIds: ['INBOX', 'STARRED'] }],
+        deletedThreadIds: []
+      })
+    })
+    await content.getByRole('button', { name: 'starred', exact: true }).waitFor({ timeout: 5000 })
+    assert((await bodyTextOf(body)).includes('Keep this unsent reply.'), 'the open reply reflects Gmail star changes', 'the star update lost the reply')
     await snapshot(page, 'search-open-reply')
+
+    await page.evaluate(() => {
+      const api = window.__packagedFixtureApi ?? window.api
+      const list = api.listFolder
+      window.__budgetSearchFetches = 0
+      api.listFolder = (options) => {
+        if (options.q === 'budget') window.__budgetSearchFetches++
+        return list(options)
+      }
+    })
+    await box.fill('budget')
+    await box.press('Enter')
+    await inbox.getByText(/results? for “budget”/).waitFor({ timeout: 5000 })
+    await inbox.getByText('Q3 budget draft', { exact: true }).first().waitFor({ timeout: 5000 })
+    assert(
+      (await page.evaluate(() => window.__budgetSearchFetches)) === 0,
+      'the prior budget query comes from the search cache',
+      'the missed cache would not exercise selection ownership'
+    )
+    assert(
+      (await content.getByText('Nothing open yet :P').count()) === 1 && (await body.count()) === 0,
+      'reopening a cached search does not carry a conversation over from another search',
+      'the old conversation stayed open when switching to an unrelated cached query'
+    )
   } else if (FEATURE === 'read-thread') {
     await page.getByRole('complementary', { name: 'Inbox' }).waitFor({ timeout: 10000 })
     await page.getByText('Deploy window').first().click()
@@ -898,6 +935,27 @@ try {
       .count()
     assert(leftover === 0, 'refetched Drafts no longer shows the sent draft', 'draft reappeared after refetch')
     await snapshot(page, 'drafts')
+
+    const draftSearch = page.getByRole('searchbox', { name: 'Search emails' })
+    await draftSearch.fill('Q4 attachments')
+    await draftSearch.press('Enter')
+    await drafts.getByText(/results? for “Q4 attachments”/).waitFor({ timeout: 5000 })
+    const remoteDraft = drafts.getByText('Draft: Q4 attachments', { exact: true }).first()
+    await remoteDraft.click()
+    const editor = content.getByRole('heading', { name: 'Draft', exact: true })
+    await editor.waitFor({ timeout: 5000 })
+    await page.evaluate(async () => {
+      const api = window.__packagedFixtureApi ?? window.api
+      await api.discardDraft('draft-q4')
+      window.__pushSync({ kind: 'reset' })
+    })
+    await remoteDraft.waitFor({ state: 'detached', timeout: 5000 })
+    assert(
+      (await editor.count()) === 0,
+      'search closes a draft editor after the draft is deleted externally',
+      'a deleted draft remains editable after a search refresh'
+    )
+    await snapshot(page, 'drafts-search-remote-delete')
   } else if (FEATURE === 'delete-draft') {
     // Row surface: the confirm gates the delete. Dismiss it first —
     // deleting a draft is irreversible, so refusing must be a full no-op.
