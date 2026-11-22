@@ -10,6 +10,7 @@ import type {
   OAuthCredentials,
   OAuthCredentialsStatus,
   SaveDraftRequest,
+  SaveDraftResult,
   SendDraftRequest,
   SendEmailRequest,
   ThreadPage
@@ -48,7 +49,7 @@ const api = {
     ipcRenderer.invoke('gmail:send', request),
   sendDraft: (request: SendDraftRequest): Promise<void> =>
     ipcRenderer.invoke('gmail:send-draft', request),
-  saveDraft: (request: SaveDraftRequest): Promise<string> =>
+  saveDraft: (request: SaveDraftRequest): Promise<SaveDraftResult> =>
     ipcRenderer.invoke('gmail:save-draft', request),
   discardDraft: (draftId: string): Promise<void> =>
     ipcRenderer.invoke('gmail:discard-draft', draftId),

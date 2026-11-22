@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { errorMessage } from '../lib/format'
-import type { SaveDraftRequest } from '../../../shared/types'
+import type { SaveDraftRequest, SaveDraftResult } from '../../../shared/types'
 
 // The composer fields the bridge persists. The optional send fields ride
 // along for drafts that already carry threading (an existing draft keeps
@@ -40,12 +40,14 @@ export interface DraftAutosave {
 export function useDraftAutosave(
   fields: AutosaveFields,
   initialDraftId: string | undefined,
-  enabled: boolean
+  enabled: boolean,
+  onSaved?: (result: SaveDraftResult) => void
 ): DraftAutosave {
   const [status, setStatus] = useState<DraftAutosave['status']>('idle')
   const [error, setError] = useState<string | null>(null)
 
   const fieldsRef = useRef(fields)
+  const onSavedRef = useRef(onSaved)
   const draftIdRef = useRef(initialDraftId)
   // The serialized fields already on the draft: unchanged renders and
   // untouched composers never schedule a write.
@@ -80,16 +82,38 @@ export function useDraftAutosave(
         if (retiredRef.current || suspendedRef.current) return
         // Serialized once at dispatch: the content compare keeps a duplicate
         // write away, and the same string records what was written below.
-        const written = JSON.stringify(fieldsRef.current)
+        const writtenFields = fieldsRef.current
+        const written = JSON.stringify(writtenFields)
         if (written === lastSavedRef.current) return
         return window.api
           .saveDraft({
             ...fieldsRef.current,
             ...(draftIdRef.current ? { draftId: draftIdRef.current } : {})
           })
-          .then((draftId) => {
-            draftIdRef.current = draftId
-            lastSavedRef.current = written
+          .then((result) => {
+            const rebase = (value: AutosaveFields): AutosaveFields => {
+              if (
+                !value.retainAttachments ||
+                value.retainAttachments.messageId !== writtenFields.retainAttachments?.messageId
+              )
+                return value
+              return {
+                ...value,
+                retainAttachments: {
+                  messageId: result.messageId,
+                  refs: value.retainAttachments.refs.map(
+                    (ref) =>
+                      result.retainedAttachments.find(
+                        (entry) => entry.previousAttachmentId === ref.attachmentId
+                      )?.ref ?? ref
+                  )
+                }
+              }
+            }
+            draftIdRef.current = result.draftId
+            fieldsRef.current = rebase(fieldsRef.current)
+            lastSavedRef.current = JSON.stringify(rebase(writtenFields))
+            onSavedRef.current?.(result)
             setStatus('saved')
             setError(null)
           })
@@ -109,6 +133,7 @@ export function useDraftAutosave(
 
   useEffect(() => {
     fieldsRef.current = fields
+    onSavedRef.current = onSaved
     enabledRef.current = enabled
     if (!enabled || retiredRef.current) return
     // fieldsJson is the debounce key: field-object identity flips every
@@ -129,7 +154,7 @@ export function useDraftAutosave(
       timerRef.current = null
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fieldsJson, enabled, save])
+  }, [fieldsJson, enabled, save, onSaved])
 
   // True unmount only: the accidental-close path (row click, folder
   // switch) flushes fields still inside the debounce window, because that

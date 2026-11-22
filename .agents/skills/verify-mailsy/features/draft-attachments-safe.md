@@ -9,6 +9,8 @@ Stored draft attachments must resolve before sending. Autosave continues while t
 - `remove-failed` makes removal of an unavailable original explicit before saving and sending without it.
 - `retry-failed` preserves protection through another failed attempt and restores bytes after a successful Retry.
 - `save-failure` reports a retained-original fetch error without modifying the stored draft.
+- `replacement-ids` retires old message/attachment ids on each save, then proves Retry and later retained saves adopt the saved message's refs without an identity-only save loop.
+- `queued-replacement` removes one original and leaves during an in-flight save; the queued unmount save uses replacement ids without restoring the removed original.
 - `concurrent-adds` rejects the addition that crosses 20 MiB on new compose, draft edit, reply and forward, preserving the accepted file.
 
 ## How to get to it (user POV)
@@ -27,6 +29,7 @@ Preconditions:
 - **Protect originals.** Run `node scripts/drive.mjs --feature draft-attachments-safe --run-id "$RUN_ID" --port "$VERIFY_MAILSY_PORT"`. Delayed renderer reads leave Send and picking disabled while autosave carries retained refs and main preserves their stored bytes. Once released, picking and sending preserve both original and picked bytes.
 - **Keep dismissed edits.** A failed renderer read does not prevent the subject edit from flushing on a folder switch. Reopening verifies both the edited subject and original attachment.
 - **Recover failures.** The same command verifies Remove alone triggers a save and the removed original stays gone on reopen. A fresh draft retries unsuccessfully, remains send-blocked, then retries successfully and sends the original bytes. A failed main-process fetch reports a save error without changing the stored draft.
+- **Follow saved identities.** `--attachment-case rotate` saves two failed originals, retries one using its new ids, saves again while retaining the other, then retries and sends both exact byte sets. `--attachment-case rotate-queued` holds the first save response while editing, removing and switching folders, then verifies the queued save.
 - **Concurrent additions.** On each of new compose, draft edit, reply and forward, the same command drops two real 12 MiB files before either read finishes; one chip and the existing limit error remain. Sending carries only the accepted file.
 - **Proof.** The driver captures loading, failure, retry, reopened edits, save failure, and limit states as screenshots and accessibility snapshots, plus the journey transcript. Use `--attachment-case loading`, `edit`, or `remove` to isolate the review regressions.
 
@@ -38,3 +41,4 @@ Preconditions:
 - Inline images dropped into the body are not gated. They are body content, not attachment chips; composer-chrome image drops route into the body as well.
 - Main's production retention, MIME bytes, validation, size limit and no-write-on-fetch-failure contract are also covered by `node --experimental-strip-types .agents/harness/draft-retained-attachments.ts`.
 - Reload resets fixture state between scenarios. Large-file drops use real FileReader conversion rather than invented attachment sizes.
+- Every fixture save replaces the message id and attachment ids and removes the old bytes. The save result maps retained originals onto refs read from the saved message; the renderer never invents replacement ids.
