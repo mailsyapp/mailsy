@@ -137,6 +137,15 @@ test('renderer globbing a list that reaches the main process', () =>
     "export const modules = import.meta.glob(['./*.tsx', '../../../main/*.ts'])\n"
   ))
 
+test('renderer globbing with a base that points at the main process', () =>
+  rejects(
+    COMPONENT,
+    "export const modules = import.meta.glob('./*.ts', { base: '../../../main' })\n"
+  ))
+
+test('renderer globbing with braces that reach the main process', () =>
+  rejects(COMPONENT, "export const modules = import.meta.glob('../../../{shared,main}/*.ts')\n"))
+
 test('renderer loading a main-process file by URL', () =>
   rejects(
     COMPONENT,
