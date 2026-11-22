@@ -44,7 +44,7 @@ type FirstPageMode = 'load' | 'manual' | 'sync'
 
 function App(): React.JSX.Element {
   const [threads, setThreads] = useState<ThreadSummary[]>([])
-  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [selectedKey, setSelectedKey] = useState<string | null>(null)
   const [nextPageToken, setNextPageToken] = useState<string | null | undefined>(undefined)
   const [loadingMore, setLoadingMore] = useState(false)
   const [searching, setSearching] = useState(false)
@@ -73,7 +73,7 @@ function App(): React.JSX.Element {
   // The failed delete the open editor renders: keyed by the row the
   // attempt targeted, so a failed row-level delete never shows in an
   // unrelated editor open at the same time.
-  const [draftDiscard, setDraftDiscard] = useState<{ rowId: string; error: string | null } | null>(
+  const [draftDiscard, setDraftDiscard] = useState<{ rowKey: string; error: string | null } | null>(
     null
   )
 
@@ -164,9 +164,9 @@ function App(): React.JSX.Element {
   const isSearchActive = committedQuery.length > 0
   const hasPendingInput = searchInput.trim() !== committedQuery
 
-  function openEmail(id: string): void {
-    selectionRef.current = id
-    setSelectedId(id)
+  function openEmail(key: string): void {
+    selectionRef.current = key
+    setSelectedKey(key)
   }
 
   // Both pane entries clear all pane state through closeEmail first, so a
@@ -179,8 +179,9 @@ function App(): React.JSX.Element {
 
   function closeEmail(): void {
     selectionRef.current = null
-    setSelectedId(null)
+    setSelectedKey(null)
     setDraftDetail(null)
+    setDraftDetailLoading(false)
     setComposing(false)
     setSelectedIsDraft(false)
     setDraftDiscard(null)
@@ -202,7 +203,8 @@ function App(): React.JSX.Element {
     ) {
       const seen = new Map<string, ThreadSummary>()
       for (const e of canFallbackLocally ? [...threads, ...fallbackPool] : threads) {
-        if (!seen.has(e.id)) seen.set(e.id, e)
+        const key = listRowKey(e)
+        if (!seen.has(key)) seen.set(key, e)
       }
       const preview = previewMatches([...seen.values()], pending)
       if (preview.length > 0) return preview
@@ -227,13 +229,14 @@ function App(): React.JSX.Element {
     activeFolder
   ])
 
-  const selectedThread = displayedThreads.find((e) => e.id === selectedId) ?? null
+  const selectedThread = displayedThreads.find((e) => listRowKey(e) === selectedKey) ?? null
 
   function handleSelect(row: ThreadSummary): void {
     // The pane is exclusive: a selected row replaces an open compose (and
     // everything else the pane draws), so the exit runs through closeEmail.
     closeEmail()
-    openEmail(row.id)
+    const rowKey = listRowKey(row)
+    openEmail(rowKey)
     setError(null)
     // Drafts open the editor, not the conversation pane. In All Mail the
     // carrying row's hasDraft decides; in the drafts folder every row is
@@ -246,9 +249,15 @@ function App(): React.JSX.Element {
     setDraftDetailLoading(true)
     window.api
       .getMessage(row.messageIds[row.messageIds.length - 1])
-      .then(setDraftDetail)
-      .catch((e: unknown) => recordError(e))
-      .finally(() => setDraftDetailLoading(false))
+      .then((detail) => {
+        if (selectionRef.current === rowKey) setDraftDetail(detail)
+      })
+      .catch((e: unknown) => {
+        if (selectionRef.current === rowKey) recordError(e)
+      })
+      .finally(() => {
+        if (selectionRef.current === rowKey) setDraftDetailLoading(false)
+      })
   }
 
   const [showCredentialsSetup, setShowCredentialsSetup] = useState(false)
@@ -345,16 +354,13 @@ function App(): React.JSX.Element {
   // because App owns the list and never unmounts: one timer per sent draft
   // is exactly-once by construction, and pruning can't be lost to an
   // unmount of the editor.
-  function handleDraftSent(id: string): void {
-    if (draftPruneTimersRef.current.has(id)) return
+  function handleDraftSent(rowKey: string): void {
+    if (draftPruneTimersRef.current.has(rowKey)) return
     draftPruneTimersRef.current.set(
-      id,
+      rowKey,
       window.setTimeout(() => {
-        draftPruneTimersRef.current.delete(id)
-        setThreads((prev) => prev.filter((e) => e.id !== id))
-        // Retire the selection only if it's still this spent draft — a
-        // newer selection made inside the delay window must survive.
-        if (selectionRef.current === id) closeEmail()
+        draftPruneTimersRef.current.delete(rowKey)
+        removeListRow(rowKey)
       }, DRAFT_PRUNE_DELAY_MS)
     )
   }
@@ -376,15 +382,16 @@ function App(): React.JSX.Element {
     // A Drafts-folder row always carries its server draft id (fetchDrafts
     // builds every row from drafts.get); without one no delete has a target.
     if (!row.draftId) return
-    setDraftDiscard({ rowId: row.id, error: null })
+    const rowKey = listRowKey(row)
+    setDraftDiscard({ rowKey, error: null })
     window.api
       .discardDraft(row.draftId)
       .then(() => {
         setDraftDiscard(null)
-        handleThreadRemoved(row.id)
+        removeListRow(rowKey)
       })
       .catch((e: unknown) => {
-        setDraftDiscard({ rowId: row.id, error: errorMessage(e) })
+        setDraftDiscard({ rowKey, error: errorMessage(e) })
         recordError(e)
       })
   }
@@ -393,10 +400,14 @@ function App(): React.JSX.Element {
   // so one row disappears per mutation instead of every matching message.
   // Only the pane showing the removed thread folds along: deleting row B
   // must not slam a compose or an unrelated open conversation.
-  function handleThreadRemoved(threadId: string): void {
+  function removeListRow(rowKey: string): void {
     invalidatePageCursor()
-    setThreads((prev) => prev.filter((e) => e.id !== threadId))
-    if (selectionRef.current === threadId) closeEmail()
+    setThreads((prev) => prev.filter((e) => listRowKey(e) !== rowKey))
+    if (selectionRef.current === rowKey) closeEmail()
+  }
+
+  function handleThreadRemoved(threadId: string): void {
+    removeListRow(listRowKey({ id: threadId }))
   }
 
   // Read/unread is thread-level: Gmail marks whole conversations, and
@@ -1045,16 +1056,14 @@ function App(): React.JSX.Element {
           ) : selectedThread ? (
             selectedIsDraft ? (
               <DraftEditor
-                key={selectedThread.id}
+                key={selectedKey}
                 row={selectedThread}
                 detail={draftDetail}
                 detailLoading={draftDetailLoading}
-                onSent={handleDraftSent}
+                onSent={() => handleDraftSent(listRowKey(selectedThread))}
                 onDraftDiscard={() => handleDraftDiscard(selectedThread)}
                 discardError={
-                  draftDiscard && draftDiscard.rowId === selectedThread.id
-                    ? draftDiscard.error
-                    : null
+                  draftDiscard && draftDiscard.rowKey === selectedKey ? draftDiscard.error : null
                 }
               />
             ) : (

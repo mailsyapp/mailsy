@@ -18,10 +18,7 @@ type DraftEditorProps = {
   row: ThreadSummary
   detail: EmailDetailData | null
   detailLoading: boolean
-  // Reports the sent draft's row id once the send succeeded. Row removal is
-  // owned by App (2s delay so the "Message sent." proof stays on screen,
-  // exactly-once by construction because App never unmounts).
-  onSent: (id: string) => void
+  onSent: () => void
   // Asks App to delete this draft. App owns the confirm, the bridge call
   // and the row prune; the editor only retires when App re-renders it away.
   onDraftDiscard: () => void
@@ -35,15 +32,13 @@ type DraftEditorProps = {
 function DraftForm({
   detail,
   draftId,
-  messageId,
   onSent,
   onDraftDiscard,
   discardError
 }: {
   detail: EmailDetailData
   draftId?: string
-  messageId: string
-  onSent: (id: string) => void
+  onSent: () => void
   onDraftDiscard: () => void
   discardError: string | null
 }): React.JSX.Element {
@@ -141,7 +136,7 @@ function DraftForm({
       }
       autosave.stop()
       setSent(true)
-      onSent(messageId)
+      onSent()
     } catch (error) {
       setSendError(errorMessage(error))
     } finally {
@@ -206,9 +201,6 @@ export function DraftEditor({
   onDraftDiscard,
   discardError
 }: DraftEditorProps): React.JSX.Element {
-  // Mount the form only once the draft content arrives so fields initialize
-  // from it directly. Remounting via key={row.id} in App resets per draft,
-  // and the row id (thread id) is what App prunes on send.
   if (detailLoading || !detail) {
     return (
       <div>
@@ -222,7 +214,6 @@ export function DraftEditor({
       key={detail.id}
       detail={detail}
       draftId={row.draftId}
-      messageId={row.id}
       onSent={onSent}
       onDraftDiscard={onDraftDiscard}
       discardError={discardError}

@@ -23,8 +23,8 @@ Run `node scripts/drive.mjs --feature pagination --run-id "$RUN_ID" --port "$VER
 
 - **Overlap.** Seed 64 additional Inbox threads, activate **Load more**, and hold the response. Deliver new mail and push two resets. Releasing the response shows both the delivery and page two.
 - **Removals.** Archive and delete two threads from page two, then activate **Load more**. The remaining threads each appear once and there is no fourth page.
-- **Shared conversation.** Fill Drafts across two pages, with three drafts from one conversation. **Load more** shows each draft separately.
-- **Proof.** `pagination-overlap`, `pagination` and `pagination-drafts` ARIA snapshots and screenshots, plus `pagination.log`.
+- **Shared conversation.** Fill Drafts across two pages, with three drafts from one conversation. **Load more** shows each draft separately. Delete one and send another from the editor; only the selected rows leave the list.
+- **Proof.** `pagination-overlap`, `pagination`, `pagination-drafts` and `pagination-draft-discard` ARIA snapshots and screenshots, plus `pagination.log`.
 
 ## Gotchas
 

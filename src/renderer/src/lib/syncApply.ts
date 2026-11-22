@@ -2,7 +2,7 @@ import { FOLDER_LABEL_ID } from '../../../shared/sync'
 import type { MailSyncDelta } from '../../../shared/sync'
 import type { MailFolder, ThreadSummary } from '../../../shared/types'
 
-export function listRowKey(row: ThreadSummary): string {
+export function listRowKey(row: Pick<ThreadSummary, 'id' | 'draftId'>): string {
   return row.draftId ? `draft:${row.draftId}` : `thread:${row.id}`
 }
 
@@ -38,14 +38,14 @@ export function mergeIncoming(
   prev: ThreadSummary[],
   incoming: ThreadSummary[],
   keepAllDropped: boolean,
-  selectedId: string | null
+  selectedKey: string | null
 ): ThreadSummary[] {
   if (prev.length === incoming.length && prev.every((row, i) => rowsEqual(row, incoming[i]))) {
     return prev
   }
   const incomingKeys = new Set(incoming.map(listRowKey))
   const dropped = prev.filter((row) => !incomingKeys.has(listRowKey(row)))
-  const tail = keepAllDropped ? dropped : dropped.filter((row) => row.id === selectedId)
+  const tail = keepAllDropped ? dropped : dropped.filter((row) => listRowKey(row) === selectedKey)
   return [...incoming, ...tail]
 }
 

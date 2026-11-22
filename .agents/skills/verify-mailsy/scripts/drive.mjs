@@ -2386,7 +2386,8 @@ try {
     await drafts.getByText('Draft: Q4 planning notes', { exact: true }).waitFor({ timeout: 5000 })
     const draftFill = firstPageSize - (await drafts.getByRole('listitem').count()) - 1
     await page.evaluate(async (count) => {
-      const save = (subject, threadId) => window.api.saveDraft({ to: '', body: '', subject, threadId })
+      const save = (subject, threadId) =>
+        window.api.saveDraft({ to: 'reader@example.com', body: '', subject, threadId })
       for (let i = 1; i <= count; i++) await save(`Pagination draft ${i}`)
       for (let i = 1; i <= 3; i++) await save(`Same-thread draft ${i}`, 'thread-launch')
       window.__pushSync({ kind: 'reset' })
@@ -2409,6 +2410,45 @@ try {
       )
     }
     await snapshot(page, 'pagination-drafts')
+    await drafts.getByText('Same-thread draft 3', { exact: true }).click()
+    await content.getByRole('heading', { name: 'Draft', exact: true }).waitFor({ timeout: 5000 })
+    const draftId = await page.evaluate(() =>
+      window.__draftSaves.find((entry) => entry.subject === 'Same-thread draft 3').draftId
+    )
+    const confirmation = page.waitForEvent('dialog').then((dialog) => dialog.accept())
+    await content.getByRole('button', { name: 'delete draft', exact: true }).click()
+    await confirmation
+    await page.waitForFunction(() => window.__draftDiscards.length === 1)
+    assert(
+      (await page.evaluate(() => window.__draftDiscards[0].draftId)) === draftId,
+      'the editor deletes the draft opened from page two',
+      'the editor deleted a different draft in the same conversation'
+    )
+    await drafts
+      .getByText('Same-thread draft 3', { exact: true })
+      .waitFor({ state: 'detached', timeout: 5000 })
+    assert(
+      (await drafts.getByText('Same-thread draft 1', { exact: true }).count()) === 1 &&
+        (await drafts.getByText('Same-thread draft 2', { exact: true }).count()) === 1,
+      'the other drafts in the conversation stay listed',
+      'deleting one draft removed its siblings'
+    )
+    await snapshot(page, 'pagination-draft-discard')
+
+    const sentDraft = drafts.getByText('Same-thread draft 2', { exact: true })
+    await sentDraft.click()
+    await content.getByRole('heading', { name: 'Draft', exact: true }).waitFor({ timeout: 5000 })
+    const sentDraftId = await page.evaluate(() =>
+      window.__draftSaves.find((entry) => entry.subject === 'Same-thread draft 2').draftId
+    )
+    await content.getByRole('button', { name: 'Send', exact: true }).click()
+    await sentDraft.waitFor({ state: 'detached', timeout: 5000 })
+    assert(
+      (await page.evaluate(() => window.__sent[0]?.draftId)) === sentDraftId &&
+        (await drafts.getByText('Same-thread draft 1', { exact: true }).count()) === 1,
+      'the editor sends and prunes only the selected draft',
+      'sending one draft used the wrong ID or removed its remaining sibling'
+    )
   } else if (FEATURE === 'signature') {
     // The per-compose signature across all three surfaces: the stored text
     // is born from the first toggle in a fresh compose, the block rides
