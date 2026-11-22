@@ -70,11 +70,11 @@ export default defineConfig(
           message: EFFECT_MESSAGE
         },
         {
-          selector: `CallExpression[callee.name=/^(${TIMER_NAMES})$/]`,
+          selector: `Identifier[name=/^(${TIMER_NAMES})$/]`,
           message: TIMER_MESSAGE
         },
         {
-          selector: `CallExpression[callee.object.name=/^(window|globalThis|self)$/][callee.property.name=/^(${TIMER_NAMES})$/]`,
+          selector: `MemberExpression[computed=true] > Literal.property[value=/^(${TIMER_NAMES})$/]`,
           message: TIMER_MESSAGE
         }
       ]
