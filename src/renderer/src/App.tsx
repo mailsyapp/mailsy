@@ -629,12 +629,25 @@ function App(): React.JSX.Element {
           ...(activeLabel ? { userLabelId: activeLabel.id } : {}),
           ...(committedQuery ? { q: committedQuery } : {})
         })
-        .then((page) => {
+        .then(async (page) => {
           if (requestIdRef.current !== requestId) return
+          const selected = selectionRef.current
+          const woke =
+            activeFolder === 'snoozed' &&
+            selected !== null &&
+            !page.threads.some((row) => row.id === selected) &&
+            (await window.api.getThread(selected)).labelIds.includes('INBOX')
+          if (requestIdRef.current !== requestId) return
+          if (woke && selectionRef.current === selected) closeEmail()
           setThreads((prev) =>
             mode === 'load'
               ? page.threads
-              : mergeIncoming(prev, page.threads, mode === 'sync', selectionRef.current)
+              : mergeIncoming(
+                  woke ? prev.filter((row) => row.id !== selected) : prev,
+                  page.threads,
+                  mode === 'sync',
+                  selectionRef.current
+                )
           )
           // A deeper token survives a pushed fold or manual refresh: string
           // when more pages remain, null when exhausted. Resetting it to the

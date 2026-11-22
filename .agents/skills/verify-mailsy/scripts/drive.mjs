@@ -138,7 +138,7 @@ try {
   const page = await context.newPage()
   // Fast-forwarding journeys need fake timers installed before the app's
   // intervals exist; other features run on real time, unchanged.
-  if (FEATURE === 'snooze-emulation') await page.clock.install()
+  if (FEATURE === 'snooze-emulation' || FEATURE === 'snooze-wake') await page.clock.install()
   await page.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: 'domcontentloaded' })
 
   if (FEATURE === 'sign-in') {
@@ -1454,6 +1454,119 @@ try {
     await inbox.getByText('Newsletter backlog cleanup', { exact: true }).first().waitFor({ timeout: 10000 })
     assert(true, 'row-level unsnooze restored the second thread to the Inbox', 'parked mail missing from the Inbox after restore')
     await snapshot(page, 'snooze')
+  } else if (FEATURE === 'snooze-wake') {
+    for (const scenario of ['selected', 'other', 'lookup-error']) {
+      const selected = scenario === 'other' ? 'Vendor pricing follow-up' : 'Launch checklist'
+      await page.reload({ waitUntil: 'domcontentloaded' })
+      const inbox = page.getByRole('complementary', { name: 'Inbox' })
+      const content = page.getByRole('region', { name: 'Email content' })
+      if (scenario === 'selected') {
+        await page.getByRole('button', { name: 'Snoozed', exact: true }).click()
+        const parked = page.getByRole('complementary', { name: 'Snoozed' })
+        for (const subject of ['Vendor pricing follow-up', 'Newsletter backlog cleanup']) {
+          const row = parked.locator('li', { hasText: subject }).first()
+          await row.getByRole('button', { name: 'unsnooze', exact: true }).click()
+          await row.waitFor({ state: 'detached' })
+        }
+        await page.getByRole('button', { name: 'Inbox', exact: true }).click()
+      }
+      await inbox.getByText('Launch checklist', { exact: true }).click()
+      await content.getByRole('button', { name: 'snooze', exact: true }).click()
+      await content.getByRole('button', { name: 'Tomorrow', exact: true }).click()
+      await content.getByText('Nothing open yet :P').waitFor()
+      await page.getByRole('button', { name: 'Snoozed', exact: true }).click()
+      const snoozed = page.getByRole('complementary', { name: 'Snoozed' })
+      const waking = snoozed.getByText('Launch checklist', { exact: true })
+      await waking.waitFor()
+      await snoozed.getByText(selected, { exact: true }).click()
+      await content.getByRole('heading', { name: selected, exact: true }).waitFor()
+      if (scenario === 'lookup-error') {
+        await page.evaluate(() => {
+          const getThread = window.api.getThread
+          let fail = true
+          window.api.getThread = async (id) => {
+            if (fail) {
+              fail = false
+              throw new Error('Wake membership unavailable')
+            }
+            return getThread(id)
+          }
+        })
+      }
+      await page.evaluate(() => {
+        window.__snoozeWakePages = []
+        const listFolder = window.api.listFolder
+        window.api.listFolder = async (options) => {
+          const result = await listFolder(options)
+          if (options.folder === 'snoozed')
+            window.__snoozeWakePages.push(result.threads.map((row) => row.id))
+          return result
+        }
+      })
+      await snapshot(
+        page,
+        `snooze-wake-${selected === 'Launch checklist' ? 'selected' : 'other'}-before`
+      )
+      await page.clock.fastForward(48 * 60 * 60 * 1000)
+      await page.waitForFunction(
+        () =>
+          window.__snoozeSchedule.size === 0 &&
+          window.__snoozeWakePages.some((ids) => !ids.includes('thread-launch'))
+      )
+      const wake = await page.evaluate(() => window.__mods.at(-1))
+      if (scenario === 'lookup-error') {
+        await page.getByText('Wake membership unavailable', { exact: true }).waitFor()
+        assert(
+          (await waking.count()) === 1 &&
+            (await content.getByRole('heading', { name: selected, exact: true }).count()) === 1,
+          'a failed wake membership lookup preserves the row and selection',
+          'a failed lookup discarded the selection'
+        )
+        await page.evaluate(() => window.__pushSync({ kind: 'reset', reason: 'wake-retry' }))
+      }
+      assert(
+        wake.id === 'thread-launch' &&
+          wake.addLabelIds.includes('INBOX') &&
+          wake.removeLabelIds.includes('Snoozed by Mailsy'),
+        'the timed sweep restores the thread and the Snoozed refetch excludes it',
+        'wake did not reach the provider boundary'
+      )
+      await waking.waitFor({ state: 'detached', timeout: 2000 }).catch(() => {})
+      assert(
+        (await waking.count()) === 0,
+        'the woken thread leaves Snoozed even while selected',
+        'the selected woken thread remained in Snoozed after the refetch'
+      )
+      if (selected === 'Launch checklist') {
+        await content.getByText('Nothing open yet :P').waitFor()
+        assert(true, 'the selected woken conversation closes', 'the woken conversation stayed open')
+      } else {
+        assert(
+          (await content.getByRole('heading', { name: selected, exact: true }).count()) === 1,
+          'an unrelated parked conversation stays open',
+          'waking another thread closed the selection'
+        )
+      }
+      if (scenario === 'selected')
+        assert(
+          (await snoozed.locator('li').count()) === 0,
+          'waking the only parked thread leaves an empty Snoozed list',
+          'empty Snoozed retained a stale row'
+        )
+      else await snoozed.getByText('Newsletter backlog cleanup', { exact: true }).waitFor()
+      await snapshot(
+        page,
+        `snooze-wake-${selected === 'Launch checklist' ? 'selected' : 'other'}-after`
+      )
+      await page.getByRole('button', { name: 'Inbox', exact: true }).click()
+      await inbox.getByText('Launch checklist', { exact: true }).waitFor()
+      await content.getByText('Nothing open yet :P').waitFor()
+      assert(
+        true,
+        'Inbox lists the woken thread without reopening a stale selection',
+        'wake lost the thread or retained a stale selection'
+      )
+    }
   } else if (FEATURE === 'snooze-emulation') {
     // The emulated snooze: Mailsy parks a thread with the 'Snoozed by
     // Mailsy' user label plus an INBOX removal, records the wake time, and

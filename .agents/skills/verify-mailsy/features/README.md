@@ -57,6 +57,7 @@ Keep implementation details out of the map. Name only user paths, stable handles
 - [Category views](./category-views.md) covers the Important view and the Social, Promotions, Updates, Forums category views, each listing its own system-label mail and sharing Inbox's list behavior.
 - [Spam](./spam.md) covers the Spam rail view, report spam, not spam, and the All Mail exclusion.
 - [Snooze emulation](./snooze-emulation.md) covers Mailsy's own snooze: park via presets, the wake schedule, fast-forwarded wakes, and the restore pair on row and detail.
+- [Snooze wake selection](./snooze-wake.md) covers selected woken-row removal, conversation closure, and preserving an unrelated parked selection.
 - [Folder rail](./sidebar.md) covers the rail's thirteen folder affordances: one each, the labels surface hidden in the default view, and folder clicks opening their views.
 - [Expanded sidebar](./sidebar-expanded.md) covers the rail's collapse/expand control: a drawer that opens over the mail (the list never moves), named rows and the re-exposed Labels section while expanded, collapsing on any selection, and a clean round trip.
 - [User labels](./labels.md) covers the open thread's `Labels` menu apply/remove with a refetch round trip, and the rail labels surface hidden in the default view.
