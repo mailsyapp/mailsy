@@ -2235,7 +2235,9 @@ try {
       'the signature block did not appear in the body'
     )
     // Typing above the signature leaves the block alone at the end.
-    await typeAtStart(content.locator('.body-editor'), 'Hello from Mailsy.\n')
+    await content.locator('.body-editor').click()
+    await content.locator('.body-editor').press('Control+Home')
+    await content.locator('.body-editor').pressSequentially('Hello from Mailsy.')
     const freshBody = await bodyTextOf(content.locator('.body-editor'))
     assert(
       freshBody.includes('Hello from Mailsy.') && freshBody.includes('Analytical Engine Dept.'),
@@ -2243,6 +2245,15 @@ try {
       'typing disturbed the signature block'
     )
     await snapshot(page, 'signature-compose')
+    await toggle.click()
+    assert(
+      (await bodyTextOf(content.locator('.body-editor'))).includes('Hello from Mailsy.') &&
+        !(await bodyTextOf(content.locator('.body-editor'))).includes('Analytical Engine Dept.'),
+      'Ctrl+Home body text survives signature removal',
+      'signature removal deleted the body text or retained the signature'
+    )
+    await snapshot(page, 'signature-removed')
+    await toggle.click()
     await content.locator('.composerField input').first().fill('ada@example.com')
     await content.locator('.composerField input').nth(1).fill('Signature check')
     await content.getByRole('button', { name: 'Send', exact: true }).click()

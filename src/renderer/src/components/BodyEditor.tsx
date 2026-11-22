@@ -234,6 +234,11 @@ function insertSignatureBlockInto(editor: HTMLDivElement, html: string, focusCar
   const block = document.createElement('div')
   block.className = SIGNATURE_BLOCK_CLASS
   block.innerHTML = (isVisuallyEmpty(editor) ? '' : '<br>') + html
+  if (isVisuallyEmpty(editor)) {
+    const paragraph = document.createElement('div')
+    paragraph.appendChild(document.createElement('br'))
+    editor.prepend(paragraph)
+  }
   editor.appendChild(block)
   if (!focusCaret) return
   const index = Array.prototype.indexOf.call(editor.childNodes, block)

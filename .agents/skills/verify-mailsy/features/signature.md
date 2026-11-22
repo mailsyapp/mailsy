@@ -27,6 +27,7 @@ Run `node scripts/drive.mjs --feature signature --run-id "$RUN_ID" --port "$VERI
 - **Empty storage.** A fresh compose shows the toggle unpressed and an empty body; clicking `Signature` opens the inline editor instead of inserting emptiness.
 - **Birth + persistence.** Save `Ada Lovelace\nAnalytical Engine Dept.`; the panel closes and `mailsy.signature` holds exactly that text.
 - **Toggle + typing.** The toggle inserts the block (pressed, body shows it); typing at the body start keeps the block at the end.
+- **Body boundary regression.** Click the body, press Ctrl+Home, type text, and toggle off: only the signature disappears. Capture `signature-removed` before restoring the signature for send.
 - **Send proof.** The outbox record carries the signature in both forms — `body` (plain text) and `bodyHtml` with the `mailsy-signature` block.
 - **Auto-insert.** A second fresh compose opens with the block already present, no toggle click.
 - **Draft round trip.** The signed compose autosaves (`__draftSaves` grows); the Drafts row reopens with the block and its pressed state restored; toggling off clears this message only (storage keeps the text); the send carries no signature.
