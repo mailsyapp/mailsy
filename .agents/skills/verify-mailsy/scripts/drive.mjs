@@ -1713,22 +1713,30 @@ try {
     // tick sweeps the mock schedule, restores the pair, and the refreshed
     // Inbox lists the returned thread.
     await page.evaluate(() => {
+      for (let i = 1; i <= 31; i++) window.__deliverMail({ subject: `Wake pagination ${i}` })
       const snoozeTick = window.api.snoozeTick
+      let held = false
       window.api.snoozeTick = async () => {
-        const restored = await snoozeTick()
-        if (restored > 0) await new Promise((release) => { window.__releaseSnoozeTick = release })
-        return restored
+        if (held) return 0
+        held = true
+        await new Promise((release) => { window.__releaseSnoozeTick = release })
+        window.api.snoozeTick = snoozeTick
+        return snoozeTick()
       }
     })
     await page.clock.fastForward(48 * 60 * 60 * 1000)
     await page.waitForFunction(() => Boolean(window.__releaseSnoozeTick), undefined, { timeout: 5000 })
     await page.getByRole('button', { name: 'Inbox', exact: true }).click()
-    await inbox.waitFor({ timeout: 10000 })
-    await inbox
-      .getByText('Launch checklist', { exact: true })
-      .first()
-      .waitFor({ timeout: 10000 })
-    assert(true, 'wake returned the thread to the Inbox', 'thread missing from the Inbox after wake')
+    await inbox.getByText('Wake pagination 1', { exact: true }).waitFor({ timeout: 5000 })
+    await activateLoadMore(page, inbox)
+    const tail = inbox.getByText('Wake pagination 31', { exact: true })
+    const returned = inbox.getByText('Launch checklist', { exact: true }).first()
+    await tail.waitFor({ timeout: 5000 })
+    assert(
+      (await returned.count()) === 0,
+      'Inbox loads both pages before the wake restores the thread',
+      'the wake completed before Inbox pagination'
+    )
     const inboxRows = await inbox.getByRole('listitem').count()
     const refreshedFolders = await page.evaluate(async () => {
       const listFolder = window.api.listFolder
@@ -1743,10 +1751,15 @@ try {
       window.api.listFolder = listFolder
       return folders
     })
+    await returned.waitFor({ timeout: 5000 }).catch(() => {
+      throw new Error('ASSERT: the late wake forgot to refresh the open Inbox')
+    })
     assert(
-      !refreshedFolders.includes('all') && (await inbox.getByRole('listitem').count()) === inboxRows,
-      'a late snooze wake never repaints Inbox with All Mail',
-      'the wake refreshed All Mail after the user switched to Inbox'
+      !refreshedFolders.includes('all') &&
+        (await inbox.getByRole('listitem').count()) === inboxRows + 1 &&
+        (await tail.count()) === 1,
+      'a late wake refreshes Inbox and keeps its second page',
+      'the late wake refreshed the wrong folder or lost loaded Inbox rows'
     )
     await snapshot(page, 'snooze-wake-view-switch')
     const scheduleAfterWake = await page.evaluate(() => [...(window.__snoozeSchedule ?? [])])

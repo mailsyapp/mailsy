@@ -41,7 +41,7 @@ function formatFetchError(e: unknown): string {
 }
 
 type QuietFold = 'sync' | 'reset'
-type FirstPageMode = 'load' | 'manual' | QuietFold
+type FirstPageMode = 'load' | 'wake' | QuietFold
 
 function App(): React.JSX.Element {
   const [threads, setThreads] = useState<ThreadSummary[]>([])
@@ -663,7 +663,8 @@ function App(): React.JSX.Element {
   // First-page loads share one fetch pipeline; the mode decides the rest
   // of the behavior.
   const loadFirstPage = useCallback(
-    (mode: FirstPageMode): void => {
+    (trigger: FirstPageMode): void => {
+      const mode = trigger === 'wake' ? (activeFolder === 'inbox' ? 'reset' : 'manual') : trigger
       const quiet = mode === 'sync' || mode === 'reset'
       function deferQuietFold(fold: QuietFold): void {
         if (pendingSyncRef.current !== 'reset') pendingSyncRef.current = fold
@@ -761,14 +762,14 @@ function App(): React.JSX.Element {
   // function declaration, so the render body can pin the latest copy to
   // the ref the subscription reads.
   const syncResultHandlerRef = useRef<(result: SyncResult) => void>(() => {})
-  const quietFoldRef = useRef<(mode: QuietFold) => void>(() => {})
+  const firstPageLoaderRef = useRef<(mode: FirstPageMode) => void>(() => {})
   const signedInRef = useRef<boolean | null>(null)
 
   function flushPendingSync(): void {
     const pending = pendingSyncRef.current
     if (!pending || searchingRef.current || pageRequestRef.current !== null) return
     pendingSyncRef.current = null
-    if (signedInRef.current === true) quietFoldRef.current(pending)
+    if (signedInRef.current === true) firstPageLoaderRef.current(pending)
   }
 
   function handleSyncResult(result: SyncResult): void {
@@ -814,7 +815,7 @@ function App(): React.JSX.Element {
   // reads the latest signed-in state.
   useEffect(() => {
     syncResultHandlerRef.current = handleSyncResult
-    quietFoldRef.current = loadFirstPage
+    firstPageLoaderRef.current = loadFirstPage
     signedInRef.current = signedIn
     listedThreadsRef.current = threads
   })
@@ -862,7 +863,7 @@ function App(): React.JSX.Element {
       window.api
         .snoozeTick()
         .then((restored) => {
-          if (!cancelled && restored > 0) loadFirstPage('manual')
+          if (!cancelled && restored > 0) firstPageLoaderRef.current('wake')
         })
         .catch(() => {})
     }
@@ -872,7 +873,7 @@ function App(): React.JSX.Element {
       cancelled = true
       window.clearInterval(timer)
     }
-  }, [loadFirstPage, signedIn])
+  }, [signedIn])
 
   useEffect(() => {
     const sentinel = sentinelRef.current
