@@ -40,7 +40,8 @@ function formatFetchError(e: unknown): string {
   return message
 }
 
-type FirstPageMode = 'load' | 'manual' | 'sync'
+type QuietFold = 'sync' | 'reset'
+type FirstPageMode = 'load' | 'manual' | QuietFold
 
 function App(): React.JSX.Element {
   const [threads, setThreads] = useState<ThreadSummary[]>([])
@@ -106,7 +107,7 @@ function App(): React.JSX.Element {
   // read these instead of render-scoped state.
   const pageRequestRef = useRef<number | null>(null)
   const searchingRef = useRef(false)
-  const pendingSyncRef = useRef(false)
+  const pendingSyncRef = useRef<QuietFold | null>(null)
   const nextPageTokenRef = useRef<string | null | undefined>(undefined)
   const loadedPagesRef = useRef(0)
   const invalidCursorRef = useRef<symbol | null>(null)
@@ -311,7 +312,7 @@ function App(): React.JSX.Element {
   // signed-out screen.
   function exitToSignedOut(): void {
     replaceListRequest()
-    pendingSyncRef.current = false
+    pendingSyncRef.current = null
     refreshRequestRef.current = null
     setSyncing(false)
     setSignedIn(false)
@@ -663,47 +664,73 @@ function App(): React.JSX.Element {
   // of the behavior.
   const loadFirstPage = useCallback(
     (mode: FirstPageMode): void => {
-      if (mode === 'sync' && (searchingRef.current || pageRequestRef.current !== null)) {
-        pendingSyncRef.current = true
+      const quiet = mode === 'sync' || mode === 'reset'
+      function deferQuietFold(fold: QuietFold): void {
+        if (pendingSyncRef.current !== 'reset') pendingSyncRef.current = fold
+      }
+      if (quiet && (searchingRef.current || pageRequestRef.current !== null)) {
+        deferQuietFold(mode)
         return
       }
       const requestId = replaceListRequest()
-      if (mode === 'sync') {
+      if (quiet) {
         setQuietSearching(true)
       } else {
         setActiveSearching(true)
       }
-      if (mode !== 'sync') setError(null)
+      if (!quiet) setError(null)
       if (mode === 'load') closeEmail()
       const invalidCursor = invalidCursorRef.current
-      window.api
-        .listFolder({
-          maxResults: committedQuery ? SEARCH_PAGE_SIZE : LIST_PAGE_SIZE,
-          folder: activeFolder,
-          ...(activeLabel ? { userLabelId: activeLabel.id } : {}),
-          ...(committedQuery ? { q: committedQuery } : {})
-        })
-        .then((page) => {
-          if (requestIdRef.current !== requestId) return
-          if (mode === 'sync' && invalidCursor !== invalidCursorRef.current) {
-            pendingSyncRef.current = true
-            return
-          }
-          setThreads((prev) =>
-            mode === 'load'
-              ? page.threads
-              : mergeIncoming(prev, page.threads, mode === 'sync', selectionRef.current)
+      const options = {
+        maxResults: committedQuery ? SEARCH_PAGE_SIZE : LIST_PAGE_SIZE,
+        folder: activeFolder,
+        ...(activeLabel ? { userLabelId: activeLabel.id } : {}),
+        ...(committedQuery ? { q: committedQuery } : {})
+      }
+      // A reset has no usable history delta. Recheck the loaded range of an
+      // exhausted list so deliveries behind page one can reopen pagination.
+      const recheckDepth =
+        mode === 'reset' && nextPageTokenRef.current === null ? loadedPagesRef.current : 1
+      function ownsResult(): boolean {
+        if (requestIdRef.current !== requestId) return false
+        if (quiet && invalidCursor !== invalidCursorRef.current) {
+          deferQuietFold(mode)
+          return false
+        }
+        return true
+      }
+      async function foldPages(): Promise<void> {
+        const page = await window.api.listFolder(options)
+        if (!ownsResult()) return
+        let token = page.nextPageToken
+        let depth = 1
+        const tail = new Map<string, ThreadSummary>()
+        if (token !== null && recheckDepth > 1) {
+          const skipRowIds = [...listedThreadsRef.current, ...page.threads].map(
+            (row) => row.draftId ?? row.id
           )
-          // Use the fresh continuation until a later page has been fetched.
-          // Its cursor (including null at the end) must not rewind on sync.
-          if (mode !== 'sync' || loadedPagesRef.current <= 1) {
-            setPageToken(page.nextPageToken, 1)
+          while (token !== null && depth < recheckDepth) {
+            const next = await window.api.listFolder({ ...options, pageToken: token, skipRowIds })
+            if (!ownsResult()) return
+            for (const row of next.threads) tail.set(listRowKey(row), row)
+            token = next.nextPageToken
+            depth++
           }
-          storeFirstPage(page, committedQuery)
+        }
+        setThreads((prev) => {
+          if (mode === 'load') return page.threads
+          const merged = mergeIncoming(prev, page.threads, quiet, selectionRef.current)
+          if (tail.size === 0) return merged
+          const seen = new Set(merged.map(listRowKey))
+          return [...merged, ...[...tail].filter(([key]) => !seen.has(key)).map(([, row]) => row)]
         })
+        if (!quiet || loadedPagesRef.current <= 1 || recheckDepth > 1) setPageToken(token, depth)
+        storeFirstPage(page, committedQuery)
+      }
+      void foldPages()
         .catch((e: unknown) => {
           if (requestIdRef.current !== requestId) return
-          if (mode === 'sync') {
+          if (quiet) {
             // A pushed fold never paints the banner and never wipes a
             // message the user is reading: only a dead grant acts. Transient
             // sync failures surface on the next user-driven fetch.
@@ -734,12 +761,14 @@ function App(): React.JSX.Element {
   // function declaration, so the render body can pin the latest copy to
   // the ref the subscription reads.
   const syncResultHandlerRef = useRef<(result: SyncResult) => void>(() => {})
+  const quietFoldRef = useRef<(mode: QuietFold) => void>(() => {})
   const signedInRef = useRef<boolean | null>(null)
 
   function flushPendingSync(): void {
-    if (!pendingSyncRef.current || searchingRef.current || pageRequestRef.current !== null) return
-    pendingSyncRef.current = false
-    syncResultHandlerRef.current({ kind: 'reset' })
+    const pending = pendingSyncRef.current
+    if (!pending || searchingRef.current || pageRequestRef.current !== null) return
+    pendingSyncRef.current = null
+    if (signedInRef.current === true) quietFoldRef.current(pending)
   }
 
   function handleSyncResult(result: SyncResult): void {
@@ -748,7 +777,7 @@ function App(): React.JSX.Element {
     // reset fold from refetching against a dead session.
     if (signedInRef.current !== true) return
     if (result.kind === 'reset') {
-      loadFirstPage('sync')
+      loadFirstPage('reset')
       return
     }
     const viewLabel = viewLabelOf(activeFolder, activeLabel?.id ?? null)
@@ -785,6 +814,7 @@ function App(): React.JSX.Element {
   // reads the latest signed-in state.
   useEffect(() => {
     syncResultHandlerRef.current = handleSyncResult
+    quietFoldRef.current = loadFirstPage
     signedInRef.current = signedIn
     listedThreadsRef.current = threads
   })

@@ -2412,6 +2412,31 @@ try {
     )
     await snapshot(page, 'refresh')
 
+    const afterTail = Array.from({ length: 31 }, (_, i) => `Delivered behind the loaded tail ${i + 1}`)
+    await page.evaluate((subjects) => {
+      for (const subject of subjects) window.__deliverMail({ subject })
+      window.__pushSync({ kind: 'reset' })
+    }, afterTail)
+    await inbox.getByText(afterTail[0], { exact: true }).waitFor({ timeout: 5000 }).catch(() => {
+      throw new Error('ASSERT: a reset missed mail arriving beyond the first page of an exhausted Inbox')
+    })
+    assert(
+      (await inbox.getByText(overflowSubject, { exact: true }).count()) === 1,
+      'the reset keeps the previously loaded second page',
+      'the reset lost or duplicated the loaded tail'
+    )
+    await activateLoadMore(page, inbox)
+    await inbox.getByText(afterTail.at(-1), { exact: true }).waitFor({ timeout: 5000 })
+    assert(
+      (await rows.count()) === firstPageSize + 2 + afterTail.length &&
+        (await loadMore.count()) === 0 &&
+        (await Promise.all(afterTail.map((subject) => inbox.getByText(subject, { exact: true }).count())))
+          .every((count) => count === 1),
+      'the reset restores a continuation and reaches every delivery once across three pages',
+      'the reset hid or duplicated deliveries beyond the exhausted cursor'
+    )
+    await snapshot(page, 'refresh-exhausted-pagination')
+
     await page.evaluate(() => {
       window.api.syncMail = () =>
         new Promise((resolve) => {
