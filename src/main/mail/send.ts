@@ -10,6 +10,7 @@ import {
 import { hasRecipient } from '../../shared/types'
 import { isNotFoundError, rethrowDeadGrant, withQuotaRetry } from './resilience'
 import { buildRawMessage } from './mime'
+import { fetchAttachment } from './messages'
 import type { gmail_v1 } from 'googleapis'
 
 // Field checks for the two bridge verbs. A send requires a recipient; a
@@ -151,11 +152,43 @@ export async function saveDraft(request: SaveDraftRequest): Promise<string> {
   if (request.draftId !== undefined && typeof request.draftId !== 'string') {
     throw new Error('Invalid draft request')
   }
+  const retain = request.retainAttachments
+  if (
+    retain !== undefined &&
+    (!retain ||
+      typeof retain !== 'object' ||
+      typeof retain.messageId !== 'string' ||
+      !retain.messageId.trim() ||
+      !Array.isArray(retain.refs) ||
+      !retain.refs.every(
+        (ref) =>
+          ref &&
+          typeof ref === 'object' &&
+          typeof ref.filename === 'string' &&
+          typeof ref.size === 'number' &&
+          Number.isFinite(ref.size) &&
+          ref.size >= 0 &&
+          typeof ref.attachmentId === 'string' &&
+          !!ref.attachmentId.trim()
+      ))
+  )
+    throw new Error('Invalid draft request')
 
   try {
     const gmail = getGmailClient()
     const from = await getAccountEmail()
-    const raw = await buildRawMessage(from, request)
+    const retained = retain
+      ? await Promise.all(
+          retain.refs.map(async (ref) => ({
+            filename: ref.filename,
+            size: ref.size,
+            data: await fetchAttachment(retain.messageId, ref.attachmentId)
+          }))
+        )
+      : []
+    const fields = { ...request, attachments: [...(request.attachments ?? []), ...retained] }
+    assertMessageFields(fields, false)
+    const raw = await buildRawMessage(from, fields)
 
     if (request.draftId) {
       await writeDraft(gmail, request.draftId, raw, request.threadId)

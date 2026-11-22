@@ -499,16 +499,28 @@ try {
     await page.getByText('Launch checklist', { exact: true }).first().waitFor()
     await page.clock.pauseAt(await page.evaluate(() => Date.now() + 60_000))
 
-    for (const scenario of ['loading', 'remove', 'retry', 'limit']) {
+    for (const scenario of [
+      'loading',
+      'edit',
+      'remove',
+      'retry',
+      'save-error',
+      'limit',
+      'limit-draft',
+      'limit-reply',
+      'limit-forward'
+    ]) {
+      if (arg('attachment-case') && arg('attachment-case') !== scenario) continue
       if (scenario !== 'loading') {
         await page.reload()
         await page.getByText('Launch checklist', { exact: true }).first().waitFor()
       }
-      if (scenario !== 'limit') {
+      if (!scenario.startsWith('limit')) {
         await page.evaluate(
           (mode) => {
             const getAttachment = window.api.getAttachment
             const pickAttachments = window.api.pickAttachments
+            window.__readStoredAttachment = getAttachment
             window.__attachmentMode = mode
             window.__attachmentReads = 0
             window.__attachmentPicks = 0
@@ -548,9 +560,30 @@ try {
         await snapshot(page, 'draft-attachments-loading')
         assert(
           (await send.isDisabled()) &&
-            (await page.evaluate(() => window.__draftSaves.length)) === 0,
-          'loading originals blocks Send and autosave',
-          'loading originals allowed Send or an attachment-stripping autosave'
+            (await page.evaluate(() =>
+              window.__draftSaves.some(
+                (save) =>
+                  save.subject === 'Held attachment draft' &&
+                  save.retainAttachments?.refs[0]?.filename === 'q4.xlsx'
+              )
+            )),
+          'autosave while loading carries retained originals and keeps Send blocked',
+          'autosave while loading did not retain originals'
+        )
+        assert(
+          await page.evaluate(async () => {
+            const stored = await window.api.getMessage('msg-draft-q4')
+            const ref = stored.attachments[0]
+            return (
+              stored.subject === 'Held attachment draft' &&
+              stored.attachments.length === 1 &&
+              ref.filename === 'q4.xlsx' &&
+              (await window.__readStoredAttachment(stored.id, ref.attachmentId)) ===
+                'UTQgcGxhbm5pbmcgZGF0YQ=='
+            )
+          }),
+          'the save made during loading preserves stored original bytes',
+          'the save made during loading stripped original bytes'
         )
         assert(
           await pick.isDisabled(),
@@ -598,26 +631,80 @@ try {
           'picking after loading sends both the original and the picked bytes',
           'loading or picking lost attachment bytes'
         )
-      } else if (scenario === 'remove') {
+      } else if (scenario === 'edit') {
         await content.getByRole('alert').filter({ hasText: 'Could not load: q4.xlsx' }).waitFor()
-        await content
-          .getByLabel('Subject', { exact: true })
-          .fill('Explicitly remove failed original')
+        await content.getByLabel('Subject', { exact: true }).fill('Edits survive failed originals')
+        await page
+          .getByRole('navigation', { name: 'Mail folders' })
+          .getByRole('button', { name: 'Inbox', exact: true })
+          .click()
         await page.clock.fastForward(1800)
         assert(
-          (await send.isDisabled()) &&
-            (await page.evaluate(() => window.__draftSaves.length)) === 0,
-          'a failed original blocks Send and autosave',
-          'a failed original was silently omitted from a send or save'
+          await page.evaluate(() =>
+            window.__draftSaves.some(
+              (save) =>
+                save.subject === 'Edits survive failed originals' &&
+                save.retainAttachments?.refs.length === 1
+            )
+          ),
+          'leaving a failed-load draft flushes edits with retained originals',
+          'leaving a failed-load draft lost the edit or original refs'
+        )
+        await page.evaluate(() => {
+          window.__attachmentMode = 'ok'
+        })
+        await page
+          .getByRole('navigation', { name: 'Mail folders' })
+          .getByRole('button', { name: 'Drafts', exact: true })
+          .click()
+        await page
+          .getByRole('complementary', { name: 'Drafts' })
+          .getByRole('button', { name: /^Edits survive failed originals/ })
+          .click()
+        await content.getByRole('button', { name: 'Remove q4.xlsx', exact: true }).waitFor()
+        assert(
+          (await content.getByLabel('Subject', { exact: true }).inputValue()) ===
+            'Edits survive failed originals',
+          'reopening keeps the edited subject and original attachment',
+          'reopening lost the edit or attachment'
+        )
+        await snapshot(page, 'draft-attachments-edits-reopened')
+      } else if (scenario === 'remove') {
+        await content.getByRole('alert').filter({ hasText: 'Could not load: q4.xlsx' }).waitFor()
+        assert(
+          await send.isDisabled(),
+          'a failed original blocks Send',
+          'a failed original allowed Send'
         )
         await snapshot(page, 'draft-attachments-failed')
         await content.getByRole('button', { name: 'Remove q4.xlsx', exact: true }).click()
         await page.clock.fastForward(1800)
-        await page.waitForFunction(() => window.__draftSaves.length > 0)
         assert(
-          await page.evaluate(() => window.__draftSaves.every((save) => !save.attachments?.length)),
-          'explicit Remove permits saving without the failed original',
-          'Remove did not clear the original from the saved draft'
+          await page.evaluate(() =>
+            window.__draftSaves.some(
+              (save) => !save.attachments?.length && !save.retainAttachments?.refs.length
+            )
+          ),
+          'removing every failed original saves without any other edit',
+          'removing every failed original did not trigger a save'
+        )
+        await page
+          .getByRole('navigation', { name: 'Mail folders' })
+          .getByRole('button', { name: 'Inbox', exact: true })
+          .click()
+        await page
+          .getByRole('navigation', { name: 'Mail folders' })
+          .getByRole('button', { name: 'Drafts', exact: true })
+          .click()
+        await page
+          .getByRole('complementary', { name: 'Drafts' })
+          .getByRole('button', { name: /^Draft: Q4 attachments/ })
+          .click()
+        await content.getByLabel('Subject', { exact: true }).waitFor()
+        assert(
+          (await content.locator('.attachmentChip').count()) === 0 && (await send.isEnabled()),
+          'reopening does not resurrect explicitly removed originals',
+          'the removed original returned on reopen'
         )
         await send.click()
         await content.getByText('Message sent.', { exact: true }).waitFor()
@@ -634,12 +721,11 @@ try {
         const readsBeforeRetry = await page.evaluate(() => window.__attachmentReads)
         await content.getByRole('button', { name: 'Retry q4.xlsx', exact: true }).click()
         await page.waitForFunction((before) => window.__attachmentReads > before, readsBeforeRetry)
-        await page.clock.fastForward(1800)
+        await page.clock.fastForward(1)
         assert(
-          (await send.isDisabled()) &&
-            (await page.evaluate(() => window.__draftSaves.length)) === 0,
+          await send.isDisabled(),
           'an unsuccessful Retry leaves the original protected',
-          'an unsuccessful Retry unblocked saving or sending'
+          'an unsuccessful Retry unblocked sending'
         )
         await page.evaluate(() => {
           window.__attachmentMode = 'ok'
@@ -662,8 +748,54 @@ try {
           'Retry lost the original bytes or retained its error'
         )
         await snapshot(page, 'draft-attachments-retried')
+      } else if (scenario === 'save-error') {
+        await content.getByRole('alert').filter({ hasText: 'Could not load: q4.xlsx' }).waitFor()
+        await page.evaluate(() => {
+          window.__retainAttachmentError = 'Stored original unavailable'
+        })
+        await content.getByLabel('Subject', { exact: true }).fill('Cannot save without originals')
+        await page.clock.fastForward(1800)
+        await content
+          .getByRole('alert')
+          .filter({ hasText: 'Draft not saved: Stored original unavailable' })
+          .waitFor()
+        assert(
+          await page.evaluate(async () => {
+            const stored = await window.api.getMessage('msg-draft-q4')
+            return (
+              window.__draftSaves.length === 0 &&
+              stored.subject === 'Draft: Q4 attachments' &&
+              stored.attachments.length === 1
+            )
+          }),
+          'a retained fetch failure leaves the saved draft untouched',
+          'a failed save stripped or changed the stored draft'
+        )
+        await snapshot(page, 'draft-attachments-save-error')
       } else {
-        await page.getByRole('button', { name: 'Compose', exact: true }).click()
+        if (scenario === 'limit') {
+          await page.getByRole('button', { name: 'Compose', exact: true }).click()
+        } else if (scenario === 'limit-draft') {
+          await page
+            .getByRole('navigation', { name: 'Mail folders' })
+            .getByRole('button', { name: 'Drafts', exact: true })
+            .click()
+          await page
+            .getByRole('complementary', { name: 'Drafts' })
+            .getByRole('button', { name: /^Draft: Q4 planning notes/ })
+            .click()
+        } else {
+          await page
+            .getByRole('complementary', { name: 'Inbox' })
+            .getByRole('button', { name: /^Launch checklist/ })
+            .click()
+          await content
+            .getByRole('button', {
+              name: scenario === 'limit-reply' ? 'reply' : 'forward',
+              exact: true
+            })
+            .click()
+        }
         await content.getByLabel('To', { exact: true }).fill('test@example.com')
         await content.locator('form.composer').evaluate((form) => {
           for (let i = 0; i < 2; i++) {
@@ -684,10 +816,10 @@ try {
           .waitFor()
         assert(
           (await content.locator('.attachmentChip').count()) === 1,
-          'concurrent 12 MiB drops reject the addition that exceeds 20 MiB',
-          'concurrent drops bypassed the cumulative attachment limit'
+          `${scenario}: concurrent 12 MiB drops reject the addition that exceeds 20 MiB`,
+          `${scenario}: concurrent drops bypassed the cumulative attachment limit`
         )
-        await snapshot(page, 'draft-attachments-limit')
+        await snapshot(page, `draft-attachments-${scenario}`)
         await send.click()
         await content.getByText('Message sent.', { exact: true }).waitFor()
         assert(
@@ -696,8 +828,8 @@ try {
               window.__sent[0]?.attachments?.length === 1 &&
               window.__sent[0].attachments[0].size === 12 * 1024 * 1024
           ),
-          'the accepted file still sends after the over-limit addition is rejected',
-          'rejecting an over-limit addition lost the accepted file'
+          `${scenario}: the accepted file still sends after the over-limit addition is rejected`,
+          `${scenario}: rejecting an over-limit addition lost the accepted file`
         )
       }
     }

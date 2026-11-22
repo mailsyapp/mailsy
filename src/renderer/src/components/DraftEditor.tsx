@@ -71,11 +71,6 @@ function DraftForm({
   const [sendError, setSendError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [sent, setSent] = useState(false)
-  // The draft's stored files resolve back into composer state before the
-  // first autosave fires: drafts.update replaces the whole raw message, so
-  // writing without the data would strip them off the draft. `ready` gates
-  // the autosave until every ref has settled (resolved or failed). Images
-  // dropped on the composer chrome insert into the rich body.
   const attach = useComposerAttachments(
     detail.attachments.length ? { messageId: detail.id, refs: detail.attachments } : undefined,
     bodyRef
@@ -99,7 +94,11 @@ function DraftForm({
   // dismissed edit (row click, folder switch, reset) is not lost either.
   // Rows without a draft id keep today's no-autosave shape: they send fresh
   // and cannot be updated.
-  const autosave = useDraftAutosave(request, draftId, draftId !== undefined && attach.ready)
+  const autosave = useDraftAutosave(
+    { ...request, ...attach.retained },
+    draftId,
+    draftId !== undefined
+  )
 
   async function handleSend(event: React.FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault()

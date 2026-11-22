@@ -7,21 +7,11 @@ import {
   decodedAttachmentBytes,
   type ComposeAttachment,
   type MessageAttachmentRef,
+  type SaveDraftRequest,
   type SendEmailRequest
 } from '../../../shared/types'
 import { dragsFiles, fileToAttachment, looksLikeImageFile } from '../lib/attachmentFile'
 
-// One composer's attachment set, shared by the three composer surfaces
-// (new compose, draft edit, reply/forward). State lives here; the content
-// rides the compose fields exactly like text, so no layer ever owns
-// attachments separately. `field` is that ride: the empty-list-free
-// request field every autosave and send payload spreads. `prefill` is the
-// draft-editor round trip: the stored refs of the draft being edited,
-// resolved to full records before `ready` flips true — an autosave that
-// started earlier would replace the stored raw message and silently strip
-// those files. Resolve failures surface in `error` with the missing
-// names; the loaded rest still attach.
-//
 // Files enter through either entrance the OS offers: the native picker
 // (`pick`) or a drag onto the composer (`drop`/`dropping`). Both funnel
 // through the same cumulative-budget push, so the 20 MB rule holds no
@@ -29,6 +19,7 @@ import { dragsFiles, fileToAttachment, looksLikeImageFile } from '../lib/attachm
 export interface ComposerAttachments {
   attachments: ComposeAttachment[]
   field: Pick<SendEmailRequest, 'attachments'>
+  retained: Pick<SaveDraftRequest, 'retainAttachments'>
   error: string | null
   ready: boolean
   loading: boolean
@@ -87,6 +78,7 @@ export function useComposerAttachments(
   const [picking, setPicking] = useState(false)
   const [loading, setLoading] = useState(Boolean(prefill?.refs.length))
   const [failed, setFailed] = useState<MessageAttachmentRef[]>([])
+  const [unresolved, setUnresolved] = useState(prefill?.refs ?? [])
   const ready = !loading && failed.length === 0
   const attachmentsRef = useRef<ComposeAttachment[]>([])
   const mountedRef = useRef(false)
@@ -109,9 +101,13 @@ export function useComposerAttachments(
         refs.map(async (ref) => {
           try {
             const data = await window.api.getAttachment(messageId, ref.attachmentId)
-            return { attachment: { filename: ref.filename, size: ref.size, data }, failed: null }
+            return {
+              ref,
+              attachment: { filename: ref.filename, size: ref.size, data },
+              failed: null
+            }
           } catch {
-            return { attachment: null, failed: ref }
+            return { ref, attachment: null, failed: ref }
           }
         })
       )
@@ -124,6 +120,14 @@ export function useComposerAttachments(
         ...prev.filter((ref) => !refs.some((attempt) => attempt.attachmentId === ref.attachmentId)),
         ...results.flatMap((result) => (result.failed ? [result.failed] : []))
       ])
+      setUnresolved((prev) =>
+        prev.filter(
+          (ref) =>
+            !results.some(
+              (result) => result.attachment && result.ref.attachmentId === ref.attachmentId
+            )
+        )
+      )
       setError(null)
       setLoading(false)
     },
@@ -156,6 +160,7 @@ export function useComposerAttachments(
     (attachmentId: string): void => {
       if (loading) return
       setFailed((prev) => prev.filter((ref) => ref.attachmentId !== attachmentId))
+      setUnresolved((prev) => prev.filter((ref) => ref.attachmentId !== attachmentId))
       setError(null)
     },
     [loading]
@@ -262,6 +267,8 @@ export function useComposerAttachments(
 
   const clear = useCallback(() => {
     replaceAttachments([])
+    setFailed([])
+    setUnresolved([])
     setError(null)
   }, [replaceAttachments])
 
@@ -270,6 +277,8 @@ export function useComposerAttachments(
   return {
     attachments,
     field,
+    retained:
+      unresolved.length && messageId ? { retainAttachments: { messageId, refs: unresolved } } : {},
     error: failed.length
       ? `Could not load: ${failed.map((ref) => ref.filename).join(', ')}`
       : error,
