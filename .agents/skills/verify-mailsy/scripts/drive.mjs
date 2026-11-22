@@ -138,7 +138,9 @@ async function holdContinuations(page) {
     window.api.listFolder = async (options) => {
       const result = await listFolder(options)
       if (options.pageToken) {
-        await new Promise((resolve) => window.__heldContinuations.push(resolve))
+        await new Promise((release) => window.__heldContinuations.push({
+          release, subjects: result.threads.map(({ subject }) => subject)
+        }))
       }
       return result
     }
@@ -147,10 +149,23 @@ async function holdContinuations(page) {
 
 async function releaseContinuation(page, index) {
   await page.evaluate(async (at) => {
-    window.__heldContinuations[at]()
+    window.__heldContinuations[at].release()
     await new Promise(requestAnimationFrame)
     await new Promise(requestAnimationFrame)
   }, index)
+}
+
+async function startOrObserveLoadMore(page, view, heldCount) {
+  const trigger = view.getByRole('button', { name: 'Load more', exact: true }).or(
+    view.getByRole('status').filter({ hasText: 'Loading more...' })
+  )
+  const focusedButton = await trigger.evaluate((el) => {
+    if (el.tagName !== 'BUTTON') return false
+    el.focus({ preventScroll: true })
+    return true
+  }, undefined, { timeout: 5000 })
+  if (focusedButton) await page.keyboard.press('Enter')
+  await page.waitForFunction((n) => window.__heldContinuations.length === n, heldCount, { timeout: 5000 })
 }
 
 async function switchDuringPagination(page) {
@@ -173,26 +188,24 @@ async function switchDuringPagination(page) {
   for (const [index, name, lastSubject] of [[0, 'Drafts', 'Later draft 30'], [2, 'Receipts', 'Label paging 35']]) {
     await rail.getByRole('button', { name: 'Inbox', exact: true }).click()
     await inbox.getByRole('listitem').nth(29).waitFor({ timeout: 5000 })
-    if (!(await page.evaluate((n) => window.__heldContinuations.length > n, index))) {
-      await activateLoadMore(page, inbox)
-    }
-    await page.waitForFunction((n) => window.__heldContinuations.length === n, index + 1)
+    await startOrObserveLoadMore(page, inbox, index + 1)
 
     await rail.getByRole('button', { name, exact: true }).click()
     const destination = page.getByRole('complementary', { name, exact: true })
     await destination.getByRole('listitem').nth(29).waitFor({ timeout: 5000 })
-    const autoStarted = await page.evaluate((n) => window.__heldContinuations.length === n, index + 2)
-    assert(
-      autoStarted || (await destination.getByRole('button', { name: 'Load more', exact: true }).count()) === 1,
-      `${name} can load its next page while Inbox is still in flight`,
-      `the abandoned Inbox request blocked pagination in ${name}`
-    )
-    if (!autoStarted) await activateLoadMore(page, destination)
-    await page.waitForFunction((n) => window.__heldContinuations.length === n, index + 2)
+    await startOrObserveLoadMore(page, destination, index + 2).catch(() => {
+      throw new Error(`ASSERT: the abandoned Inbox request blocked pagination in ${name}`)
+    })
+    log(`pass: ${name} can load its next page while Inbox is still in flight`)
+    const oldSubjects = await page.evaluate((n) => window.__heldContinuations[n].subjects, index)
+    assert(oldSubjects.length > 0, 'the held Inbox page contains rows', 'the held Inbox page was empty')
     await releaseContinuation(page, index)
     const busy = destination.getByRole('status').filter({ hasText: 'Loading more...' })
+    const leakedRows = await Promise.all(oldSubjects.map(
+      (subject) => destination.getByText(subject, { exact: true }).count()
+    ))
     assert(
-      (await busy.count()) === 1 && (await destination.getByText('Paging thread 31', { exact: true }).count()) === 0,
+      (await busy.count()) === 1 && leakedRows.every((count) => count === 0),
       `the old Inbox response neither paints ${name} nor clears its busy state`,
       `the superseded request changed the active ${name} list or its loading state`
     )
