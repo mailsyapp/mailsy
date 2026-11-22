@@ -124,3 +124,54 @@ test('preload may use its toolkit', () =>
 
 test('main may load a module by a static name', () =>
   accepts('src/main/probe.ts', "export const load = (): Promise<unknown> => import('node:fs')\n"))
+
+test('renderer type query against the main process', () =>
+  rejects(COMPONENT, "export type Probe = import('../../../main/index').Probe\n"))
+
+test('renderer globbing main-process modules', () =>
+  rejects(COMPONENT, "export const modules = import.meta.glob('../../../main/*.ts')\n"))
+
+test('renderer globbing a list that reaches the main process', () =>
+  rejects(
+    COMPONENT,
+    "export const modules = import.meta.glob(['./*.tsx', '../../../main/*.ts'])\n"
+  ))
+
+test('renderer globbing with a base that points at the main process', () =>
+  rejects(
+    COMPONENT,
+    "export const modules = import.meta.glob('./*.ts', { base: '../../../main' })\n"
+  ))
+
+test('renderer globbing with braces that reach the main process', () =>
+  rejects(COMPONENT, "export const modules = import.meta.glob('../../../{shared,main}/*.ts')\n"))
+
+test('renderer loading a main-process file by URL', () =>
+  rejects(
+    COMPONENT,
+    "export const worker = new Worker(new URL('../../../main/index.ts', import.meta.url))\n"
+  ))
+
+test('subscription through useSyncExternalStore', () =>
+  rejects(
+    COMPONENT,
+    "import * as React from 'react'\nexport const store = React.useSyncExternalStore\n"
+  ))
+
+test('observer created outside a hook', () =>
+  rejects(COMPONENT, 'export const observer = new MutationObserver(() => undefined)\n'))
+
+test('a void string standing in for a comment', () =>
+  rejects('src/shared/probe.ts', "void 'this explains the next line'\nexport const x = 1\n"))
+
+test('renderer may take types from shared by type query', () =>
+  accepts(COMPONENT, "export type Probe = import('../../../shared/types').EmailSummary\n"))
+
+test('renderer may load its own asset by URL', () =>
+  accepts(COMPONENT, "export const icon = new URL('../assets/icon.png', import.meta.url)\n"))
+
+test('an approved hook may create an observer', () =>
+  accepts(
+    'src/renderer/src/hooks/useIntersection.ts',
+    'export const observe = (): IntersectionObserver => new IntersectionObserver(() => undefined)\n'
+  ))

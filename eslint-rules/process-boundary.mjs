@@ -30,6 +30,10 @@ const BANNED_PACKAGES = {
   preload: [REACT]
 }
 
+function isImportMeta(node) {
+  return node?.type === 'MetaProperty' && node.meta.name === 'import'
+}
+
 function staticSpecifier(node) {
   if (!node) return null
   if (node.type === 'Literal') return node.value
@@ -59,6 +63,7 @@ export default {
       bannedPackage: "'{{name}}' is not available to src/{{from}}. {{hint}}",
       unreadableSpecifier:
         'This module name is computed, so the process boundary cannot be checked. Import or require a literal module name.',
+      glob: 'import.meta.glob picks modules by pattern, so the process boundary cannot be checked. Import each module by name.',
       noZone:
         'Every file in src/ must live in src/main, src/preload, src/renderer or src/shared so the process boundary applies to it.'
     }
@@ -129,9 +134,25 @@ export default {
       ImportExpression(node) {
         checkComputed(node, node.source)
       },
+      TSImportType(node) {
+        const specifier = node.source ?? node.argument?.literal ?? node.argument
+        check(node, staticSpecifier(specifier), true)
+      },
+      NewExpression(node) {
+        if (isImportMeta(node.arguments[1]?.object)) {
+          check(node, staticSpecifier(node.arguments[0]), false)
+        }
+      },
       CallExpression(node) {
         if (node.callee.type === 'Identifier' && node.callee.name === 'require') {
           checkComputed(node, node.arguments[0])
+        }
+        if (
+          node.callee.type === 'MemberExpression' &&
+          isImportMeta(node.callee.object) &&
+          !(node.callee.property.type === 'Identifier' && node.callee.property.name === 'resolve')
+        ) {
+          context.report({ node, messageId: 'glob' })
         }
       }
     }
