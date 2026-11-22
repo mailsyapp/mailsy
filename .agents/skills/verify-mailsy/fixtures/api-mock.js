@@ -1058,7 +1058,7 @@
   // movement behind it, and answers the same delta shape the real
   // boundary builds: a fresh list row plus the thread's current label
   // set, so pushing it is the faithful stand-in for main's pushed sweep.
-  window.__deliverMail = ({ from, subject, snippet }) => {
+  window.__deliverMail = ({ from, subject, snippet, prepend = false }) => {
     const n = ++deliveredCount
     const message = {
       id: `msg-delivered-${n}`,
@@ -1078,7 +1078,8 @@
       folder: 'inbox',
       labelIds: ['INBOX', 'UNREAD']
     }
-    seed.push(message)
+    if (prepend) seed.unshift(message)
+    else seed.push(message)
     byId.set(message.id, message)
     const delta = {
       kind: 'delta',

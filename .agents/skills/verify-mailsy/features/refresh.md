@@ -28,8 +28,8 @@ Run `node scripts/drive.mjs --feature refresh --run-id "$RUN_ID" --port "$VERIFY
 - **Errors.** With `window.__setSyncError('mock: rate limit')`, the next click keeps the same dedupe and surfaces `Gmail rate limit hit` in `p.error`.
 - **Push delta.** `window.__deliverMail` + `window.__pushSync(delta)` adds the row `Delivered between sweeps` to the Inbox without any click.
 - **Push reset.** Delivering again and pushing `{kind:'reset'}` re-folds the first page; `Delivered at the fold` appears.
-- **Pagination after reset.** After the open inbox grows from 30 to 31 threads, the reset exposes `Load more`. Activating it shows `Delivered onto page two` exactly once and removes the continuation.
-- **Proof.** `artifacts/<run-id>/refresh-button.aria.txt`/`.png` for the busy-state moment and `refresh.aria.txt`/`.png` after the push journeys.
+- **Pagination after reset.** After the open inbox grows from 30 to 31 threads, the reset exposes `Load more`. Activating it shows `Delivered onto page two` exactly once and removes the continuation. Another reset, with a new delivery on page one, retains the loaded tail without reopening pagination.
+- **Proof.** `artifacts/<run-id>/refresh-button.aria.txt`/`.png` for the busy-state moment, `refresh-pagination.aria.txt`/`.png` when the continuation returns, and `refresh.aria.txt`/`.png` after the push journeys.
 
 ## Gotchas
 

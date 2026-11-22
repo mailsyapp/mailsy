@@ -2208,6 +2208,7 @@ try {
       throw new Error('ASSERT: Load more did not appear after the open inbox grew past 30 threads')
     })
     assert(true, 'a pushed reset exposes Load more without reopening the inbox', 'missing continuation')
+    await snapshot(page, 'refresh-pagination')
     // Focus without scrolling so the observer does not load the page first.
     await loadMore.evaluate((button) => button.focus({ preventScroll: true }))
     await page.keyboard.press('Enter')
@@ -2216,6 +2217,22 @@ try {
       (await rows.count()) === firstPageSize + 1 && (await loadMore.count()) === 0,
       'Load more reaches the new thread exactly once and exhausts the inbox',
       'page two did not append exactly one thread and exhaust pagination'
+    )
+
+    // Put this delivery on page one so its appearance proves the second
+    // reset has finished before we check that it did not rewind the cursor.
+    const newestSubject = 'Delivered after pagination'
+    await page.evaluate((subject) => {
+      window.__deliverMail({ subject, prepend: true })
+      window.__pushSync({ kind: 'reset' })
+    }, newestSubject)
+    await inbox.getByText(newestSubject, { exact: true }).waitFor({ timeout: 5000 })
+    assert(
+      (await rows.count()) === firstPageSize + 2 &&
+        (await inbox.getByText(overflowSubject, { exact: true }).count()) === 1 &&
+        (await loadMore.count()) === 0,
+      'another reset keeps the loaded tail and does not rewind completed pagination',
+      'a second reset lost the loaded tail or exposed a stale continuation'
     )
     await snapshot(page, 'refresh')
   } else if (FEATURE === 'signature') {
