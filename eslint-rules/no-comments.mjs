@@ -1,5 +1,6 @@
 const ALLOWED = /^\/\s*<reference\s/
-const WORD = /[\w$]/
+const TOKEN_END = /[^\s([{]/
+const TOKEN_START = /[^\s)\]},;]/
 
 export default {
   meta: {
@@ -57,8 +58,9 @@ export default {
             messageId: isDisable ? 'disable' : 'banned',
             fix: (fixer) => {
               const [start, end] = removalRange(comment)
-              const joinsWords = WORD.test(text[start - 1] ?? '') && WORD.test(text[end] ?? '')
-              return fixer.replaceTextRange([start, end], joinsWords ? ' ' : '')
+              const joinsTokens =
+                TOKEN_END.test(text[start - 1] ?? '') && TOKEN_START.test(text[end] ?? '')
+              return fixer.replaceTextRange([start, end], joinsTokens ? ' ' : '')
             }
           })
         }

@@ -102,3 +102,11 @@ test('the comment autofix does not join the words around a comment', async () =>
   )
   assert.match(output, /return value/)
 })
+
+test('the comment autofix does not join the operators around a comment', async () => {
+  const output = await fixed(
+    'src/shared/probe.ts',
+    'export function probe(a: number, b: number): number {\n  return a +/* note */+b\n}\n'
+  )
+  assert.match(output, /a \+ \+b/)
+})
