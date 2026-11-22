@@ -24,7 +24,8 @@ Preconditions:
 - **List + open.** Run `node scripts/drive.mjs --feature drafts --run-id "$RUN_ID" --port "$VERIFY_MAILSY_PORT"`. The `Drafts` landmark lists `Draft: Q4 planning notes`, a `Draft` heading appears, and To contains `team@example.com`.
 - **Send.** Choose `Send` (same command). `Message sent.` appears and the recorded outbox holds a `draft-1` entry whose `inReplyTo` is `<q4-plan-parent@example.com>`.
 - **Prune.** The row disappears even after re-opening it inside the delay, and a folder round-trip refetch shows the Drafts folder without the draft.
-- **Proof.** The driver writes `artifacts/<run-id>/drafts.aria.txt`, `drafts.png`, and the transcript `drafts.log` quoting the outbox record.
+- **Edit a search result.** Rename a draft so it no longer matches its search; the editor stays open. Delete the draft in the mailbox and push another reset; the editor closes.
+- **Proof.** The driver writes `drafts` and `drafts-search-remote-delete` ARIA snapshots and screenshots and the `drafts.log` transcript.
 
 ## Gotchas
 

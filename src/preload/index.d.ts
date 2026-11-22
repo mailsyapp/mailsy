@@ -31,6 +31,7 @@ declare global {
       sendDraft(request: SendDraftRequest): Promise<void>
       saveDraft(request: SaveDraftRequest): Promise<string>
       discardDraft(draftId: string): Promise<void>
+      draftExists(draftId: string): Promise<boolean>
       pickAttachments(): Promise<import('../shared/types').ComposeAttachment[]>
       getAttachment(messageId: string, attachmentId: string): Promise<string>
       saveAttachment(messageId: string, attachmentId: string, filename: string): Promise<boolean>

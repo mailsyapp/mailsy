@@ -26,7 +26,7 @@ Preconditions:
 - **Match.** Type `budget` in the searchbox. Run `node scripts/drive.mjs --feature search --run-id "$RUN_ID" --port "$VERIFY_MAILSY_PORT"`. `Q3 budget draft` remains visible and `Launch checklist` is filtered out.
 - **Clear.** Choose `Clear search` (same command). The box empties and `Launch checklist` returns.
 - **Pagination and refresh.** Load two pages of a 34-match search, then restore two older matches into page two via a delta and a reset. Keep paging to verify that all 36 matches appear exactly once.
-- **Open reply.** Open an unread result and start a reply. Sync can remove the auto-read row and later update its star without losing the reply. Switching to a cached query that excludes the thread does not carry the old pane into that query.
+- **Open reply.** Open an unread result and start a reply. Sync can remove the auto-read row and later update its star without losing the reply. Switching to a matching cached query keeps the reply; switching to an excluding query closes the old pane.
 - **Proof.** The driver writes `search`, `search-pagination`, and `search-open-reply` ARIA snapshots and screenshots under `artifacts/<run-id>/`.
 
 ## Gotchas

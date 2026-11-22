@@ -819,6 +819,10 @@
       deletedDrafts.push(draftId)
       draftDiscards.push({ draftId })
     },
+    draftExists: async (draftId) => {
+      ensureSignedIn()
+      return !deletedDrafts.includes(draftId) && seed.some((message) => message.draftId === draftId)
+    },
     // Mirrors gmail.users.messages/threads.modify: error strings match the
     // main process validation, targets resolve by threadId or id, and the
     // mutation is add/remove on each target's labelIds only. Two boundary

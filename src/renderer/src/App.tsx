@@ -79,6 +79,7 @@ function App(): React.JSX.Element {
   )
 
   const selectionRef = useRef<string | null>(null)
+  const selectedDraftRef = useRef<{ key: string; id: string } | null>(null)
   const sentinelRef = useRef<HTMLDivElement | null>(null)
   const sidebarRef = useRef<HTMLElement | null>(null)
   const requestIdRef = useRef(0)
@@ -187,6 +188,7 @@ function App(): React.JSX.Element {
 
   function closeEmail(): void {
     selectionRef.current = null
+    selectedDraftRef.current = null
     setOpened(null)
     setDraftDetail(null)
     setDraftDetailLoading(false)
@@ -237,9 +239,18 @@ function App(): React.JSX.Element {
     activeFolder
   ])
 
+  const cachedSearchPage = isSearchActive
+    ? searchPageCacheRef.current.get(viewKey)?.get(committedQuery)
+    : undefined
+  const selectionRows =
+    opened?.query !== committedQuery && cachedSearchPage
+      ? cachedSearchPage.threads
+      : displayedThreads
   const selectedThread =
-    displayedThreads.find((e) => listRowKey(e) === selectedKey) ??
-    (isSearchActive && opened?.query === committedQuery && !selectedIsDraft ? opened.row : null)
+    selectionRows.find((e) => listRowKey(e) === selectedKey) ??
+    (isSearchActive && opened?.query === committedQuery && (!selectedIsDraft || opened.row.draftId)
+      ? opened.row
+      : null)
 
   function handleSelect(row: ThreadSummary): void {
     // The pane is exclusive: a selected row replaces an open compose (and
@@ -257,6 +268,7 @@ function App(): React.JSX.Element {
     const draftHere = draftsFolder || (activeFolder === 'all' && row.hasDraft === true)
     setSelectedIsDraft(draftHere)
     if (!draftHere) return
+    if (row.draftId) selectedDraftRef.current = { key: rowKey, id: row.draftId }
     setDraftDetailLoading(true)
     window.api
       .getMessage(row.messageIds[row.messageIds.length - 1])
@@ -750,18 +762,35 @@ function App(): React.JSX.Element {
             depth++
           }
         }
-        setThreads((prev) => {
-          if (mode === 'load') return page.threads
-          if (reconcileSearch) {
-            const incoming = new Map(page.threads.map((row) => [listRowKey(row), row]))
-            for (const [key, row] of tail) incoming.set(key, row)
-            return mergeIncoming(prev, [...incoming.values()], false, null)
+        if (reconcileSearch) {
+          const incoming = new Map(page.threads.map((row) => [listRowKey(row), row]))
+          for (const [key, row] of tail) incoming.set(key, row)
+          const rows = [...incoming.values()]
+          setThreads((prev) => mergeIncoming(prev, rows, false, null))
+          const draft = selectedDraftRef.current
+          if (draft && !incoming.has(draft.key) && !draftPruneTimersRef.current.has(draft.key)) {
+            const stillSelected = (): boolean =>
+              requestIdRef.current === requestId &&
+              selectedDraftRef.current === draft &&
+              !draftPruneTimersRef.current.has(draft.key)
+            void window.api
+              .draftExists(draft.id)
+              .then((exists) => {
+                if (!exists && stillSelected()) closeEmail()
+              })
+              .catch((e: unknown) => {
+                if (stillSelected() && isDeadGrantError(e)) exitToSignedOut()
+              })
           }
-          const merged = mergeIncoming(prev, page.threads, quiet, selectionRef.current)
-          if (tail.size === 0) return merged
-          const seen = new Set(merged.map(listRowKey))
-          return [...merged, ...[...tail].filter(([key]) => !seen.has(key)).map(([, row]) => row)]
-        })
+        } else {
+          setThreads((prev) => {
+            if (mode === 'load') return page.threads
+            const merged = mergeIncoming(prev, page.threads, quiet, selectionRef.current)
+            if (tail.size === 0) return merged
+            const seen = new Set(merged.map(listRowKey))
+            return [...merged, ...[...tail].filter(([key]) => !seen.has(key)).map(([, row]) => row)]
+          })
+        }
         if (!quiet || loadedPagesRef.current <= 1 || recheckDepth > 1) setPageToken(token, depth)
         storeFirstPage(page, committedQuery)
       }
@@ -824,7 +853,7 @@ function App(): React.JSX.Element {
         setOpened((prev) => {
           if (!prev || prev.query !== committedQuery) return prev
           const row = result.threads.find((thread) => thread.id === prev.row.id)
-          return row ? { ...prev, row } : prev
+          return row ? { ...prev, row: { ...prev.row, ...row } } : prev
         })
       }
       const listedIds = new Set(threads.map((row) => row.id))
@@ -971,9 +1000,7 @@ function App(): React.JSX.Element {
     ) {
       return
     }
-    const cached = committedQuery
-      ? searchPageCacheRef.current.get(viewKey)?.get(committedQuery)
-      : undefined
+    const cached = cachedSearchPage
     if (cached) {
       if (selectionRef.current !== null) {
         const row = cached.threads.find((thread) => listRowKey(thread) === selectionRef.current)

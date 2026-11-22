@@ -28,7 +28,7 @@ Preconditions:
 - **Union.** The `Snoozed` rail entry lists the emulated `Launch checklist` row beside the seeded native `Vendor pricing follow-up`; All Mail still lists the parked row.
 - **Wake.** The clock fast-forwards 48 hours; the Inbox refetch lists `Launch checklist` again, the schedule is empty, and the second mod is the reverse pair.
 - **Row restore overrides the wake.** `Q3 budget draft` is parked through `Next week`, then `unsnooze` on its Snoozed row removes it there, empties the schedule, and records the reverse pair without waiting for the wake.
-- **Detail restore.** `Launch checklist` is parked once more through `Later this week`; opening it in the Snoozed view and choosing `unsnooze` records the same reverse pair and empties the schedule; the Inbox refetch lists it.
+- **Detail restore.** `Launch checklist` is parked once more and opened in an unread Snoozed search. After sync drops its auto-read row, `unsnooze` still records the reverse label pair and clears the schedule.
 - **Switch views during a wake.** Hold the restore in All Mail, switch to Inbox, and load two pages of search results before releasing it. The returned thread joins page two without resetting the search to page one; continuing the search shows every match exactly once.
 - **Wake in All Mail.** Wake an already-listed thread after loading page two. Unfiltered All Mail retains both pages without refetching. In a `-in:inbox` search, a wake removes the restored thread because it no longer matches.
 - **Proof.** The driver writes snapshots for `snooze-emulation`, `snooze-wake-view-switch`, `snooze-wake-all-mail`, and `snooze-wake-search-exclusion`, and the transcript `snooze-emulation.log` quoting the recorded mods and schedule states.

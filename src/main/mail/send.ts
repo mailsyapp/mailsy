@@ -195,3 +195,18 @@ export async function discardDraft(draftId: string): Promise<void> {
     throw e
   }
 }
+
+export async function draftExists(draftId: string): Promise<boolean> {
+  if (typeof draftId !== 'string' || !draftId.trim()) throw new Error('Draft ID is required')
+
+  const gmail = getGmailClient()
+  try {
+    await withQuotaRetry(() =>
+      gmail.users.drafts.get({ userId: 'me', id: draftId, format: 'minimal' })
+    )
+    return true
+  } catch (e) {
+    if (isNotFoundError(e)) return false
+    throw e
+  }
+}

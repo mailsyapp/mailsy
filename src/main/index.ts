@@ -15,6 +15,7 @@ import {
   armSyncClock,
   createUserLabel,
   deleteUserLabel,
+  draftExists,
   fetchAttachment,
   fetchFolder,
   fetchMessage,
@@ -103,6 +104,7 @@ app.whenReady().then(() => {
   ipcMain.handle('gmail:send-draft', (_event, request: SendDraftRequest) => sendDraft(request))
   ipcMain.handle('gmail:save-draft', (_event, request: SaveDraftRequest) => saveDraft(request))
   ipcMain.handle('gmail:discard-draft', (_event, draftId: string) => discardDraft(draftId))
+  ipcMain.handle('gmail:draft-exists', (_event, draftId: string) => draftExists(draftId))
   // The composer's file picker. Files ride back fully in memory (base64),
   // so a picked file is the record the send/autosave payloads carry; a
   // failed read or an over-limit pick throws the picker's own sentence.

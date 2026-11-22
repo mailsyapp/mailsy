@@ -434,6 +434,11 @@ try {
     const unreadResult = inbox.getByRole('listitem').filter({ hasText: 'Launch checklist' })
     await unreadResult.getByRole('button', { name: 'mark unread', exact: true }).click()
     await unreadResult.getByRole('button', { name: 'mark read', exact: true }).waitFor({ timeout: 5000 })
+    const matchingQuery = 'in:inbox Launch checklist'
+    await box.fill(matchingQuery)
+    await box.press('Enter')
+    const matchingCount = inbox.getByText('1 result for “in:inbox Launch checklist”', { exact: true })
+    await matchingCount.waitFor({ timeout: 5000 })
     await box.fill('is:unread Launch checklist')
     await box.press('Enter')
     await inbox.getByText(/results? for “is:unread Launch checklist”/).waitFor({ timeout: 5000 })
@@ -477,18 +482,33 @@ try {
     await page.evaluate(() => {
       const api = window.__packagedFixtureApi ?? window.api
       const list = api.listFolder
-      window.__budgetSearchFetches = 0
+      window.__searchFetches = []
       api.listFolder = (options) => {
-        if (options.q === 'budget') window.__budgetSearchFetches++
+        window.__searchFetches.push(options.q)
         return list(options)
       }
     })
+    await box.fill(matchingQuery)
+    await box.press('Enter')
+    await matchingCount.waitFor({ timeout: 5000 })
+    await unreadResult.getByText('Launch checklist', { exact: true }).waitFor({ timeout: 5000 })
+    assert(
+      !(await page.evaluate((q) => window.__searchFetches.includes(q), matchingQuery)),
+      'the prior Launch checklist query comes from the search cache',
+      'the missed cache would not exercise a matching cached transition'
+    )
+    assert(
+      (await body.count()) === 1 && (await bodyTextOf(body)).includes('Keep this unsent reply.'),
+      'a cached query that includes the thread preserves its open reply',
+      'the matching cached query unmounted the reply before restoring the conversation'
+    )
+
     await box.fill('budget')
     await box.press('Enter')
     await inbox.getByText(/results? for “budget”/).waitFor({ timeout: 5000 })
     await inbox.getByText('Q3 budget draft', { exact: true }).first().waitFor({ timeout: 5000 })
     assert(
-      (await page.evaluate(() => window.__budgetSearchFetches)) === 0,
+      !(await page.evaluate(() => window.__searchFetches.includes('budget'))),
       'the prior budget query comes from the search cache',
       'the missed cache would not exercise selection ownership'
     )
@@ -944,17 +964,28 @@ try {
     await remoteDraft.click()
     const editor = content.getByRole('heading', { name: 'Draft', exact: true })
     await editor.waitFor({ timeout: 5000 })
+    const subjectField = content.getByRole('textbox', { name: 'Subject' })
+    const renamedSubject = 'Updated planning note'
+    await subjectField.fill(renamedSubject)
+    await page.waitForFunction((subject) => window.__draftSaves.some(
+      (draft) => draft.draftId === 'draft-q4' && draft.subject === subject
+    ), renamedSubject)
+    await page.evaluate(() => window.__pushSync({ kind: 'reset' }))
+    await remoteDraft.waitFor({ state: 'detached', timeout: 5000 })
+    assert(
+      (await editor.count()) === 1 && (await subjectField.inputValue()) === renamedSubject,
+      'a renamed draft stays open after leaving the search results',
+      'the search reset closed a draft that still exists'
+    )
     await page.evaluate(async () => {
       const api = window.__packagedFixtureApi ?? window.api
       await api.discardDraft('draft-q4')
       window.__pushSync({ kind: 'reset' })
     })
-    await remoteDraft.waitFor({ state: 'detached', timeout: 5000 })
-    assert(
-      (await editor.count()) === 0,
-      'search closes a draft editor after the draft is deleted externally',
-      'a deleted draft remains editable after a search refresh'
-    )
+    await editor.waitFor({ state: 'detached', timeout: 5000 }).catch(() => {
+      throw new Error('ASSERT: a deleted draft remains editable after a search refresh')
+    })
+    log('pass: search closes a draft editor after the draft is deleted externally')
     await snapshot(page, 'drafts-search-remote-delete')
   } else if (FEATURE === 'delete-draft') {
     // Row surface: the confirm gates the delete. Dismiss it first —
@@ -1970,25 +2001,41 @@ try {
       .waitFor({ state: 'detached', timeout: 10000 })
     await page.getByRole('button', { name: 'Snoozed', exact: true }).click()
     await snoozed.waitFor({ timeout: 10000 })
-    await snoozed
-      .getByText('Launch checklist', { exact: true })
-      .first()
-      .click()
+    await page.evaluate(async () => {
+      const api = window.__packagedFixtureApi ?? window.api
+      await api.modifyLabels({ kind: 'thread', id: 'thread-launch', addLabelIds: ['UNREAD'] })
+    })
+    await query.fill('is:unread Launch checklist')
+    await query.press('Enter')
+    await snoozed.getByText(/results? for “is:unread Launch checklist”/).waitFor({ timeout: 5000 })
+    const snoozedResult = snoozed.getByText('Launch checklist', { exact: true }).first()
+    await snoozedResult.click()
     await page.getByRole('heading', { name: 'Launch checklist' }).waitFor({ timeout: 10000 })
+    await page.waitForFunction(() => window.__mods.at(-1)?.removeLabelIds?.includes('UNREAD'))
+    await page.evaluate(async () => {
+      const api = window.__packagedFixtureApi ?? window.api
+      const { threads } = await api.listFolder({ folder: 'snoozed' })
+      const { snoozedByMailsy, ...row } = threads.find(({ id }) => id === 'thread-launch')
+      window.__pushSync({
+        kind: 'delta', historyId: 'snoozed-read',
+        threads: [{ ...row, labelIds: ['Snoozed by Mailsy'] }], deletedThreadIds: []
+      })
+    })
+    await snoozedResult.waitFor({ state: 'detached', timeout: 5000 })
     await content.getByRole('button', { name: 'unsnooze', exact: true }).click()
     await snoozed
       .getByText('Launch checklist', { exact: true })
       .first()
       .waitFor({ state: 'detached', timeout: 10000 })
-    const detailRestoreMods = await page.evaluate(() => window.__mods)
+    await content.getByRole('button', { name: 'unsnooze', exact: true }).waitFor({ state: 'detached', timeout: 5000 })
+    const detailRestoreMod = await page.evaluate(() => window.__mods.at(-1))
     assert(
-      detailRestoreMods.length === 6 &&
-        detailRestoreMods[5].kind === 'thread' &&
-        detailRestoreMods[5].id === 'thread-launch' &&
-        (detailRestoreMods[5].addLabelIds ?? []).includes('INBOX') &&
-        (detailRestoreMods[5].removeLabelIds ?? []).includes('Snoozed by Mailsy'),
-      `detail restore pair recorded ${JSON.stringify(detailRestoreMods)}`,
-      'detail restore side effect not recorded'
+      detailRestoreMod.kind === 'thread' &&
+        detailRestoreMod.id === 'thread-launch' &&
+        (detailRestoreMod.addLabelIds ?? []).includes('INBOX') &&
+        (detailRestoreMod.removeLabelIds ?? []).includes('Snoozed by Mailsy'),
+      `detail restore pair survives the search change: ${JSON.stringify(detailRestoreMod)}`,
+      'search lost Mailsy parking metadata and left the snooze label attached'
     )
     const scheduleFinal = await page.evaluate(() => [...(window.__snoozeSchedule ?? [])])
     assert(
