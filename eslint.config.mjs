@@ -9,6 +9,8 @@ import mailsy from './eslint-rules/index.mjs'
 const EFFECT_MESSAGE =
   'Raw effects are banned outside src/renderer/src/hooks. Work caused by a user action belongs in that event handler; values computed from props or state belong in render or useMemo. For what is left, use the hook that names the intent: useOnMount, useOnUnmount, useReaction (state changed), useSubscription, useInterval, useSettledValue (debounce), useIntersection. If none fits, add a new named hook in src/renderer/src/hooks.'
 
+const EFFECT_NAMES = 'useEffect|useLayoutEffect|useInsertionEffect'
+
 const TIMER_NAMES =
   'setTimeout|setInterval|setImmediate|requestAnimationFrame|requestIdleCallback|queueMicrotask'
 
@@ -65,8 +67,11 @@ export default defineConfig(
       'no-restricted-syntax': [
         'error',
         {
-          selector:
-            "MemberExpression[object.name='React'][property.name=/^use(Layout|Insertion)?Effect$/]",
+          selector: `Identifier[name=/^(${EFFECT_NAMES})$/]`,
+          message: EFFECT_MESSAGE
+        },
+        {
+          selector: `MemberExpression[computed=true] > Literal.property[value=/^(${EFFECT_NAMES})$/]`,
           message: EFFECT_MESSAGE
         },
         {
