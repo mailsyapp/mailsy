@@ -70,7 +70,7 @@ export function useDraftAutosave(
 
   // Resolves whether the write failed or not: flushPending is a
   // synchronization point for send, not a retry surface.
-  const save = useCallback((): Promise<void> => {
+  const save = useCallback((copyOnConflict = false): Promise<void> => {
     const prior = pendingSaveRef.current ?? Promise.resolve()
     const run = prior
       .then(() => {
@@ -86,7 +86,8 @@ export function useDraftAutosave(
         return window.api
           .saveDraft({
             ...fieldsRef.current,
-            ...(target ? { draftId: target.draftId, expectedMessageId: target.messageId } : {})
+            ...(target ? { draftId: target.draftId, expectedMessageId: target.messageId } : {}),
+            ...(copyOnConflict ? { copyOnConflict } : {})
           })
           .then((draft) => {
             draftRef.current = draft
@@ -146,8 +147,8 @@ export function useDraftAutosave(
       if (JSON.stringify(fieldsRef.current) === lastSavedRef.current) return
       // A save may already sit in flight or queued from the debounce; this
       // chain-dispatches behind it, so a create that has not resolved yet
-      // resolves first and this write is an update, never a second create.
-      void save()
+      // resolves first. On a version conflict, keep a separate draft.
+      void save(true)
     }
   }, [save])
 

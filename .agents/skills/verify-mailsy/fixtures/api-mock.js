@@ -554,13 +554,18 @@
     if (!signedIn) throw new Error('Not signed in yet')
   }
 
-  function draftForWrite({ draftId, expectedMessageId }) {
+  function findDraft(draftId) {
     const target = seed.find((m) => m.draftId === draftId)
     if (!target || deletedDrafts.includes(draftId)) throw new Error(`mock: no draft ${draftId}`)
-    if (expectedMessageId !== undefined && target.id !== expectedMessageId) {
-      throw new Error('Draft changed in Gmail. Copy your edits and reopen the draft before retrying.')
-    }
     return target
+  }
+
+  function hasDraftConflict(target, expectedMessageId) {
+    return expectedMessageId !== undefined && target.id !== expectedMessageId
+  }
+
+  function draftConflict() {
+    return new Error('Draft changed in Gmail. Leaving keeps your unsaved edits as a separate draft.')
   }
 
   window.api = {
@@ -637,7 +642,7 @@
     },
     getMessage: async (id, draftId) => {
       ensureSignedIn()
-      const m = draftId ? draftForWrite({ draftId }) : byId.get(id)
+      const m = draftId ? findDraft(draftId) : byId.get(id)
       if (!m) throw new Error(`mock: no message ${id}`)
       // The attachment ref list is a boundary contract now: the detail
       // always carries it (empty for plain messages) the way toEmailDetail
@@ -722,7 +727,9 @@
       ) {
         throw new Error('Recipient is required')
       }
-      draftForWrite(request)
+      if (hasDraftConflict(findDraft(request.draftId), request.expectedMessageId)) {
+        throw draftConflict()
+      }
       sent.push({ ...request })
       deletedDrafts.push(request.draftId)
     },
@@ -747,9 +754,11 @@
       if (request.draftId !== undefined && typeof request.draftId !== 'string') {
         throw new Error('Invalid draft request')
       }
+      const target = request.draftId ? findDraft(request.draftId) : null
+      const conflict = target && hasDraftConflict(target, request.expectedMessageId)
+      if (conflict && request.copyOnConflict !== true) throw draftConflict()
       let draftId
-      if (request.draftId) {
-        const target = draftForWrite(request)
+      if (target && !conflict) {
         draftId = target.draftId
         const oldMessageId = target.id
         byId.delete(oldMessageId)

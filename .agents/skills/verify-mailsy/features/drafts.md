@@ -24,7 +24,7 @@ Preconditions:
 - **List + open.** Run `node scripts/drive.mjs --feature drafts --run-id "$RUN_ID" --port "$VERIFY_MAILSY_PORT"`. The `Drafts` landmark lists `Draft: Q4 planning notes`, a `Draft` heading appears, and To contains `team@example.com`.
 - **Send.** Choose `Send` (same command). `Message sent.` appears and the recorded outbox holds a `draft-1` entry whose `inReplyTo` is `<q4-plan-parent@example.com>`.
 - **Prune.** The row disappears even after re-opening it inside the delay, and a folder round-trip refetch shows the Drafts folder without the draft.
-- **Edit a search result.** Rename a draft so it no longer matches; the editor stays open and accepts a second local save. Replace the draft in the mailbox and try autosaving and sending from the old editor. Both preserve the newer remote draft and leave the local text visible. Delete the draft in the mailbox and push a deletion delta; the editor closes.
+- **Edit a search result.** Rename a draft so it no longer matches; the editor stays open and accepts a second local save. Replace the draft in the mailbox and try autosaving and sending from the old editor. Both preserve the newer remote draft and leave the local text visible; leaving the pane with pending edits saves a separate copy. Delete the now off-list draft in the mailbox and push a deletion delta; the editor closes.
 - **Proof.** The driver writes `drafts`, `drafts-search-edit-conflict`, and `drafts-search-remote-delete` ARIA snapshots and screenshots and the `drafts.log` transcript.
 
 ## Gotchas

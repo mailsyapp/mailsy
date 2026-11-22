@@ -104,7 +104,9 @@ export async function sendDraft(request: SendDraftRequest): Promise<void> {
     const raw = await buildRawMessage(from, request)
     const { draftId, expectedMessageId, threadId } = request
     await withQuotaRetry(async () => {
-      await ensureDraftVersion(gmail, draftId, expectedMessageId, session)
+      if (!(await isCurrentDraftVersion(gmail, draftId, expectedMessageId, session))) {
+        throw draftConflict()
+      }
       return gmail.users.drafts.send({
         userId: 'me',
         requestBody: { id: draftId, message: { raw, ...(threadId ? { threadId } : {}) } }
@@ -122,19 +124,21 @@ function assertExpectedMessageId(id: unknown): void {
   }
 }
 
-async function ensureDraftVersion(
+function draftConflict(): Error {
+  return new Error('Draft changed in Gmail. Leaving keeps your unsaved edits as a separate draft.')
+}
+
+async function isCurrentDraftVersion(
   gmail: gmail_v1.Gmail,
   draftId: string,
   expectedMessageId: string | undefined,
   session: symbol
-): Promise<void> {
+): Promise<boolean> {
   // Gmail replaces the underlying message on every update, but does not offer a conditional write.
-  if (expectedMessageId === undefined) return
+  if (expectedMessageId === undefined) return true
   const current = await gmail.users.drafts.get({ userId: 'me', id: draftId, format: 'minimal' })
   if (getMailSession() !== session) throw new Error('Mail account changed')
-  if (current.data.message?.id !== expectedMessageId) {
-    throw new Error('Draft changed in Gmail. Copy your edits and reopen the draft before retrying.')
-  }
+  return current.data.message?.id === expectedMessageId
 }
 
 export async function saveDraft(request: SaveDraftRequest): Promise<DraftVersion> {
@@ -150,12 +154,16 @@ export async function saveDraft(request: SaveDraftRequest): Promise<DraftVersion
     const from = await getAccountEmail()
     const raw = await buildRawMessage(from, request)
 
-    const { draftId, expectedMessageId, threadId } = request
+    const { draftId, expectedMessageId, threadId, copyOnConflict } = request
     const requestBody = { message: { raw, ...(threadId ? { threadId } : {}) } }
     const saved = await withQuotaRetry(async () => {
-      if (!draftId) return gmail.users.drafts.create({ userId: 'me', requestBody })
-      await ensureDraftVersion(gmail, draftId, expectedMessageId, session)
-      return gmail.users.drafts.update({ userId: 'me', id: draftId, requestBody })
+      if (draftId) {
+        if (await isCurrentDraftVersion(gmail, draftId, expectedMessageId, session)) {
+          return gmail.users.drafts.update({ userId: 'me', id: draftId, requestBody })
+        }
+        if (copyOnConflict !== true) throw draftConflict()
+      }
+      return gmail.users.drafts.create({ userId: 'me', requestBody })
     }, session)
     if (!saved.data.id || !saved.data.message?.id)
       throw new Error('Gmail returned no draft version')

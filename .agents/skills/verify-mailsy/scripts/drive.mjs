@@ -1003,6 +1003,31 @@ try {
       'a conflict discarded either the newer Gmail draft or the local edit'
     )
     await snapshot(page, 'drafts-search-edit-conflict')
+    const leavingSubject = 'Pending edits when leaving the draft'
+    await subjectField.fill(leavingSubject)
+    await page.getByRole('button', { name: 'Inbox', exact: true }).click()
+    await page.waitForFunction((subject) =>
+      window.__draftSaves.some((d) => d.draftId !== 'draft-q4' && d.subject === subject),
+      leavingSubject,
+      { timeout: 5000 }
+    ).catch(() => {
+      throw new Error('ASSERT: navigating away silently lost the conflicting local edits')
+    })
+    await page.getByRole('button', { name: 'Drafts', exact: true }).click()
+    await drafts.getByText(leavingSubject, { exact: true }).waitFor({ timeout: 5000 })
+    log('pass: navigation preserves the pending local edit as a separate draft')
+    await draftSearch.fill('Remote edit')
+    await draftSearch.press('Enter')
+    await drafts.getByText(/results? for “Remote edit”/).waitFor({ timeout: 5000 })
+    const remoteCopy = drafts.getByText('Remote edit', { exact: true }).first()
+    await remoteCopy.click()
+    await editor.waitFor({ timeout: 5000 })
+    await subjectField.fill('Renamed before remote deletion')
+    await page.waitForFunction(() =>
+      window.__draftSaves.some((d) => d.draftId === 'draft-q4' && d.subject === 'Renamed before remote deletion')
+    )
+    await page.evaluate(() => window.__pushSync({ kind: 'reset' }))
+    await remoteCopy.waitFor({ state: 'detached', timeout: 5000 })
     await page.evaluate(async () => {
       const api = window.__packagedFixtureApi ?? window.api
       await api.discardDraft('draft-q4')

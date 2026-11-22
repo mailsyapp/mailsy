@@ -8,6 +8,10 @@ const fixture = (globalThis.draftVersionFixture = {
   messageId: 'msg-1',
   calls: [],
   get: () => ({ data: { message: { id: fixture.messageId } } }),
+  create: (params) => {
+    fixture.calls.push(['create', params])
+    return { data: { id: 'draft-local-copy', message: { id: 'msg-copy' } } }
+  },
   update: (params) => {
     fixture.calls.push(['update', params])
     fixture.messageId = 'msg-2'
@@ -27,6 +31,7 @@ const hooks = registerHooks({
         export const invalidateStoredGrant = () => { f.session = Symbol() }
         export const getGmailClient = () => ({ users: { drafts: {
           get: (...args) => f.get(...args),
+          create: (...args) => f.create(...args),
           update: (...args) => f.update(...args),
           send: (...args) => f.send(...args)
         } } })
@@ -72,6 +77,21 @@ test('an already-replaced Gmail message blocks both autosave and send', async ()
   await assert.rejects(saveDraft(stale), /Draft changed in Gmail/)
   await assert.rejects(sendDraft(stale), /Draft changed in Gmail/)
   assert.deepEqual(fixture.calls, [])
+})
+
+test('unmount recovery creates a separate draft only on a version conflict', async () => {
+  fixture.calls.length = 0
+  fixture.messageId = 'msg-remote'
+  const edited = { ...request, expectedMessageId: 'msg-1', copyOnConflict: true }
+  assert.deepEqual(await saveDraft(edited), { draftId: 'draft-local-copy', messageId: 'msg-copy' })
+  assert.equal(fixture.messageId, 'msg-remote')
+  assert.deepEqual(fixture.calls.map(([verb]) => verb), ['create'])
+  assert.match(
+    Buffer.from(fixture.calls[0][1].requestBody.message.raw, 'base64url').toString(),
+    /Edited locally/
+  )
+  await saveDraft({ ...edited, expectedMessageId: 'msg-remote' })
+  assert.deepEqual(fixture.calls.map(([verb]) => verb), ['create', 'update'])
 })
 
 test('a version check finishing after an account switch cannot start a write', async () => {

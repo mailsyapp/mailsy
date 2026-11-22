@@ -257,6 +257,7 @@ export interface SendDraftRequest extends SendEmailRequest {
 export interface SaveDraftRequest extends SendEmailRequest {
   draftId?: string
   expectedMessageId?: string
+  copyOnConflict?: boolean
 }
 
 export interface DraftVersion {
