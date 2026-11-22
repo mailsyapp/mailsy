@@ -222,6 +222,29 @@ test('the comment autofix does not join the words around a comment', async () =>
   assert.match(output, /return value/)
 })
 
+test('zero-interpolation templates remain comment-like', async () => {
+  for (const expression of ['``', '`explanation`', 'void `explanation`']) {
+    await rejects(
+      'src/shared/probe.ts',
+      `${expression}\nexport const value = 1\n`,
+      'mailsy/no-comments',
+      'stringStatement'
+    )
+  }
+})
+
+test('interpolated templates are not comments and retain their calls', async () => {
+  for (const expression of ['`${track()}`', 'void `${track()}`', '`${42}`']) {
+    const code = `declare function track(): string\n${expression}\n`
+    const messages = await lintMessages('src/shared/probe.ts', code)
+    assert.deepEqual(
+      messages.filter((message) => message.ruleId === 'mailsy/no-comments'),
+      []
+    )
+    assert.ok((await fixed('src/shared/probe.ts', code)).includes(expression))
+  }
+})
+
 test('the comment autofix does not join the operators around a comment', async () => {
   const output = await fixed(
     'src/shared/probe.ts',

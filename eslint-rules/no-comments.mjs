@@ -60,7 +60,7 @@ export default {
             : node.expression
         const isString =
           (expression.type === 'Literal' && typeof expression.value === 'string') ||
-          expression.type === 'TemplateLiteral'
+          (expression.type === 'TemplateLiteral' && expression.expressions.length === 0)
         if (!isString || DIRECTIVES.test(expression.value)) return
         context.report({ node, messageId: 'stringStatement' })
       },
