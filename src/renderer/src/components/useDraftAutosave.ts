@@ -10,6 +10,7 @@ type AutosaveFields = Omit<SaveDraftRequest, 'draftId'>
 // How long a keystroke pauses before its fields reach the drafts bridge:
 // one Gmail drafts call per settled edit, not per character.
 const AUTOSAVE_DEBOUNCE_MS = 1200
+const STALE_REFS_ERROR = 'Reload this draft before saving further unresolved attachments.'
 
 export interface DraftAutosave {
   // Synchronizer for the send path: cancels the pending debounce and waits
@@ -29,6 +30,7 @@ export interface DraftAutosave {
   currentDraftId: () => string | undefined
   status: 'idle' | 'saving' | 'saved'
   error: string | null
+  refsStale: boolean
 }
 
 // Bridge-backed autosave for one composer. The first write creates a real
@@ -49,6 +51,7 @@ export function useDraftAutosave(
   const fieldsRef = useRef(fields)
   const onSavedRef = useRef(onSaved)
   const draftIdRef = useRef(initialDraftId)
+  const staleRefsRef = useRef(false)
   // The serialized fields already on the draft: unchanged renders and
   // untouched composers never schedule a write.
   const lastSavedRef = useRef(JSON.stringify(fields))
@@ -85,12 +88,23 @@ export function useDraftAutosave(
         const writtenFields = fieldsRef.current
         const written = JSON.stringify(writtenFields)
         if (written === lastSavedRef.current) return
+        if (staleRefsRef.current && writtenFields.retainAttachments?.refs.length)
+          throw new Error(STALE_REFS_ERROR)
         return window.api
           .saveDraft({
             ...fieldsRef.current,
             ...(draftIdRef.current ? { draftId: draftIdRef.current } : {})
           })
           .then((result) => {
+            draftIdRef.current = result.draftId
+            staleRefsRef.current = !!result.refsStale
+            if (result.refsStale) {
+              lastSavedRef.current = written
+              if (writtenFields.retainAttachments?.refs.length) throw new Error(STALE_REFS_ERROR)
+              setStatus('saved')
+              setError(null)
+              return
+            }
             const rebase = (value: AutosaveFields): AutosaveFields => {
               if (
                 !value.retainAttachments ||
@@ -110,7 +124,6 @@ export function useDraftAutosave(
                 }
               }
             }
-            draftIdRef.current = result.draftId
             fieldsRef.current = rebase(fieldsRef.current)
             lastSavedRef.current = JSON.stringify(rebase(writtenFields))
             onSavedRef.current?.(result)
@@ -207,6 +220,7 @@ export function useDraftAutosave(
       // Retired after send or Cancel: the draft was consumed or discarded,
       // so it no longer exists for any later write to target.
       retiredRef.current ? undefined : draftIdRef.current,
+    refsStale: staleRefsRef.current,
     status,
     error
   }
