@@ -179,3 +179,17 @@ test('a declaration file may reference a types package', () =>
     'src/renderer/src/env.d.ts',
     '/// <reference types="vite/client" />\ndeclare const x: number\n'
   ))
+
+test('main may import a packaged asset from resources', () =>
+  accepts(
+    'src/main/probe.ts',
+    "import icon from '../../resources/icon.png?asset'\nexport const i = icon\n"
+  ))
+
+test('a resources folder elsewhere is not the asset folder', () =>
+  rejects(
+    'src/main/probe.ts',
+    "import icon from '../../../resources/icon.png?asset'\nexport const i = icon\n",
+    BOUNDARY,
+    'outsideSrc'
+  ))

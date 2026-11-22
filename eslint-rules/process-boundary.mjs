@@ -51,6 +51,13 @@ function zoneOf(file) {
   return null
 }
 
+function isAsset(file, source) {
+  if (!source.startsWith('.')) return false
+  const root = file.slice(0, file.lastIndexOf(`${path.sep}src${path.sep}`))
+  const target = path.resolve(path.dirname(file), source)
+  return target.startsWith(path.join(root, 'resources') + path.sep)
+}
+
 export default {
   meta: {
     type: 'problem',
@@ -67,7 +74,7 @@ export default {
       unsupportedImportMeta:
         'Only a statically named import.meta.resolve call is allowed. Other import.meta calls can hide module loading from the process boundary.',
       outsideSrc:
-        'This path leaves the process folders of src/, so the process boundary cannot be checked. Import a package by name, or a file inside src/main, src/preload, src/renderer or src/shared.',
+        'This path leaves the process folders of src/, so the process boundary cannot be checked. Import a package by name, a file inside src/main, src/preload, src/renderer or src/shared, or an asset in resources/.',
       hiddenLoader:
         '{{name}} loads modules where the process boundary cannot see them. Use a static import.',
       noZone:
@@ -114,6 +121,7 @@ export default {
         return
       }
       if (!target) {
+        if (isAsset(context.filename, source)) return
         context.report({ node, messageId: 'outsideSrc' })
         return
       }
