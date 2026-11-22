@@ -352,6 +352,7 @@ try {
     await draftSubject.fill('First edit in old account')
     await page.waitForFunction(() => typeof window.__releaseOldDraftSave === 'function')
     await draftSubject.fill('Private pending edit in old account')
+    // Closing while still signed in queues the edit behind the held save.
     await page.getByRole('complementary', { name: 'Inbox' }).getByText(/^Old account \d+$/).first().click()
     await draftSubject.waitFor({ state: 'detached' })
     await signOut.click()
@@ -1209,7 +1210,7 @@ try {
     const acceptEditor = page.waitForEvent('dialog').then((d) => d.accept())
     // Scoped to the pane: the live row behind this editor also renders a
     // "delete draft" button in the list.
-    await content.getByRole('button', { name: 'delete draft' }).dispatchEvent('click')
+    await content.getByRole('button', { name: 'delete draft' }).click()
     await acceptEditor
     await content
       .getByRole('heading', { name: 'Draft', exact: true })
