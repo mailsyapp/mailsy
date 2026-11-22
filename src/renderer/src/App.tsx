@@ -40,13 +40,6 @@ function formatFetchError(e: unknown): string {
   return message
 }
 
-// First-page loads share one fetch pipeline. 'load' is a folder switch or
-// the initial mount and replaces the list; 'manual' is the Refresh button
-// and 'sync' is a pushed reset fold, which both fold the page in through
-// mergeIncoming instead. Sync is the only mode that yields to an in-flight
-// fetch (its result is disposable) and the only one that keeps the status
-// state quiet; manual supersedes in-flight work through the shared
-// request id.
 type FirstPageMode = 'load' | 'manual' | 'sync'
 
 function App(): React.JSX.Element {
@@ -117,6 +110,7 @@ function App(): React.JSX.Element {
   const nextPageTokenRef = useRef<string | null | undefined>(undefined)
   const loadedPagesRef = useRef(0)
   const invalidCursorRef = useRef<symbol | null>(null)
+  const listedThreadsRef = useRef<ThreadSummary[]>([])
 
   // The sync mirrors above are read by the IntersectionObserver before any
   // state has committed, so every write pairs the state with its ref. One
@@ -596,6 +590,9 @@ function App(): React.JSX.Element {
     setLoadingMore(true)
     const loadPages = async (): Promise<void> => {
       const invalidCursor = invalidCursorRef.current
+      const skipRowIds = invalidCursor
+        ? listedThreadsRef.current.map((row) => row.draftId ?? row.id)
+        : undefined
       const previousDepth = loadedPagesRef.current
       let depth = invalidCursor ? 0 : previousDepth
       let pageToken: string | null | undefined = invalidCursor ? undefined : continuation
@@ -604,6 +601,7 @@ function App(): React.JSX.Element {
         const page = await window.api.listFolder({
           maxResults: committedQuery ? SEARCH_PAGE_SIZE : LIST_PAGE_SIZE,
           pageToken,
+          ...(skipRowIds ? { skipRowIds } : {}),
           folder: activeFolder,
           ...(activeLabel ? { userLabelId: activeLabel.id } : {}),
           ...(committedQuery ? { q: committedQuery } : {})
@@ -614,14 +612,10 @@ function App(): React.JSX.Element {
         depth++
       } while (pageToken !== null && depth <= previousDepth)
       const rows = [...incoming.values()]
-      if (invalidCursor) {
-        setThreads((prev) => mergeIncoming(prev, rows, true, null))
-      } else {
-        setThreads((prev) => {
-          const seen = new Set(prev.map(listRowKey))
-          return [...prev, ...rows.filter((row) => !seen.has(listRowKey(row)))]
-        })
-      }
+      setThreads((prev) => {
+        const seen = new Set(prev.map(listRowKey))
+        return [...prev, ...rows.filter((row) => !seen.has(listRowKey(row)))]
+      })
       setPageToken(pageToken, depth)
     }
     void loadPages()
@@ -765,6 +759,7 @@ function App(): React.JSX.Element {
   useEffect(() => {
     syncResultHandlerRef.current = handleSyncResult
     signedInRef.current = signedIn
+    listedThreadsRef.current = threads
   })
 
   useEffect(() => {

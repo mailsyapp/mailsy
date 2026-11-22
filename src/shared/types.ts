@@ -94,6 +94,7 @@ export interface ThreadSummary {
 export interface ListFolderOptions {
   maxResults?: number
   pageToken?: string | null
+  skipRowIds?: string[]
   q?: string
   folder?: MailFolder
   // A user-label view lists through its label id instead of a folder's

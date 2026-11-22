@@ -513,7 +513,10 @@
   function pageSlice(rows, options) {
     const start = options.pageToken ? parseInt(options.pageToken, 10) || 0 : 0
     const size = options.maxResults || PAGE_SIZE
-    const slice = rows.slice(start, start + size)
+    const skip = new Set(options.skipRowIds)
+    const slice = rows
+      .slice(start, start + size)
+      .filter((row) => !skip.has(options.folder === 'drafts' ? row.draftId : row.id))
     return {
       threads: slice,
       nextPageToken: start + size < rows.length ? String(start + size) : null

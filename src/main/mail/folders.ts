@@ -83,7 +83,10 @@ async function fetchDrafts(
       ...(q ? { q } : {})
     })
   )
-  const drafts = (list.data.drafts ?? []).flatMap((d) => (d.id ? [{ id: d.id }] : []))
+  const skip = new Set(options.skipRowIds)
+  const drafts = (list.data.drafts ?? []).flatMap((d) =>
+    d.id && !skip.has(d.id) ? [{ id: d.id }] : []
+  )
 
   async function fetchDraftMessage(id: string): Promise<ThreadSummary | null> {
     const full = await withQuotaRetry(() =>
@@ -166,9 +169,10 @@ async function fetchSnoozed(
     (emulated?.data.threads ?? []).map((thread) => thread.id ?? '').filter((id) => id.trim())
   ]
   const ids = [...new Set(idSets[0].concat(idSets[1]))]
+  const skip = new Set(options.skipRowIds)
 
   const threads = await mapWithConcurrency(
-    ids,
+    ids.filter((id) => !skip.has(id)),
     DETAIL_CONCURRENCY,
     async (id): Promise<ThreadSummary> => {
       const thread = await withQuotaRetry(() =>
@@ -223,7 +227,8 @@ export async function fetchFolder(options: ListFolderOptions = {}): Promise<Thre
       ...(labelIds.length > 0 ? { labelIds } : {})
     })
   )
-  const ids = (list.data.threads ?? []).flatMap((t) => (t.id ? [t.id] : []))
+  const skip = new Set(options.skipRowIds)
+  const ids = (list.data.threads ?? []).flatMap((t) => (t.id && !skip.has(t.id) ? [t.id] : []))
 
   const threads = await mapWithConcurrency(
     ids,

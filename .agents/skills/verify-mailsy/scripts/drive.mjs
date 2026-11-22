@@ -2308,7 +2308,7 @@ try {
       const listFolder = window.api.listFolder
       window.__paginationRequests = []
       window.api.listFolder = async (options) => {
-        window.__paginationRequests.push(options.pageToken)
+        window.__paginationRequests.push(options)
         const result = await listFolder(options)
         if (window.__paginationRequests.length === 1) {
           await new Promise((resolve) => { window.__releasePage = resolve })
@@ -2369,6 +2369,16 @@ try {
 
     await page.getByRole('button', { name: 'Drafts', exact: true }).click()
     const drafts = page.getByRole('complementary', { name: 'Drafts', exact: true })
+    const replay = await page.evaluate(() => window.__paginationRequests.slice(2))
+    assert(
+      replay.length === 3 &&
+        replay[0].pageToken === undefined &&
+        replay[1].pageToken === '30' &&
+        replay[2].pageToken === '60' &&
+        replay.every((request) => request.skipRowIds?.length === firstPageSize * 2 - 1),
+      'replay starts at page one and skips metadata for all still-visible rows',
+      'the continuation was not rebuilt or already-visible rows would be fetched again'
+    )
     await drafts.getByText('Draft: Q4 planning notes', { exact: true }).waitFor({ timeout: 5000 })
     const draftFill = firstPageSize - (await drafts.getByRole('listitem').count()) - 1
     await page.evaluate(async (count) => {
