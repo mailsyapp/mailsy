@@ -110,3 +110,16 @@ test('the comment autofix does not join the operators around a comment', async (
   )
   assert.match(output, /a \+ \+b/)
 })
+
+test('the comment autofix keeps the line break a multi-line comment provided', async () => {
+  const output = await fixed('src/shared/probe.js', 'let a = 1 /* one\ntwo */ a++\nexport { a }\n')
+  assert.match(output, /^let a = 1\n\s*a\+\+\n/)
+})
+
+test('the comment autofix leaves the JSX text around a comment untouched', async () => {
+  const output = await fixed(
+    'src/renderer/src/components/probe.jsx',
+    'export const probe = (\n  <p>\n    hello {/* note */}world{/* note */}again\n  </p>\n)\n'
+  )
+  assert.match(output, /hello worldagain/)
+})

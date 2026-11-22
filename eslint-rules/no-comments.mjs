@@ -20,6 +20,7 @@ export default {
 
     function removalRange(comment) {
       let [start, end] = comment.range
+      let inJsx = false
       const before = source.getTokenBefore(comment, { includeComments: true })
       const after = source.getTokenAfter(comment, { includeComments: true })
       if (
@@ -31,6 +32,7 @@ export default {
       ) {
         start = before.range[0]
         end = after.range[1]
+        inJsx = true
       }
       let lineStart = start
       while (lineStart > 0 && (text[lineStart - 1] === ' ' || text[lineStart - 1] === '\t')) {
@@ -41,10 +43,10 @@ export default {
       const ownsLine =
         (lineStart === 0 || text[lineStart - 1] === '\n') &&
         (lineEnd === text.length || text[lineEnd] === '\n' || text[lineEnd] === '\r')
-      if (!ownsLine) return [lineStart === start ? start : lineStart, end]
+      if (!ownsLine) return { range: [inJsx ? start : lineStart, end], inJsx }
       if (text[lineEnd] === '\r') lineEnd++
       if (text[lineEnd] === '\n') lineEnd++
-      return [lineStart, lineEnd]
+      return { range: [lineStart, lineEnd], inJsx }
     }
 
     return {
@@ -57,10 +59,15 @@ export default {
             loc: comment.loc,
             messageId: isDisable ? 'disable' : 'banned',
             fix: (fixer) => {
-              const [start, end] = removalRange(comment)
+              const { range, inJsx } = removalRange(comment)
+              const [start, end] = range
+              if (inJsx) return fixer.removeRange(range)
               const joinsTokens =
                 TOKEN_END.test(text[start - 1] ?? '') && TOKEN_START.test(text[end] ?? '')
-              return fixer.replaceTextRange([start, end], joinsTokens ? ' ' : '')
+              const endedTheLine =
+                comment.value.includes('\n') && end < text.length && text[end - 1] !== '\n'
+              const separator = endedTheLine ? '\n' : joinsTokens ? ' ' : ''
+              return fixer.replaceTextRange([start, end], separator)
             }
           })
         }
