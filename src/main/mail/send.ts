@@ -162,6 +162,7 @@ export async function saveDraft(request: SaveDraftRequest): Promise<DraftVersion
           return gmail.users.drafts.update({ userId: 'me', id: draftId, requestBody })
         }
         if (copyOnConflict !== true) throw draftConflict()
+        return gmail.users.drafts.create({ userId: 'me', requestBody: { message: { raw } } })
       }
       return gmail.users.drafts.create({ userId: 'me', requestBody })
     }, session)

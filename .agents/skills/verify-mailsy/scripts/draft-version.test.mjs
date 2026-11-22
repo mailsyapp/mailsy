@@ -86,6 +86,7 @@ test('unmount recovery creates a separate draft only on a version conflict', asy
   assert.deepEqual(await saveDraft(edited), { draftId: 'draft-local-copy', messageId: 'msg-copy' })
   assert.equal(fixture.messageId, 'msg-remote')
   assert.deepEqual(fixture.calls.map(([verb]) => verb), ['create'])
+  assert.equal(fixture.calls[0][1].requestBody.message.threadId, undefined)
   assert.match(
     Buffer.from(fixture.calls[0][1].requestBody.message.raw, 'base64url').toString(),
     /Edited locally/

@@ -40,7 +40,8 @@ export interface DraftAutosave {
 export function useDraftAutosave(
   fields: AutosaveFields,
   initialDraft: DraftVersion | undefined,
-  enabled: boolean
+  enabled: boolean,
+  hasEdits = true
 ): DraftAutosave {
   const [status, setStatus] = useState<DraftAutosave['status']>('idle')
   const [error, setError] = useState<string | null>(null)
@@ -111,7 +112,11 @@ export function useDraftAutosave(
 
   useEffect(() => {
     fieldsRef.current = fields
-    enabledRef.current = enabled
+    enabledRef.current = enabled && hasEdits
+    if (!hasEdits) {
+      lastSavedRef.current = fieldsJson
+      return
+    }
     if (!enabled || retiredRef.current) return
     // fieldsJson is the debounce key: field-object identity flips every
     // render, but its content is what distinguishes a fresh edit from a
@@ -131,7 +136,7 @@ export function useDraftAutosave(
       timerRef.current = null
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fieldsJson, enabled, save])
+  }, [fieldsJson, enabled, hasEdits, save])
 
   // True unmount only: the accidental-close path (row click, folder
   // switch) flushes fields still inside the debounce window, because that

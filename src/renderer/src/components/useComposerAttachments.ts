@@ -31,6 +31,7 @@ export interface ComposerAttachments {
   field: Pick<SendEmailRequest, 'attachments'>
   error: string | null
   ready: boolean
+  edited: boolean
   picking: boolean
   // True while a file drag hovers anywhere over the composer box, for the
   // dashed affordance CSS styles on `.composer-dragging`.
@@ -82,6 +83,7 @@ export function useComposerAttachments(
   const [error, setError] = useState<string | null>(null)
   const [picking, setPicking] = useState(false)
   const [ready, setReady] = useState(!prefill || prefill.refs.length === 0)
+  const [edited, setEdited] = useState(false)
   const [dropping, setDropping] = useState(false)
   // Nesting depth of the drag over this composer; zero means no drag is
   // hovering, and the counter beats per-element leave events that fire
@@ -128,6 +130,7 @@ export function useComposerAttachments(
         return
       }
       setAttachments((prev) => [...prev, ...incoming])
+      setEdited(true)
     },
     [attachments]
   )
@@ -206,6 +209,7 @@ export function useComposerAttachments(
 
   const remove = useCallback((index: number) => {
     setAttachments((prev) => prev.filter((_, i) => i !== index))
+    setEdited(true)
   }, [])
 
   const clear = useCallback(() => {
@@ -220,6 +224,7 @@ export function useComposerAttachments(
     field,
     error,
     ready,
+    edited,
     picking,
     dropping,
     drop,

@@ -956,6 +956,44 @@ try {
     assert(leftover === 0, 'refetched Drafts no longer shows the sent draft', 'draft reappeared after refetch')
     await snapshot(page, 'drafts')
 
+    const uneditedSubject = 'Untouched attachment draft'
+    const uneditedDraftId = await page.evaluate(async (subject) => {
+      const api = window.__packagedFixtureApi ?? window.api
+      const { draftId } = await api.saveDraft({
+        to: 'reader@example.com',
+        subject,
+        body: 'No edits in this editor',
+        attachments: [{ filename: 'preloaded.txt', size: 3, data: 'dHh0' }]
+      })
+      return draftId
+    }, uneditedSubject)
+    await page.evaluate(() => window.__pushSync({ kind: 'reset' }))
+    await drafts.getByText(uneditedSubject, { exact: true }).click()
+    await content.getByRole('button', { name: 'Remove preloaded.txt' }).waitFor({ timeout: 5000 })
+    const logCount = await page.evaluate(async (draftId) => {
+      const api = window.__packagedFixtureApi ?? window.api
+      await api.saveDraft({
+        draftId, to: 'reader@example.com', subject: 'Remote revision', body: 'Remote text',
+        attachments: [{ filename: 'preloaded.txt', size: 3, data: 'dHh0' }]
+      })
+      return window.__draftSaves.length
+    }, uneditedDraftId)
+    await page.getByRole('button', { name: 'Inbox', exact: true }).click()
+    await page.getByRole('button', { name: 'Drafts', exact: true }).click()
+    await drafts.getByText('Remote revision', { exact: true }).waitFor({ timeout: 5000 })
+    assert(
+      (await page.evaluate(() => window.__draftSaves.length)) === logCount,
+      'loading an untouched draft attachment does not save or create a conflict copy',
+      'attachment prefill was mistaken for an edit and saved a stale draft copy'
+    )
+    await drafts.getByText('Remote revision', { exact: true }).click()
+    await content.getByRole('button', { name: 'Remove preloaded.txt' }).click()
+    await page.waitForFunction((draftId) => {
+      const saved = window.__draftSaves.at(-1)
+      return saved?.draftId === draftId && saved.attachments === undefined
+    }, uneditedDraftId)
+    log('pass: manually removing the attachment is an edit and autosaves')
+
     const draftSearch = page.getByRole('searchbox', { name: 'Search emails' })
     await draftSearch.fill('Q4 attachments')
     await draftSearch.press('Enter')

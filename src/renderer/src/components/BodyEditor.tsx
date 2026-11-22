@@ -34,7 +34,7 @@ type BodyEditorProps = {
   // The rich content the box starts with (prefilled drafts, reply quotes).
   initialHtml: string
   placeholder?: string
-  onChange: (content: { html: string; text: string }) => void
+  onChange: (content: { html: string; text: string }, source: 'edit' | 'prefill') => void
   // Files dropped or pasted here that are not images never stay in the
   // editor: the callback forwards them to the composer's chip routing.
   onNonImageFiles: (files: File[]) => void
@@ -72,7 +72,7 @@ function isVisuallyEmpty(editor: HTMLDivElement): boolean {
 function reportLater(editor: HTMLDivElement, onChange: BodyEditorProps['onChange']): void {
   setTimeout(() => {
     editor.toggleAttribute('data-empty', isVisuallyEmpty(editor))
-    onChange(readContent(editor))
+    onChange(readContent(editor), 'edit')
   }, 0)
 }
 
@@ -276,7 +276,7 @@ function eatAheadUnit(editor: HTMLDivElement, selection: Selection): boolean {
 // placeholder would linger over a box that now holds an image.
 function reportNow(editor: HTMLDivElement, onChange: BodyEditorProps['onChange']): void {
   editor.toggleAttribute('data-empty', isVisuallyEmpty(editor))
-  onChange(readContent(editor))
+  onChange(readContent(editor), 'edit')
 }
 
 function insertDataUrlAtCaret(editor: HTMLDivElement, dataUrl: string): void {
@@ -393,9 +393,7 @@ export const BodyEditor = forwardRef<BodyEditorHandle, BodyEditorProps>(function
     // Backspace keydown: when the engine no-ops at all it may never report
     // a beforeinput to veto, and keydown is the one hook that always sees
     // the keystroke before it.
-    // The initial content counts as the first input: the composers' state
-    // starts in sync with what the box shows.
-    onChange(readContent(editor))
+    onChange(readContent(editor), 'prefill')
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 

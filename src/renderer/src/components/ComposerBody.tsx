@@ -22,7 +22,7 @@ export interface ComposerBodyHandle {
 type ComposerBodyProps = {
   attach: ComposerAttachments
   // Reports the box in its two forms (the html and the plain-text twin).
-  onBodyChange: (body: { html: string; text: string }) => void
+  onBodyChange: (body: { html: string; text: string }, source: 'edit' | 'prefill') => void
   // The rich prefill: a stored draft's html, or a reply/forward quote.
   initialHtml?: string
   // Optional remount key for a fresh editor on a prefill identity change —
@@ -58,9 +58,9 @@ export const ComposerBody = forwardRef<ComposerBodyHandle, ComposerBodyProps>(fu
   // synchronous, reportLater's timer fires with the final DOM in place),
   // then the composer's own state update proceeds unchanged.
   const handleBodyChange = useCallback(
-    (content: { html: string; text: string }) => {
+    (content: { html: string; text: string }, source: 'edit' | 'prefill') => {
       setSignaturePresent(editorRef.current?.hasSignatureBlock() ?? false)
-      onBodyChange(content)
+      onBodyChange(content, source)
     },
     [onBodyChange]
   )

@@ -66,6 +66,7 @@ function DraftForm({
   const [sendError, setSendError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [sent, setSent] = useState(false)
+  const [edited, setEdited] = useState(false)
   // The draft's stored files resolve back into composer state before the
   // first autosave fires: drafts.update replaces the whole raw message, so
   // writing without the data would strip them off the draft. `ready` gates
@@ -97,7 +98,8 @@ function DraftForm({
   const autosave = useDraftAutosave(
     request,
     draftId ? { draftId, messageId: detail.id } : undefined,
-    draftId !== undefined && attach.ready
+    draftId !== undefined && attach.ready,
+    edited || attach.edited
   )
 
   async function handleSend(event: React.FormEvent<HTMLFormElement>): Promise<void> {
@@ -153,19 +155,31 @@ function DraftForm({
         to={recipients.to}
         cc={recipients.cc}
         bcc={recipients.bcc}
-        onChange={(patch) => setRecipients({ ...recipients, ...patch })}
+        onChange={(patch) => {
+          setEdited(true)
+          setRecipients({ ...recipients, ...patch })
+        }}
       />
 
       <label className="composerField">
         <span>Subject</span>
-        <input value={subject} onChange={(event) => setSubject(event.target.value)} />
+        <input
+          value={subject}
+          onChange={(event) => {
+            setEdited(true)
+            setSubject(event.target.value)
+          }}
+        />
       </label>
 
       <ComposerBody
         ref={bodyRef}
         attach={attach}
         initialHtml={initialHtml}
-        onBodyChange={setBody}
+        onBodyChange={(value, source) => {
+          if (source === 'edit') setEdited(true)
+          setBody(value)
+        }}
       />
 
       {sendError && <p role="alert">{sendError}</p>}

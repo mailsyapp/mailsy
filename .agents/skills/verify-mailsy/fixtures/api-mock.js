@@ -783,7 +783,7 @@
         const id = `msg-${draftId}`
         const message = {
           id,
-          threadId: request.threadId || id,
+          threadId: (!conflict && request.threadId) || id,
           from: 'me@example.com',
           subject: request.subject,
           date: new Date().toUTCString(),
