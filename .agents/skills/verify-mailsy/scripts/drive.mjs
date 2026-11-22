@@ -340,6 +340,158 @@ try {
       'fresh send was misshapen as a reply or draft'
     )
     await snapshot(page, 'compose-new')
+  } else if (FEATURE === 'forward-attachments') {
+    const content = page.getByRole('region', { name: 'Email content' })
+    const form = content.locator('form.composer')
+    const send = form.getByRole('button', { name: 'Send', exact: true })
+    for (const scenario of [
+      'all',
+      'remove',
+      'retry',
+      'remove-failed',
+      'switch',
+      'reply',
+      'reply-all'
+    ]) {
+      if (scenario !== 'all') await page.reload()
+      await page.getByText('Launch checklist', { exact: true }).first().waitFor()
+      await page.evaluate((scenario) => {
+        const getAttachment = window.api.getAttachment
+        window.__forwardMode = ['retry', 'remove-failed'].includes(scenario)
+          ? 'fail'
+          : scenario === 'switch'
+            ? 'hold'
+            : 'ok'
+        window.__forwardExpected = {}
+        window.api.getAttachment = async (messageId, attachmentId) => {
+          const data = await getAttachment(messageId, attachmentId)
+          if (messageId === 'msg-receipts-1') window.__forwardExpected[attachmentId] = data
+          if (attachmentId === 'att-receipts-1') {
+            if (window.__forwardMode === 'fail') throw new Error('Fixture original unavailable')
+            if (window.__forwardMode === 'hold') {
+              await new Promise((resolve) => {
+                window.__releaseForward = resolve
+              })
+              window.__forwardReleased = true
+            }
+          }
+          return data
+        }
+      }, scenario)
+      await page
+        .getByRole('complementary', { name: 'Inbox' })
+        .getByRole('button', { name: /^Receipts for March travel/ })
+        .click()
+      const action =
+        scenario === 'reply' ? 'reply' : scenario === 'reply-all' ? 'reply all' : 'forward'
+      await content.getByRole('button', { name: action, exact: true }).click()
+      if (action === 'forward')
+        await form.getByLabel('To', { exact: true }).fill('forward@example.com')
+      if (scenario === 'remove') {
+        await form.getByRole('button', { name: 'Remove receipt-b.pdf', exact: true }).click()
+      } else if (scenario === 'retry' || scenario === 'remove-failed') {
+        await form.getByRole('alert').filter({ hasText: 'Could not load: receipt-a.pdf' }).waitFor()
+        assert(
+          await send.isDisabled(),
+          'a failed forward original blocks Send',
+          'a failed forward original allowed Send'
+        )
+        await form.evaluate((element) => element.requestSubmit())
+        assert(
+          await page.evaluate(() => window.__sent.length === 0),
+          'submit cannot omit a failed forward original',
+          'submit bypassed the failed-original protection'
+        )
+        await snapshot(page, `forward-attachments-${scenario}-failed`)
+        if (scenario === 'retry') {
+          await page.evaluate(() => {
+            window.__forwardMode = 'hold'
+          })
+          await form.getByRole('button', { name: 'Retry receipt-a.pdf', exact: true }).click()
+          await page.waitForFunction(() => typeof window.__releaseForward === 'function')
+          assert(
+            (await send.isDisabled()) &&
+              (await form.getByRole('button', { name: 'Attach files', exact: true }).isDisabled()),
+            'Retry loading blocks Send and picking',
+            'Retry loading allowed Send or picking'
+          )
+          await snapshot(page, 'forward-attachments-retrying')
+          await page.evaluate(() => window.__releaseForward())
+          await form
+            .getByRole('button', { name: 'Retry receipt-a.pdf', exact: true })
+            .waitFor({ state: 'detached' })
+        } else {
+          await form.getByRole('button', { name: 'Remove receipt-a.pdf', exact: true }).click()
+        }
+        assert(
+          (await form.getByRole('alert').count()) === 0,
+          'resolving the failed original clears its error',
+          'the resolved original retained an error'
+        )
+      } else if (scenario === 'switch') {
+        await page.waitForFunction(() => typeof window.__releaseForward === 'function')
+        assert(
+          await send.isDisabled(),
+          'loading forward originals blocks Send',
+          'pending forward originals allowed Send'
+        )
+        await content.getByRole('button', { name: 'reply', exact: true }).click()
+        await page.evaluate(() => window.__releaseForward())
+        await page.waitForFunction(() => window.__forwardReleased === true)
+        assert(
+          (await form.locator('.attachmentChip').count()) === 0 && (await send.isEnabled()),
+          'switching to reply discards a pending forward attachment set',
+          'late forward originals leaked into reply'
+        )
+      }
+      const chipNames = await form.locator('.attachmentChip').allTextContents()
+      await snapshot(page, `forward-attachments-${scenario}-ready`)
+      await send.click()
+      await content.getByText('Message sent.', { exact: true }).waitFor()
+      const expectedNames =
+        scenario === 'remove'
+          ? ['receipt-a.pdf', 'cal-shot.png']
+          : scenario === 'remove-failed'
+            ? ['receipt-b.pdf', 'cal-shot.png']
+            : ['reply', 'reply-all', 'switch'].includes(scenario)
+              ? []
+              : ['receipt-a.pdf', 'receipt-b.pdf', 'cal-shot.png']
+      assert(
+        (await page.evaluate((names) => {
+          const files = window.__sent[0]?.attachments ?? []
+          const ids = {
+            'receipt-a.pdf': 'att-receipts-1',
+            'receipt-b.pdf': 'att-receipts-2',
+            'cal-shot.png': 'att-receipts-img'
+          }
+          return (
+            window.__sent.length === 1 &&
+            files.length === names.length &&
+            names.every((name) =>
+              files.some(
+                (file) =>
+                  file.filename === name && file.data === window.__forwardExpected[ids[name]]
+              )
+            )
+          )
+        }, expectedNames)) && chipNames.length === expectedNames.length,
+        `${scenario}: removable chips and sent bytes match ${expectedNames.length} originals`,
+        `${scenario}: forward/reply attachment chips or sent bytes do not match ${expectedNames.length} originals`
+      )
+      if (action === 'forward' && scenario !== 'switch') {
+        assert(
+          await page.evaluate(
+            () =>
+              window.__sent[0].bodyHtml?.includes('Forwarded message') &&
+              window.__sent[0].bodyHtml?.includes(
+                '<p>Two receipts attached from the March travel batch.</p>'
+              )
+          ),
+          'forwarded quoted HTML is preserved',
+          'forwarding changed or dropped the quoted HTML'
+        )
+      }
+    }
   } else if (FEATURE === 'draft-attachments-safe') {
     const content = page.getByRole('region', { name: 'Email content' })
     const send = content.getByRole('button', { name: 'Send', exact: true })
