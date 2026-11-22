@@ -13,7 +13,7 @@ const EFFECT_NAMES =
   'useEffect|useLayoutEffect|useInsertionEffect|useSyncExternalStore|componentDidMount|componentDidUpdate|componentWillUnmount|getSnapshotBeforeUpdate|componentDidCatch'
 
 const OBSERVER_MESSAGE =
-  'Observers are subscriptions that need a disconnect on unmount, so they are banned outside src/renderer/src/hooks. Use useIntersection, or add a named hook and list it in APPROVED_HOOKS in eslint.config.mjs.'
+  'Observers, workers and open channels are subscriptions that need a teardown on unmount, so they are banned outside src/renderer/src/hooks. Use useIntersection, or add a named hook and list it in APPROVED_HOOKS in eslint.config.mjs.'
 
 const RAW_BRIDGE_MESSAGE =
   "window.electron is the raw Electron bridge and bypasses the IPC contract. Add the call to src/preload/index.ts and use it through 'window.api'."
@@ -33,6 +33,31 @@ const APPROVED_HOOKS = [
 
 const TIMER_NAMES =
   'setTimeout|setInterval|setImmediate|requestAnimationFrame|requestIdleCallback|requestVideoFrameCallback|queueMicrotask|MessageChannel|postTask'
+
+const SHARED_MESSAGE =
+  'src/shared is loaded by every process, so it can only hold types and pure functions. Take this value as a parameter from the process that owns it.'
+
+const IMPURE_GLOBALS = [
+  'window',
+  'document',
+  'navigator',
+  'localStorage',
+  'sessionStorage',
+  'process',
+  'require',
+  'module',
+  '__dirname',
+  '__filename',
+  'Buffer',
+  'globalThis',
+  'self',
+  'global',
+  'fetch',
+  ...TIMER_NAMES.split('|')
+]
+
+const COMPUTED_GLOBAL_MESSAGE =
+  'A computed property on window hides which global is used, so the effect, timer and bridge bans cannot check it. Name the property.'
 
 const TIMER_MESSAGE =
   'Imperative timers are banned outside src/renderer/src/hooks. A timer that waits for React to render or the DOM to settle is hiding a state problem: move the work to the event handler or derive it from state. For real delays use useTimers, useInterval, useSettledValue (debounce), or useAfterCurrentTask (macrotask boundary); they cancel on unmount.'
@@ -70,6 +95,15 @@ export default defineConfig(
       'no-new-func': 'error',
       'mailsy/no-comments': 'error',
       'mailsy/process-boundary': 'error'
+    }
+  },
+  {
+    files: ['src/shared/**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}'],
+    rules: {
+      'no-restricted-globals': [
+        'error',
+        ...IMPURE_GLOBALS.map((name) => ({ name, message: SHARED_MESSAGE }))
+      ]
     }
   },
   {
@@ -120,7 +154,18 @@ export default defineConfig(
           message: TIMER_MESSAGE
         },
         {
-          selector: 'Identifier[name=/^(Intersection|Mutation|Resize|Performance)Observer$/]',
+          selector:
+            'MemberExpression[computed=true][object.name=/^(window|globalThis|self)$/]:not([property.type="Literal"]):not([property.type="TemplateLiteral"][property.expressions.length=0])',
+          message: COMPUTED_GLOBAL_MESSAGE
+        },
+        {
+          selector:
+            'MemberExpression[object.name=/^(window|globalThis|self)$/] > :matches(Identifier.property[name=/^(Function|eval)$/], Literal.property[value=/^(Function|eval)$/])',
+          message: TIMER_MESSAGE
+        },
+        {
+          selector:
+            'Identifier[name=/^((Intersection|Mutation|Resize|Performance)Observer|Worker|SharedWorker|BroadcastChannel|EventSource|WebSocket)$/]',
           message: OBSERVER_MESSAGE
         },
         {

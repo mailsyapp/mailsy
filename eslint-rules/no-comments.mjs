@@ -1,4 +1,4 @@
-const ALLOWED = /^\/\s*<reference\s/
+const ALLOWED = /^\/\s*<reference\s+types=/
 const DIRECTIVES = /^use (strict|client)$/
 const TOKEN_END = /[^\s([{]/
 const TOKEN_START = /[^\s)\]},;]/
@@ -52,6 +52,8 @@ export default {
       return { range: [lineStart, lineEnd], inJsx }
     }
 
+    const isDeclarationFile = /\.d\.[cm]?ts$/.test(context.filename)
+
     return {
       ExpressionStatement(node) {
         const expression =
@@ -67,7 +69,7 @@ export default {
       Program() {
         for (const comment of source.getAllComments()) {
           if (comment.type === 'Shebang') continue
-          if (comment.type === 'Line' && ALLOWED.test(comment.value)) continue
+          if (isDeclarationFile && comment.type === 'Line' && ALLOWED.test(comment.value)) continue
           const isDisable = /^\s*eslint-(disable|enable)/.test(comment.value)
           context.report({
             loc: comment.loc,
