@@ -2374,8 +2374,9 @@ try {
     assert(
       await autoBody.evaluate((editor) =>
         editor.childNodes.length === 2 &&
-        editor.firstChild.nodeType === Node.TEXT_NODE &&
+        editor.firstChild.nodeName === 'DIV' &&
         editor.firstChild.textContent === 'A continuous sentence.' &&
+        !editor.firstChild.querySelector('div, p, br') &&
         editor.lastChild.matches('.mailsy-signature')
       ),
       'continuing bare body text after signature insertion adds no DIV or BR to the sentence',
@@ -2383,10 +2384,12 @@ try {
     )
     await snapshot(page, 'signature-bare-text')
     await toggle.click()
-    await autoBody.fill('Inline sentence')
-    await autoBody.press('Control+a')
-    await autoBody.press('Control+b')
-    await autoBody.press('Control+End')
+    await autoBody.evaluate((editor) => {
+      const inline = document.createElement('strong')
+      inline.textContent = 'Inline sentence'
+      editor.replaceChildren(inline)
+      editor.dispatchEvent(new InputEvent('input', { bubbles: true }))
+    })
     assert(
       await autoBody.evaluate((editor) =>
         editor.childNodes.length === 1 &&
@@ -2402,13 +2405,52 @@ try {
       await autoBody.evaluate((editor) => {
         const body = editor.cloneNode(true)
         body.querySelector('.mailsy-signature').remove()
-        return body.textContent === 'Inline sentence continues.' && !body.querySelector('div, p, br')
+        return body.textContent === 'Inline sentence continues.' &&
+          body.children.length === 1 && body.firstElementChild.tagName === 'DIV' &&
+          !body.firstElementChild.querySelector('div, p, br')
       }),
       'continuing inline body content after signature insertion adds no line break',
       'signature insertion split inline body content across lines or entered the signature'
     )
     await snapshot(page, 'signature-inline-text')
     await toggle.click()
+    for (const enters of [1, 2]) {
+      await autoBody.evaluate((editor) => {
+        editor.replaceChildren(document.createTextNode('Line start'))
+        editor.dispatchEvent(new InputEvent('input', { bubbles: true }))
+      })
+      await autoBody.press('Control+End')
+      for (let i = 0; i < enters; i++) await autoBody.press('Enter')
+      await toggle.click()
+      await autoBody.pressSequentially('Line continuation.')
+      await toggle.click()
+      const text = (await bodyTextOf(autoBody)).trimEnd()
+      assert(
+        text === `Line start${'\n'.repeat(enters)}Line continuation.`,
+        `${enters} Enter(s) before signature insertion preserves typed text on the new line`,
+        `${enters} Enter(s) misplaced or deleted text after signature removal: ${JSON.stringify(text)}`
+      )
+      await snapshot(page, `signature-enter-${enters}`)
+    }
+    for (const breaks of [1, 2]) {
+      await autoBody.evaluate((editor, count) => {
+        const inline = document.createElement('strong')
+        inline.append(document.createTextNode('Inline line'))
+        for (let i = 0; i < count; i++) inline.append(document.createElement('br'))
+        editor.replaceChildren(inline)
+        editor.dispatchEvent(new InputEvent('input', { bubbles: true }))
+      }, breaks)
+      await toggle.click()
+      await autoBody.pressSequentially('Inline continuation.')
+      await toggle.click()
+      const text = (await bodyTextOf(autoBody)).trimEnd()
+      assert(
+        text === 'Inline line\nInline continuation.',
+        `inline content ending in ${breaks} BR(s) keeps continuation outside the removed signature`,
+        `inline trailing BR(s) misplaced or deleted continuation: ${JSON.stringify(text)}`
+      )
+      await snapshot(page, `signature-inline-break-${breaks}`)
+    }
     await autoBody.fill('')
     await autoBody.evaluate((editor) => {
       const bytes = Uint8Array.from(
