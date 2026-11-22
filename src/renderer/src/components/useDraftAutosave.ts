@@ -72,44 +72,47 @@ export function useDraftAutosave(
 
   // Resolves whether the write failed or not: flushPending is a
   // synchronization point for send, not a retry surface.
-  const save = useCallback((copyOnConflict = false): Promise<void> => {
-    const prior = pendingSaveRef.current ?? Promise.resolve()
-    const run = prior
-      .then(() => {
-        // Retired (send consumed the draft, Cancel discarded it) or
-        // suspended (a send holds the bridge) means the queued write folds
-        // into whatever the terminal action decided.
-        if (sessionSignal.aborted || retiredRef.current || suspendedRef.current) return
-        // Serialized once at dispatch: the content compare keeps a duplicate
-        // write away, and the same string records what was written below.
-        const written = JSON.stringify(fieldsRef.current)
-        if (written === lastSavedRef.current) return
-        const target = draftRef.current
-        return window.api
-          .saveDraft({
-            ...fieldsRef.current,
-            ...(target ? { draftId: target.draftId, expectedMessageId: target.messageId } : {}),
-            ...(copyOnConflict ? { copyOnConflict } : {})
-          })
-          .then((draft) => {
-            draftRef.current = draft
-            lastSavedRef.current = written
-            setStatus('saved')
-            setError(null)
-          })
-      })
-      .catch((e: unknown) => {
-        setStatus('idle')
-        setError(errorMessage(e))
-      })
-      .finally(() => {
-        // A newer save owns the flushPending handle from here.
-        if (pendingSaveRef.current === run) pendingSaveRef.current = null
-      })
-    pendingSaveRef.current = run
-    setStatus('saving')
-    return run
-  }, [sessionSignal])
+  const save = useCallback(
+    (copyOnConflict = false): Promise<void> => {
+      const prior = pendingSaveRef.current ?? Promise.resolve()
+      const run = prior
+        .then(() => {
+          // Retired (send consumed the draft, Cancel discarded it) or
+          // suspended (a send holds the bridge) means the queued write folds
+          // into whatever the terminal action decided.
+          if (sessionSignal.aborted || retiredRef.current || suspendedRef.current) return
+          // Serialized once at dispatch: the content compare keeps a duplicate
+          // write away, and the same string records what was written below.
+          const written = JSON.stringify(fieldsRef.current)
+          if (written === lastSavedRef.current) return
+          const target = draftRef.current
+          return window.api
+            .saveDraft({
+              ...fieldsRef.current,
+              ...(target ? { draftId: target.draftId, expectedMessageId: target.messageId } : {}),
+              ...(copyOnConflict ? { copyOnConflict } : {})
+            })
+            .then((draft) => {
+              draftRef.current = draft
+              lastSavedRef.current = written
+              setStatus('saved')
+              setError(null)
+            })
+        })
+        .catch((e: unknown) => {
+          setStatus('idle')
+          setError(errorMessage(e))
+        })
+        .finally(() => {
+          // A newer save owns the flushPending handle from here.
+          if (pendingSaveRef.current === run) pendingSaveRef.current = null
+        })
+      pendingSaveRef.current = run
+      setStatus('saving')
+      return run
+    },
+    [sessionSignal]
+  )
 
   useEffect(() => {
     fieldsRef.current = fields
