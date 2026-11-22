@@ -55,7 +55,11 @@ function attachmentsShaped(request: SendEmailRequest): boolean {
       typeof attachment.filename === 'string' &&
       typeof attachment.size === 'number' &&
       typeof attachment.data === 'string' &&
-      attachment.data.length > 0
+      (attachment.data.length > 0 || attachment.size === 0) &&
+      /^[A-Za-z0-9+/]*={0,2}$/.test(attachment.data) &&
+      (attachment.data.includes('=')
+        ? attachment.data.length % 4 === 0
+        : attachment.data.length % 4 !== 1)
   )
 }
 

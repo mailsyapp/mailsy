@@ -40,5 +40,6 @@ Preconditions:
 - Picking is deliberately unavailable during prefill; the journey verifies a disabled click cannot reach the picker, then picks after loading and checks both payloads.
 - Inline images dropped into the body are not gated. They are body content, not attachment chips; composer-chrome image drops route into the body as well.
 - Main's production retention, MIME bytes, validation, size limit and no-write-on-fetch-failure contract are also covered by `node --experimental-strip-types .agents/harness/draft-retained-attachments.ts`.
+- That boundary harness also saves a zero-byte inline original through successive message replacements, preserving its named empty MIME part, and rejects malformed base64 payloads.
 - Reload resets fixture state between scenarios. Large-file drops use real FileReader conversion rather than invented attachment sizes.
 - Every fixture save replaces the message id and attachment ids and removes the old bytes. The save result maps retained originals onto refs read from the saved message; the renderer never invents replacement ids.

@@ -13,6 +13,7 @@ let original = Buffer.from('original bytes').toString('base64url')
 let inlinePayload: gmail_v1.Schema$MessagePart | undefined
 let inlineUnavailable = false
 const messageFetches: { id: string; format: string }[] = []
+const savedMessages = new Map<string, gmail_v1.Schema$MessagePart>()
 const gmail = {
   users: {
     messages: {
@@ -22,7 +23,7 @@ const gmail = {
       }): Promise<{ data: { payload?: gmail_v1.Schema$MessagePart } }> => {
         messageFetches.push(request)
         if (inlineUnavailable) throw new Error('Inline original unavailable')
-        return { data: { payload: inlinePayload } }
+        return { data: { payload: savedMessages.get(request.id) ?? inlinePayload } }
       },
       attachments: {
         get: async (request: {
@@ -37,20 +38,29 @@ const gmail = {
     },
     drafts: {
       get: async (): Promise<{ data: gmail_v1.Schema$Draft }> => {
-        const raw = Buffer.from(writes.at(-1)!.requestBody.message.raw, 'base64url').toString()
-        const files = [...raw.matchAll(/Content-Disposition: attachment; filename=([^\r\n]+)/g)]
+        const raw = Buffer.from(writes.at(-1)!.requestBody.message.raw, 'base64url')
+          .toString()
+          .replace(/\r\n/g, '\n')
+        const files = [
+          ...raw.matchAll(/Content-Disposition: attachment; filename=([^\n]+)([\s\S]*?)(?=\n--)/g)
+        ]
+        const payload = {
+          mimeType: 'multipart/mixed',
+          parts: files.map((match) => {
+            const data = (match[2].split('\n\n')[1] ?? '').replace(/\s/g, '')
+            return {
+              filename: match[1].replace(/^"|"$/g, ''),
+              mimeType: 'application/octet-stream',
+              body: { data, size: Buffer.from(data, 'base64').length }
+            }
+          })
+        }
+        savedMessages.set(`saved-message-${writes.length}`, payload)
         return {
           data: {
             message: {
               id: `saved-message-${writes.length}`,
-              payload: {
-                mimeType: 'multipart/mixed',
-                parts: files.map((match) => ({
-                  filename: match[1].replace(/^"|"$/g, ''),
-                  mimeType: 'application/octet-stream',
-                  body: { data: 'AA', size: 1 }
-                }))
-              }
+              payload
             }
           }
         }
@@ -254,3 +264,78 @@ assert.equal(
   Buffer.from('file, not body').toString('base64')
 )
 console.log('pass: a named root inline-data part remains a fetchable file')
+
+inlinePayload = {
+  mimeType: 'application/octet-stream',
+  filename: 'empty.bin',
+  body: { data: '', size: 0 }
+}
+const emptyBodies: MessageBodies = { text: '', html: '', inlineImages: [], attachments: [] }
+collectBodies(inlinePayload, emptyBodies)
+assert.equal(emptyBodies.attachments.length, 1)
+assert.equal(await fetchAttachment('empty-message', emptyBodies.attachments[0].attachmentId), '')
+const emptyResult = await saveDraft({
+  ...request,
+  attachments: [],
+  retainAttachments: { messageId: 'empty-message', refs: emptyBodies.attachments }
+})
+const emptyRef = emptyResult.retainedAttachments[0].ref
+assert.equal(emptyRef.filename, 'empty.bin')
+assert.equal(emptyRef.size, 0)
+assert.equal(await fetchAttachment(emptyResult.messageId, emptyRef.attachmentId), '')
+const emptyAgain = await saveDraft({
+  ...request,
+  attachments: [],
+  retainAttachments: { messageId: emptyResult.messageId, refs: [emptyRef] }
+})
+assert.equal(emptyAgain.retainedAttachments[0].ref.size, 0)
+assert.equal(savedMessages.get(emptyAgain.messageId)?.parts?.[0].body?.data, '')
+assert.match(
+  Buffer.from(writes.at(-1)!.requestBody.message.raw, 'base64url').toString(),
+  /filename=empty.bin/
+)
+console.log(
+  'pass: a zero-byte inline original saves, remains a named empty MIME part, and survives the next retained save'
+)
+
+await saveDraft({
+  to: '',
+  subject: '',
+  body: '',
+  attachments: [{ filename: 'empty.bin', size: 0, data: '' }]
+})
+console.log('pass: an already loaded zero-byte attachment also saves')
+const invalidBefore = writes.length
+for (const data of ['!', 'A', 'A===', 'AA=', 'AA==junk', 'AAAA====', 'A A A A', '-_8=']) {
+  await assert.rejects(
+    saveDraft({
+      to: '',
+      subject: '',
+      body: '',
+      attachments: [{ filename: 'bad.bin', size: 1, data }]
+    }),
+    /Invalid email request/
+  )
+}
+await assert.rejects(
+  saveDraft({
+    to: '',
+    subject: '',
+    body: '',
+    attachments: [{ filename: 'missing.bin', size: 1, data: '' }]
+  }),
+  /Invalid email request/
+)
+assert.equal(writes.length, invalidBefore)
+console.log(
+  'pass: malformed base64 and empty data claiming nonzero size cannot reach a draft write'
+)
+for (const data of ['Zg', 'Zg==', 'Zm8', 'Zm8=']) {
+  await saveDraft({
+    to: '',
+    subject: '',
+    body: '',
+    attachments: [{ filename: 'valid.bin', size: Buffer.from(data, 'base64').length, data }]
+  })
+}
+console.log('pass: valid padded and unpadded nonempty base64 attachments still save')
