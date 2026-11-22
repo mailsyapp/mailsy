@@ -50,7 +50,7 @@ export default defineConfig(
   },
   {
     files: ['src/renderer/**/*.{ts,tsx}'],
-    ignores: ['src/renderer/src/hooks/**'],
+    ignores: ['src/renderer/src/hooks/use*.ts'],
     rules: {
       'no-restricted-imports': [
         'error',
