@@ -1,4 +1,5 @@
 const ALLOWED = /^\/\s*<reference\s/
+const DIRECTIVES = /^use (strict|client)$/
 const TOKEN_END = /[^\s([{]/
 const TOKEN_START = /[^\s)\]},;]/
 
@@ -10,6 +11,8 @@ export default {
     messages: {
       banned:
         'Comments are banned in src/: they go stale and nothing enforces them. Delete it and put the intent in code instead: a precise name, a narrower type, a lint rule in eslint-rules/, or a journey in .agents/skills/verify-mailsy/features/.',
+      stringStatement:
+        'A string on its own line is a comment in disguise, and comments are banned in src/. Delete it and put the intent in a name, a type, a lint rule or a journey.',
       disable:
         'Disabling a lint rule inline is banned in src/. Fix the root cause the rule is pointing at; if the rule itself is wrong, change it in eslint.config.mjs where the change gets reviewed.'
     }
@@ -50,6 +53,14 @@ export default {
     }
 
     return {
+      ExpressionStatement(node) {
+        const { expression } = node
+        const isString =
+          (expression.type === 'Literal' && typeof expression.value === 'string') ||
+          expression.type === 'TemplateLiteral'
+        if (!isString || DIRECTIVES.test(expression.value)) return
+        context.report({ node, messageId: 'stringStatement' })
+      },
       Program() {
         for (const comment of source.getAllComments()) {
           if (comment.type === 'Shebang') continue
