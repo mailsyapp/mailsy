@@ -9,7 +9,7 @@ Stored draft attachments must resolve before sending. Autosave continues while t
 - `remove-failed` makes removal of an unavailable original explicit before saving and sending without it.
 - `retry-failed` preserves protection through another failed attempt and restores bytes after a successful Retry.
 - `save-failure` reports a retained-original fetch error without modifying the stored draft.
-- `concurrent-adds` rejects the addition that crosses 20 MiB, preserving the accepted file.
+- `concurrent-adds` rejects the addition that crosses 20 MiB on new compose, draft edit, reply and forward, preserving the accepted file.
 
 ## How to get to it (user POV)
 
@@ -27,7 +27,7 @@ Preconditions:
 - **Protect originals.** Run `node scripts/drive.mjs --feature draft-attachments-safe --run-id "$RUN_ID" --port "$VERIFY_MAILSY_PORT"`. Delayed renderer reads leave Send and picking disabled while autosave carries retained refs and main preserves their stored bytes. Once released, picking and sending preserve both original and picked bytes.
 - **Keep dismissed edits.** A failed renderer read does not prevent the subject edit from flushing on a folder switch. Reopening verifies both the edited subject and original attachment.
 - **Recover failures.** The same command verifies Remove alone triggers a save and the removed original stays gone on reopen. A fresh draft retries unsuccessfully, remains send-blocked, then retries successfully and sends the original bytes. A failed main-process fetch reports a save error without changing the stored draft.
-- **Concurrent additions.** The same command drops two real 12 MiB files before either read finishes; one chip and the existing limit error remain. Sending carries only the accepted file.
+- **Concurrent additions.** On each of new compose, draft edit, reply and forward, the same command drops two real 12 MiB files before either read finishes; one chip and the existing limit error remain. Sending carries only the accepted file.
 - **Proof.** The driver captures loading, failure, retry, reopened edits, save failure, and limit states as screenshots and accessibility snapshots, plus the journey transcript. Use `--attachment-case loading`, `edit`, or `remove` to isolate the review regressions.
 
 ## Gotchas

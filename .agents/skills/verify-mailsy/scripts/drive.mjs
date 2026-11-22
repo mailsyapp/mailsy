@@ -347,13 +347,23 @@ try {
     await page.getByText('Launch checklist', { exact: true }).first().waitFor()
     await page.clock.pauseAt(await page.evaluate(() => Date.now() + 60_000))
 
-    for (const scenario of ['loading', 'edit', 'remove', 'retry', 'save-error', 'limit']) {
+    for (const scenario of [
+      'loading',
+      'edit',
+      'remove',
+      'retry',
+      'save-error',
+      'limit',
+      'limit-draft',
+      'limit-reply',
+      'limit-forward'
+    ]) {
       if (arg('attachment-case') && arg('attachment-case') !== scenario) continue
       if (scenario !== 'loading') {
         await page.reload()
         await page.getByText('Launch checklist', { exact: true }).first().waitFor()
       }
-      if (scenario !== 'limit') {
+      if (!scenario.startsWith('limit')) {
         await page.evaluate(
           (mode) => {
             const getAttachment = window.api.getAttachment
@@ -611,7 +621,29 @@ try {
         )
         await snapshot(page, 'draft-attachments-save-error')
       } else {
-        await page.getByRole('button', { name: 'Compose', exact: true }).click()
+        if (scenario === 'limit') {
+          await page.getByRole('button', { name: 'Compose', exact: true }).click()
+        } else if (scenario === 'limit-draft') {
+          await page
+            .getByRole('navigation', { name: 'Mail folders' })
+            .getByRole('button', { name: 'Drafts', exact: true })
+            .click()
+          await page
+            .getByRole('complementary', { name: 'Drafts' })
+            .getByRole('button', { name: /^Draft: Q4 planning notes/ })
+            .click()
+        } else {
+          await page
+            .getByRole('complementary', { name: 'Inbox' })
+            .getByRole('button', { name: /^Launch checklist/ })
+            .click()
+          await content
+            .getByRole('button', {
+              name: scenario === 'limit-reply' ? 'reply' : 'forward',
+              exact: true
+            })
+            .click()
+        }
         await content.getByLabel('To', { exact: true }).fill('test@example.com')
         await content.locator('form.composer').evaluate((form) => {
           for (let i = 0; i < 2; i++) {
@@ -632,10 +664,10 @@ try {
           .waitFor()
         assert(
           (await content.locator('.attachmentChip').count()) === 1,
-          'concurrent 12 MiB drops reject the addition that exceeds 20 MiB',
-          'concurrent drops bypassed the cumulative attachment limit'
+          `${scenario}: concurrent 12 MiB drops reject the addition that exceeds 20 MiB`,
+          `${scenario}: concurrent drops bypassed the cumulative attachment limit`
         )
-        await snapshot(page, 'draft-attachments-limit')
+        await snapshot(page, `draft-attachments-${scenario}`)
         await send.click()
         await content.getByText('Message sent.', { exact: true }).waitFor()
         assert(
@@ -644,8 +676,8 @@ try {
               window.__sent[0]?.attachments?.length === 1 &&
               window.__sent[0].attachments[0].size === 12 * 1024 * 1024
           ),
-          'the accepted file still sends after the over-limit addition is rejected',
-          'rejecting an over-limit addition lost the accepted file'
+          `${scenario}: the accepted file still sends after the over-limit addition is rejected`,
+          `${scenario}: rejecting an over-limit addition lost the accepted file`
         )
       }
     }
