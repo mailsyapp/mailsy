@@ -7,7 +7,13 @@ const { _electron } = require('playwright')
 
 // Keep the packaged preload intact: its invokes cross real IPC before main
 // redirects them to the fixture. No product files or ASAR contents are edited.
-export async function launchPackaged({ executablePath, artifactDir, mockPath }) {
+export async function launchPackaged({
+  executablePath,
+  artifactDir,
+  mockPath,
+  signedOut = false,
+  clock = false
+}) {
   const profile = await mkdtemp(join(artifactDir, 'electron-profile-'))
   const browser = await _electron.launch({
     executablePath,
@@ -73,10 +79,25 @@ export async function launchPackaged({ executablePath, artifactDir, mockPath }) 
       }
       return globalThis.__packagedVerification
     }, profile)
+    await browser.context().exposeBinding('__packagedPushSync', async (source, result) => {
+      if (source.page !== page || source.frame !== page.mainFrame())
+        throw new Error('Unexpected fixture sync sender')
+      await browser.evaluate(({ BrowserWindow }, result) => {
+        const counts = globalThis.__packagedVerification.counts
+        counts['gmail:sync-result'] = (counts['gmail:sync-result'] ?? 0) + 1
+        BrowserWindow.getAllWindows()[0].webContents.send('gmail:sync-result', result)
+      }, result)
+    })
+    if (clock) await page.clock.install()
     const fixture = await readFile(mockPath, 'utf8')
     await browser.context().addInitScript({ content: `(() => {
-      const fixtureWindow = {}
+      const fixtureWindow = { __signInClicked: false, __signOutClicked: false, __pickCalls: 0 }
       ;(function(window) { ${fixture}\n })(fixtureWindow)
+      if (${JSON.stringify(signedOut)}) {
+        fixtureWindow.api.isSignedIn = async () => false
+        fixtureWindow.api.signIn = async () => { fixtureWindow.__signInClicked = true }
+      }
+      fixtureWindow.__pushSync = (result) => window.__packagedPushSync(result)
       Object.defineProperty(window, '__packagedFixtureApi', { value: fixtureWindow.api })
       for (const key of Object.keys(fixtureWindow)) {
         if (key === 'api') continue

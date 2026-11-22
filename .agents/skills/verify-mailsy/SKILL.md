@@ -7,7 +7,7 @@ description: Drive and prove the Mailsy Electron mail client (React renderer + G
 
 Mailsy is an Electron desktop app (`npm run dev`): a React renderer (`src/renderer/src/`) talks through a preload bridge (`window.api`) to main-process IPC handlers (`src/main/`) that call the Gmail API with OAuth tokens. There is no repo test suite (no Playwright/Cypress/Vitest specs); this skill's harness *is* the test tooling.
 
-Default scripted verification runs the **real renderer code** in headless Chromium against a **fixture `window.api` mock** — no Google account, no network, no quota cost. The packaged mode below additionally runs selected journeys in the actual Electron executable with fixture IPC. The live Gmail path remains a documented manual tier.
+Default scripted verification runs the **real renderer code** in headless Chromium against a **fixture `window.api` mock** — no Google account, no network, no quota cost. The packaged mode below additionally runs all mapped journeys in the actual Electron executable with fixture IPC. The live Gmail path remains a documented manual tier.
 
 ## Paths
 
@@ -111,14 +111,28 @@ node .agents/skills/verify-mailsy/scripts/drive.mjs --feature signature \
   --run-id packaged-signature --executable "$PWD/dist/linux-unpacked/mailsy"
 ```
 
-Supported features are `signature`, `compose-new`, `compose-send`, and
-`draft-autosave`. Run each with its own run ID. Their journey assertions and
+All 30 mapped features are supported, including `sign-in --signed-out`.
+Run each with its own run ID. Their journey assertions and
 screenshots are identical to the Chromium tier; `--port` is not required.
 Run `doctor.sh --executable <packaged-binary>` before driving. It checks the
 fixture, Playwright library, and that the packaged executable exists and has
 execute permission; it skips the Chromium cache, Vite dependencies/config,
 and scaffold port checks. No-argument doctor runs retain the scaffold checks.
 Packaged mode also requires an available display at launch.
+
+From the repository root, run every feature serially against an AppImage,
+its extracted `AppRun`, or the deb-installed `/usr/bin/mailsy` without
+starting a scaffold server:
+
+```bash
+RUN_ID=packaged-appimage .agents/skills/verify-mailsy/scripts/run-all.sh \
+  --executable "$PWD/dist/mailsy-0.1.0.AppImage"
+RUN_ID=packaged-deb .agents/skills/verify-mailsy/scripts/run-all.sh --executable /usr/bin/mailsy
+```
+
+The runner applies `--signed-out` only to the sign-in journey. Transcripts
+and preflight live in `artifacts/<run-id>/`; each journey's screenshots,
+profile and final IPC counts live in `artifacts/<run-id>-<feature>/`.
 
 `scripts/packaged.mjs` uses Playwright `_electron.launch({ executablePath })`.
 Each launch creates a fresh user-data/config profile under the run's artifacts
@@ -129,13 +143,20 @@ test-installed main-process IPC handlers forward packaged preload calls to
 that fixture namespace. Fixture recording arrays remain readable by the
 unchanged journeys. Production source, preload, and ASAR are never patched.
 
+Signed-out fixtures override only the separate fixture auth methods, never
+the native preload API. Clock-driven journeys install Playwright's clock
+before reloading the packaged renderer. Fixture sync pushes travel through
+a test binding to main, then the native `gmail:sync-result` IPC event and
+preload subscription. Background query recording wraps the fixture method
+behind native IPC because the real `window.api` is read-only.
+
 This tests packaged renderer behavior and real preload/IPC serialization,
 not the production Gmail handlers: those handlers are replaced for the test.
 The fresh profile has no OAuth token, so native background sync remains
 signed out; HTTP(S) requests from Electron sessions are also blocked. Native
-dialogs, pushed background sync events, live Gmail, and persistent real-account
-behavior are not covered. Other features and signed-out journeys are rejected
-rather than silently falling back to Chromium. `packaged.json` records the
+dialogs, production clock/focus sync triggers, live Gmail, and persistent
+real-account behavior are not covered. Pushed fixture results exercise the
+native event transport, not Gmail history parsing. `packaged.json` records the
 artifact URL, Electron version, isolated profile, and intercepted IPC counts.
 The driver refreshes this evidence in `finally`, before closing Electron,
 on both journey success and failure. If Electron has crashed or the final

@@ -32,10 +32,6 @@ if (!FEATURE || !RUN_ID || (!PORT && !EXECUTABLE)) {
   console.error('usage: drive.mjs --feature <id> --run-id <id> (--port <n> | --executable <packaged-binary>) [--signed-out]')
   process.exit(2)
 }
-if (EXECUTABLE && (SIGNED_OUT || !['signature', 'compose-new', 'compose-send', 'draft-autosave'].includes(FEATURE))) {
-  console.error('infra: packaged mode supports signature, compose-new, compose-send and draft-autosave (signed in)')
-  process.exit(2)
-}
 // RUN_ID names the artifacts dir under the skill; refuse any value that
 // could escape it (matches the serve.sh/doctor.sh guard).
 if (!/^[A-Za-z0-9._-]+$/.test(RUN_ID)) {
@@ -136,7 +132,10 @@ let exitCode = 0
 try {
   let page
   if (EXECUTABLE) {
-    const packaged = await launchPackaged({ executablePath: resolve(EXECUTABLE), artifactDir: ART, mockPath: MOCK })
+    const packaged = await launchPackaged({
+      executablePath: resolve(EXECUTABLE), artifactDir: ART, mockPath: MOCK,
+      signedOut: SIGNED_OUT, clock: FEATURE === 'snooze-emulation' || FEATURE === 'background-work'
+    })
     browser = packaged.browser
     page = packaged.page
     entry = packaged.entry
@@ -2777,8 +2776,9 @@ try {
 
     await page.evaluate(() => {
       window.__queries = []
-      const listFolder = window.api.listFolder
-      window.api.listFolder = (options = {}) => {
+      const api = window.__packagedFixtureApi ?? window.api
+      const listFolder = api.listFolder
+      api.listFolder = (options = {}) => {
         if (options.q) window.__queries.push(options.q)
         return listFolder(options)
       }
