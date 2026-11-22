@@ -1,4 +1,4 @@
-import { getGmailClient } from '../auth'
+import { getGmailClient, getMailSession } from '../auth'
 import type { GmailClient } from '../auth'
 import type { ListFolderOptions, MailFolder, ThreadPage, ThreadSummary } from '../../shared/types'
 import {
@@ -67,6 +67,7 @@ const FOLDER_LISTING: Record<Exclude<MailFolder, 'drafts'>, FolderListing> = {
 
 async function fetchDrafts(
   gmail: GmailClient,
+  session: symbol,
   options: ListFolderOptions,
   maxResults: number,
   q: string | undefined
@@ -89,12 +90,14 @@ async function fetchDrafts(
   )
 
   async function fetchDraftMessage(id: string): Promise<ThreadSummary | null> {
-    const full = await withQuotaRetry(() =>
-      gmail.users.drafts.get({
-        userId: 'me',
-        id,
-        format: 'metadata'
-      })
+    const full = await withQuotaRetry(
+      () =>
+        gmail.users.drafts.get({
+          userId: 'me',
+          id,
+          format: 'metadata'
+        }),
+      session
     )
     const msg = full.data.message ?? {}
     if (!msg.id || !msg.threadId) return null
@@ -128,6 +131,7 @@ async function fetchDrafts(
 
 async function fetchSnoozed(
   gmail: GmailClient,
+  session: symbol,
   options: ListFolderOptions,
   maxResults: number,
   userQuery: string | undefined
@@ -141,25 +145,29 @@ async function fetchSnoozed(
   const nativeQuery = [userQuery, 'in:snoozed'].filter((part) => part).join(' ')
   const mailSnoozeLabelId = await resolveSnoozeLabelId(gmail, false)
   const [native, emulated] = await Promise.all([
-    withQuotaRetry(() =>
-      gmail.users.threads.list({
-        userId: 'me',
-        maxResults,
-        ...(options.pageToken ? { pageToken: options.pageToken } : {}),
-        ...(nativeQuery ? { q: nativeQuery } : {})
-      })
+    withQuotaRetry(
+      () =>
+        gmail.users.threads.list({
+          userId: 'me',
+          maxResults,
+          ...(options.pageToken ? { pageToken: options.pageToken } : {}),
+          ...(nativeQuery ? { q: nativeQuery } : {})
+        }),
+      session
     ),
     // The label leg only ever has its first page (no union token in v1), so
     // it runs on first-page fetches only: re-running it under a page token
     // would re-read and re-merge the same rows into every deeper page.
     mailSnoozeLabelId && !options.pageToken
-      ? withQuotaRetry(() =>
-          gmail.users.threads.list({
-            userId: 'me',
-            maxResults,
-            labelIds: [mailSnoozeLabelId],
-            ...(userQuery ? { q: userQuery } : {})
-          })
+      ? withQuotaRetry(
+          () =>
+            gmail.users.threads.list({
+              userId: 'me',
+              maxResults,
+              labelIds: [mailSnoozeLabelId],
+              ...(userQuery ? { q: userQuery } : {})
+            }),
+          session
         )
       : Promise.resolve(null)
   ])
@@ -175,17 +183,19 @@ async function fetchSnoozed(
     ids.filter((id) => !skip.has(id)),
     DETAIL_CONCURRENCY,
     async (id): Promise<ThreadSummary> => {
-      const thread = await withQuotaRetry(() =>
-        gmail.users.threads.get({
-          userId: 'me',
-          id,
-          format: 'metadata',
-          metadataHeaders: ['From', 'Subject', 'Date']
-        })
+      const thread = await withQuotaRetry(
+        () =>
+          gmail.users.threads.get({
+            userId: 'me',
+            id,
+            format: 'metadata',
+            metadataHeaders: ['From', 'Subject', 'Date']
+          }),
+        session
       )
       // Every thread fetch records the mailbox's newest history id it
       // observed, so the sweep cursor advances with each unpaid fetch.
-      noteHistoryId(thread.data.historyId)
+      noteHistoryId(thread.data.historyId, session)
       return threadToSummary(thread.data, mailSnoozeLabelId ?? undefined)
     }
   )
@@ -195,12 +205,13 @@ async function fetchSnoozed(
 
 export async function fetchFolder(options: ListFolderOptions = {}): Promise<ThreadPage> {
   const gmail = getGmailClient()
+  const session = getMailSession()
   const maxResults = Math.min(Math.max(options.maxResults ?? 30, 1), 100)
   const userQuery = options.q?.trim() || undefined
   const folder = options.folder ?? 'inbox'
 
-  if (folder === 'drafts') return fetchDrafts(gmail, options, maxResults, userQuery)
-  if (folder === 'snoozed') return fetchSnoozed(gmail, options, maxResults, userQuery)
+  if (folder === 'drafts') return fetchDrafts(gmail, session, options, maxResults, userQuery)
+  if (folder === 'snoozed') return fetchSnoozed(gmail, session, options, maxResults, userQuery)
 
   // A user-label view substitutes the chosen label for the folder's
   // system-label filter; the search fragment stays a folder property,
@@ -234,15 +245,17 @@ export async function fetchFolder(options: ListFolderOptions = {}): Promise<Thre
     ids,
     DETAIL_CONCURRENCY,
     async (id): Promise<ThreadSummary> => {
-      const thread = await withQuotaRetry(() =>
-        gmail.users.threads.get({
-          userId: 'me',
-          id,
-          format: 'metadata',
-          metadataHeaders: ['From', 'Subject', 'Date']
-        })
+      const thread = await withQuotaRetry(
+        () =>
+          gmail.users.threads.get({
+            userId: 'me',
+            id,
+            format: 'metadata',
+            metadataHeaders: ['From', 'Subject', 'Date']
+          }),
+        session
       )
-      noteHistoryId(thread.data.historyId)
+      noteHistoryId(thread.data.historyId, session)
       return threadToSummary(thread.data)
     }
   )

@@ -1,5 +1,5 @@
 import { BrowserWindow } from 'electron'
-import { getGmailClient, isSignedIn, onSessionEnded } from '../auth'
+import { getGmailClient, getMailSession, isSignedIn, onSessionEnded } from '../auth'
 import type { GmailClient } from '../auth'
 import { type SyncReason, type SyncResult, type ThreadSynced } from '../../shared/sync'
 import type { gmail_v1 } from 'googleapis'
@@ -55,8 +55,8 @@ function isLaterId(a: string, b: string): boolean {
 // skip records earlier in the stream than the max one fetch happened to
 // observe. Sweeps advance the cursor themselves, after a run fully
 // completed (see runSync).
-export function noteHistoryId(id: string | number | undefined | null): void {
-  if (cursor !== null || id == null || id === '') return
+export function noteHistoryId(id: string | number | undefined | null, session: symbol): void {
+  if (getMailSession() !== session || cursor !== null || id == null || id === '') return
   const next = String(id)
   if (pendingSeed === null || isLaterId(next, pendingSeed)) pendingSeed = next
 }
@@ -70,6 +70,8 @@ onSessionEnded(() => {
   cursor = null
   pendingSeed = null
   errorStreak = 0
+  inFlight = null
+  scheduleNextSweep()
 })
 
 // Draft churn is the stream's loudest noise: every autosave writes and
@@ -85,11 +87,10 @@ function isDraftChurn(labelIds: string[] | null | undefined): boolean {
 // answers with the surviving messages or 404s, so a whole-thread expunge
 // and a one-message exhale apply alike.
 async function sweepChangedThreads(
-  gmail: GmailClient
+  gmail: GmailClient,
+  start: string,
+  session: symbol
 ): Promise<{ changed: string[]; readThrough: string | null }> {
-  const start = cursor
-  if (start === null) return { changed: [], readThrough: null }
-
   const changed = new Set<string>()
   const note = (threadId: string | null | undefined): void => {
     if (threadId) changed.add(threadId)
@@ -99,14 +100,16 @@ async function sweepChangedThreads(
   // (pagination plus every changed-thread read) completed, in runSync.
   let readThrough: string | null = null
   for (let pageToken: string | undefined; ;) {
-    const page = await withQuotaRetry(() =>
-      gmail.users.history.list({
-        userId: 'me',
-        startHistoryId: start,
-        maxResults: 500,
-        historyTypes: ['messageAdded', 'messageDeleted', 'labelAdded', 'labelRemoved'],
-        ...(pageToken ? { pageToken } : {})
-      })
+    const page = await withQuotaRetry(
+      () =>
+        gmail.users.history.list({
+          userId: 'me',
+          startHistoryId: start,
+          maxResults: 500,
+          historyTypes: ['messageAdded', 'messageDeleted', 'labelAdded', 'labelRemoved'],
+          ...(pageToken ? { pageToken } : {})
+        }),
+      session
     )
     for (const record of page.data.history ?? []) {
       // An autosave's messageAdded carries only its DRAFT label; real
@@ -142,18 +145,21 @@ async function sweepChangedThreads(
 // the view, and an absent summary cannot be shipped.
 async function readChangedThreads(
   gmail: GmailClient,
-  threadIds: string[]
+  threadIds: string[],
+  session: symbol
 ): Promise<{ threads: ThreadSynced[]; deletedThreadIds: string[] }> {
   const deletedThreadIds: string[] = []
   const rows = await mapWithConcurrency(threadIds, DETAIL_CONCURRENCY, async (id) => {
     try {
-      const thread = await withQuotaRetry(() =>
-        gmail.users.threads.get({
-          userId: 'me',
-          id,
-          format: 'metadata',
-          metadataHeaders: ['From', 'Subject', 'Date']
-        })
+      const thread = await withQuotaRetry(
+        () =>
+          gmail.users.threads.get({
+            userId: 'me',
+            id,
+            format: 'metadata',
+            metadataHeaders: ['From', 'Subject', 'Date']
+          }),
+        session
       )
       return toSyncedRow(thread.data)
     } catch (e) {
@@ -179,7 +185,7 @@ function toSyncedRow(thread: gmail_v1.Schema$Thread): ThreadSynced {
   return { ...threadToSummary(thread), labelIds: [...labelIds] }
 }
 
-async function runSync(): Promise<SyncResult> {
+async function runSync(session: symbol): Promise<SyncResult> {
   const gmail = getGmailClient()
   const start = cursor
   if (start === null) {
@@ -193,10 +199,11 @@ async function runSync(): Promise<SyncResult> {
   let changed: string[]
   let readThrough: string | null = null
   try {
-    const sweep = await sweepChangedThreads(gmail)
+    const sweep = await sweepChangedThreads(gmail, start, session)
     changed = sweep.changed
     readThrough = sweep.readThrough
   } catch (e) {
+    if (getMailSession() !== session) throw e
     // An out-of-date startHistoryId comes back as HTTP 404 once Google
     // has expired the cursor (a week-scale horizon); the API's answer to
     // a dead cursor is a full sync. The cursor dies here and the next
@@ -207,6 +214,7 @@ async function runSync(): Promise<SyncResult> {
     }
     throw e
   }
+  if (getMailSession() !== session) return { kind: 'reset' }
   if (changed.length === 0) {
     // Every record in the range was draft churn, so the whole range is
     // still read: the position commits now just like a run that had rows.
@@ -214,7 +222,8 @@ async function runSync(): Promise<SyncResult> {
     return { kind: 'delta', historyId: cursor ?? start, threads: [], deletedThreadIds: [] }
   }
 
-  const { threads, deletedThreadIds } = await readChangedThreads(gmail, changed)
+  const { threads, deletedThreadIds } = await readChangedThreads(gmail, changed, session)
+  if (getMailSession() !== session) return { kind: 'reset' }
   // The position advances only after both the pagination and every
   // changed-thread read completed: a failure leaves the range unconsumed,
   // so the next sweep covers it again instead of losing it. Rows arriving
@@ -280,28 +289,41 @@ export function syncMail(reason: SyncReason): Promise<SyncResult> {
   // the reset that re-earns the cursor. A clean no-op answer keeps the
   // focus and clock triggers from feeding the failure backoff (or its
   // error counter) before any session exists.
-  if (!isSignedIn()) return Promise.resolve({ kind: 'reset' })
+  if (!isSignedIn()) {
+    if (reason === 'clock') scheduleNextSweep()
+    return Promise.resolve({ kind: 'reset' })
+  }
 
   // In-flight coalescing: a click or tick colliding with a running sweep
   // joins its promise, so no refresh queues a second call and none is
   // silently swallowed — every caller observes the sweep's true outcome.
   if (inFlight) return inFlight
 
+  const session = getMailSession()
   inFlight = (async () => {
     try {
-      const result = await runSync()
+      const result = await runSync(session)
+      if (getMailSession() !== session) return { kind: 'reset' }
       errorStreak = 0
       return result
     } catch (e) {
-      errorStreak++
+      if (getMailSession() === session) errorStreak++
       throw e
     } finally {
-      inFlight = null
-      scheduleNextSweep()
+      if (getMailSession() === session) {
+        inFlight = null
+        scheduleNextSweep()
+      }
     }
   })()
   // A button-initiated sweep answers its awaiting caller directly; every
   // other reason has no awaiting caller and must push to the windows.
-  if (reason !== 'button') void inFlight.then(pushResult).catch(() => {})
+  if (reason !== 'button') {
+    void inFlight
+      .then((result) => {
+        if (getMailSession() === session) pushResult(result)
+      })
+      .catch(() => {})
+  }
   return inFlight
 }

@@ -1,4 +1,4 @@
-import { getAccountEmail, getGmailClient } from '../auth'
+import { getAccountEmail, getGmailClient, getMailSession } from '../auth'
 import type { EmailDetail, EmailThread } from '../../shared/types'
 import { toEmailDetail } from './message'
 import { base64UrlToBuffer } from './mime'
@@ -30,6 +30,7 @@ export async function fetchAttachment(messageId: string, attachmentId: string): 
 export async function fetchThread(threadId: string): Promise<EmailThread> {
   if (!threadId.trim()) throw new Error('Thread ID is required')
   const gmail = getGmailClient()
+  const session = getMailSession()
   const thread = await withQuotaRetry(() =>
     gmail.users.threads.get({
       userId: 'me',
@@ -37,7 +38,7 @@ export async function fetchThread(threadId: string): Promise<EmailThread> {
       format: 'full'
     })
   )
-  noteHistoryId(thread.data.historyId)
+  noteHistoryId(thread.data.historyId, session)
   // getAccountEmail rides along concurrently so the thread open is not
   // serialized behind a profile call, and its failure degrades to an empty
   // exclusion set (reply-all excludes nothing) rather than failing the open:

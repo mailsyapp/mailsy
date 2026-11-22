@@ -157,6 +157,11 @@ export function signOut(): void {
 
 type SessionEndedListener = () => void
 const sessionEndedListeners: SessionEndedListener[] = []
+let mailSession = Symbol()
+
+export function getMailSession(): symbol {
+  return mailSession
+}
 
 export function onSessionEnded(listener: SessionEndedListener): void {
   sessionEndedListeners.push(listener)
@@ -168,6 +173,7 @@ export function onSessionEnded(listener: SessionEndedListener): void {
 // signed-in forever and leave every launch in the same dead end.
 export function invalidateStoredGrant(): void {
   if (fs.existsSync(tokenPath())) fs.unlinkSync(tokenPath())
+  mailSession = Symbol()
   // Every teardown of the stored grant ends the mailbox session the sync
   // cursor is positioned for: a live sign-out and a dead grant alike land
   // here. Listeners registered at boot tear down per-account state, so the

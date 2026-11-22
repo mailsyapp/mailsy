@@ -22,7 +22,7 @@ export function isNotFoundError(e: unknown): boolean {
   return /404|notfound|requested entity was not found/i.test(message)
 }
 
-import { invalidateStoredGrant } from '../auth'
+import { getMailSession, invalidateStoredGrant } from '../auth'
 import { SESSION_EXPIRED_ERROR } from '../../shared/types'
 
 // Dead-grant recovery: kill the unusable stored token so isSignedIn() stops
@@ -36,12 +36,17 @@ export function rethrowDeadGrant(e: unknown): void {
 
 // Quota errors are transient: a fetch just over the per-minute line should
 // wait and succeed rather than error the user.
-export async function withQuotaRetry<T>(fn: () => Promise<T>): Promise<T> {
+export async function withQuotaRetry<T>(
+  fn: () => Promise<T>,
+  session = getMailSession()
+): Promise<T> {
   let attempt = 0
   for (;;) {
+    if (getMailSession() !== session) throw new Error('Mail account changed')
     try {
       return await fn()
     } catch (e) {
+      if (getMailSession() !== session) throw new Error('Mail account changed')
       rethrowDeadGrant(e)
       if (!isQuotaError(e) || attempt >= QUOTA_MAX_RETRIES) throw e
       await sleep(1000 * 2 ** attempt)
