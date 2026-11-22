@@ -264,6 +264,13 @@ export interface SaveDraftRequest extends SendEmailRequest {
   }
 }
 
+export interface SaveDraftResult {
+  draftId: string
+  messageId: string
+  previousMessageId?: string
+  retainedAttachments: { previousAttachmentId: string; ref: MessageAttachmentRef }[]
+}
+
 export interface ModifyLabelsRequest {
   kind: 'message' | 'thread'
   id: string

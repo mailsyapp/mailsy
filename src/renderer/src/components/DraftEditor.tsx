@@ -97,7 +97,8 @@ function DraftForm({
   const autosave = useDraftAutosave(
     { ...request, ...attach.retained },
     draftId,
-    draftId !== undefined
+    draftId !== undefined,
+    attach.adoptSaved
   )
 
   async function handleSend(event: React.FormEvent<HTMLFormElement>): Promise<void> {

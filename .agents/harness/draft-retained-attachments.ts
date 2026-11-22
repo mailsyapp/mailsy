@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import { build } from 'esbuild'
-import type { SaveDraftRequest } from '../../src/shared/types'
+import type { SaveDraftRequest, SaveDraftResult } from '../../src/shared/types'
 import type { MessageBodies } from '../../src/main/mail/mime'
 import type { gmail_v1 } from 'googleapis'
 
@@ -36,6 +36,25 @@ const gmail = {
       }
     },
     drafts: {
+      get: async (): Promise<{ data: gmail_v1.Schema$Draft }> => {
+        const raw = Buffer.from(writes.at(-1)!.requestBody.message.raw, 'base64url').toString()
+        const files = [...raw.matchAll(/Content-Disposition: attachment; filename=([^\r\n]+)/g)]
+        return {
+          data: {
+            message: {
+              id: `saved-message-${writes.length}`,
+              payload: {
+                mimeType: 'multipart/mixed',
+                parts: files.map((match) => ({
+                  filename: match[1].replace(/^"|"$/g, ''),
+                  mimeType: 'application/octet-stream',
+                  body: { data: 'AA', size: 1 }
+                }))
+              }
+            }
+          }
+        }
+      },
       update: async (request: (typeof writes)[number]): Promise<void> => {
         writes.push(request)
       },
@@ -81,7 +100,7 @@ new Function('require', 'module', 'exports', compiled.outputFiles[0].text)(
   loaded.exports
 )
 const { saveDraft, fetchAttachment, collectBodies } = loaded.exports as {
-  saveDraft: (request: SaveDraftRequest) => Promise<string>
+  saveDraft: (request: SaveDraftRequest) => Promise<SaveDraftResult>
   fetchAttachment: (messageId: string, attachmentId: string) => Promise<string>
   collectBodies: (part: gmail_v1.Schema$MessagePart, out: MessageBodies) => void
 }
@@ -96,7 +115,13 @@ const request: SaveDraftRequest = {
   },
   attachments: [{ filename: 'picked.txt', size: 6, data: Buffer.from('picked').toString('base64') }]
 }
-assert.equal(await saveDraft(request), 'existing-draft')
+const savedResult = await saveDraft(request)
+assert.equal(savedResult.draftId, 'existing-draft')
+assert.equal(savedResult.messageId, 'saved-message-1')
+assert.equal(savedResult.previousMessageId, 'original-message')
+assert.equal(savedResult.retainedAttachments[0].previousAttachmentId, 'original-id')
+assert.equal(savedResult.retainedAttachments[0].ref.attachmentId, 'mailsy-part:0.1')
+assert.equal(savedResult.retainedAttachments[0].ref.filename, 'original.bin')
 assert.equal(fetches[0].messageId, 'original-message')
 assert.equal(fetches[0].id, 'original-id')
 const mime = Buffer.from(writes[0].requestBody.message.raw, 'base64url').toString()
@@ -129,12 +154,14 @@ await assert.rejects(saveDraft(request), /Attachments are too large/)
 assert.equal(writes.length, before)
 console.log('pass: malformed refs and the combined byte limit cannot reach a draft write')
 assert.equal(
-  await saveDraft({
-    to: '',
-    subject: '',
-    body: '',
-    retainAttachments: { messageId: 'empty', refs: [] }
-  }),
+  (
+    await saveDraft({
+      to: '',
+      subject: '',
+      body: '',
+      retainAttachments: { messageId: 'empty', refs: [] }
+    })
+  ).draftId,
   'created-draft'
 )
 assert.doesNotMatch(

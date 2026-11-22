@@ -4,12 +4,13 @@ import {
   ATTACHMENTS_TOTAL_LIMIT_BYTES,
   decodedAttachmentBytes,
   type SaveDraftRequest,
+  type SaveDraftResult,
   type SendDraftRequest,
   type SendEmailRequest
 } from '../../shared/types'
 import { hasRecipient } from '../../shared/types'
 import { isNotFoundError, rethrowDeadGrant, withQuotaRetry } from './resilience'
-import { buildRawMessage } from './mime'
+import { buildRawMessage, collectBodies, type MessageBodies } from './mime'
 import { fetchAttachment } from './messages'
 import type { gmail_v1 } from 'googleapis'
 
@@ -147,7 +148,7 @@ async function writeDraft(
 // real Gmail draft, creating it on the first write, and answers with the
 // draft id that later saves and the send path then keep using. Recipient
 // is optional here, so this carries its own check, not the send one.
-export async function saveDraft(request: SaveDraftRequest): Promise<string> {
+export async function saveDraft(request: SaveDraftRequest): Promise<SaveDraftResult> {
   assertMessageFields(request, false)
   if (request.draftId !== undefined && typeof request.draftId !== 'string') {
     throw new Error('Invalid draft request')
@@ -190,23 +191,43 @@ export async function saveDraft(request: SaveDraftRequest): Promise<string> {
     assertMessageFields(fields, false)
     const raw = await buildRawMessage(from, fields)
 
-    if (request.draftId) {
-      await writeDraft(gmail, request.draftId, raw, request.threadId)
-      return request.draftId
-    }
-    const created = await withQuotaRetry(() =>
-      gmail.users.drafts.create({
-        userId: 'me',
-        requestBody: {
-          message: {
-            raw,
-            ...(request.threadId ? { threadId: request.threadId } : {})
+    let draftId = request.draftId
+    if (draftId) {
+      await writeDraft(gmail, draftId, raw, request.threadId)
+    } else {
+      const created = await withQuotaRetry(() =>
+        gmail.users.drafts.create({
+          userId: 'me',
+          requestBody: {
+            message: {
+              raw,
+              ...(request.threadId ? { threadId: request.threadId } : {})
+            }
           }
-        }
-      })
+        })
+      )
+      if (!created.data.id) throw new Error('Gmail returned no draft ID')
+      draftId = created.data.id
+    }
+    const saved = await withQuotaRetry(() =>
+      gmail.users.drafts.get({ userId: 'me', id: draftId, format: 'full' })
     )
-    if (!created.data.id) throw new Error('Gmail returned no draft ID')
-    return created.data.id
+    if (!saved.data.message?.id || !saved.data.message.payload)
+      throw new Error('Gmail returned no saved message')
+    const bodies: MessageBodies = { text: '', html: '', inlineImages: [], attachments: [] }
+    collectBodies(saved.data.message.payload, bodies)
+    const retainedAttachments = (retain?.refs ?? []).map((ref, index) => {
+      const next = bodies.attachments[(request.attachments?.length ?? 0) + index]
+      if (!next || next.filename !== ref.filename)
+        throw new Error('Gmail returned no retained attachment')
+      return { previousAttachmentId: ref.attachmentId, ref: next }
+    })
+    return {
+      draftId,
+      messageId: saved.data.message.id,
+      previousMessageId: retain?.messageId,
+      retainedAttachments
+    }
   } catch (e) {
     rethrowDeadGrant(e)
     throw e

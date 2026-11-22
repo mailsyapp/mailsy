@@ -9,6 +9,7 @@ declare global {
   type SendEmailRequest = import('../shared/types').SendEmailRequest
   type SendDraftRequest = import('../shared/types').SendDraftRequest
   type SaveDraftRequest = import('../shared/types').SaveDraftRequest
+  type SaveDraftResult = import('../shared/types').SaveDraftResult
   type ModifyLabelsRequest = import('../shared/types').ModifyLabelsRequest
   type MailLabel = import('../shared/types').MailLabel
   type SyncReason = import('../shared/sync').SyncReason
@@ -29,7 +30,7 @@ declare global {
       getThread(threadId: string): Promise<EmailThread>
       sendEmail(request: SendEmailRequest): Promise<void>
       sendDraft(request: SendDraftRequest): Promise<void>
-      saveDraft(request: SaveDraftRequest): Promise<string>
+      saveDraft(request: SaveDraftRequest): Promise<SaveDraftResult>
       discardDraft(draftId: string): Promise<void>
       pickAttachments(): Promise<import('../shared/types').ComposeAttachment[]>
       getAttachment(messageId: string, attachmentId: string): Promise<string>

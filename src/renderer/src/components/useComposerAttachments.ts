@@ -8,6 +8,7 @@ import {
   type ComposeAttachment,
   type MessageAttachmentRef,
   type SaveDraftRequest,
+  type SaveDraftResult,
   type SendEmailRequest
 } from '../../../shared/types'
 import { dragsFiles, fileToAttachment, looksLikeImageFile } from '../lib/attachmentFile'
@@ -20,6 +21,7 @@ export interface ComposerAttachments {
   attachments: ComposeAttachment[]
   field: Pick<SendEmailRequest, 'attachments'>
   retained: Pick<SaveDraftRequest, 'retainAttachments'>
+  adoptSaved: (result: SaveDraftResult) => void
   error: string | null
   ready: boolean
   loading: boolean
@@ -82,7 +84,9 @@ export function useComposerAttachments(
   const ready = !loading && failed.length === 0
   const attachmentsRef = useRef<ComposeAttachment[]>([])
   const mountedRef = useRef(false)
-  const messageId = prefill?.messageId
+  const [messageId, setMessageId] = useState(prefill?.messageId)
+  const messageIdRef = useRef(messageId)
+  const aliasesRef = useRef(new Map<string, { messageId: string; ref: MessageAttachmentRef }>())
   const [dropping, setDropping] = useState(false)
   // Nesting depth of the drag over this composer; zero means no drag is
   // hovering, and the counter beats per-element leave events that fire
@@ -96,6 +100,7 @@ export function useComposerAttachments(
 
   const loadOriginals = useCallback(
     async (refs: MessageAttachmentRef[], isAlive: () => boolean): Promise<void> => {
+      const messageId = messageIdRef.current
       if (!messageId) return
       const results = await Promise.all(
         refs.map(async (ref) => {
@@ -112,12 +117,19 @@ export function useComposerAttachments(
         })
       )
       if (!isAlive()) return
+      for (const result of results) {
+        result.ref =
+          aliasesRef.current.get(`${messageId}~${result.ref.attachmentId}`)?.ref ?? result.ref
+        if (result.failed) result.failed = result.ref
+      }
       replaceAttachments([
         ...attachmentsRef.current,
         ...results.flatMap((result) => (result.attachment ? [result.attachment] : []))
       ])
       setFailed((prev) => [
-        ...prev.filter((ref) => !refs.some((attempt) => attempt.attachmentId === ref.attachmentId)),
+        ...prev.filter(
+          (ref) => !results.some((attempt) => attempt.ref.attachmentId === ref.attachmentId)
+        ),
         ...results.flatMap((result) => (result.failed ? [result.failed] : []))
       ])
       setUnresolved((prev) =>
@@ -131,8 +143,32 @@ export function useComposerAttachments(
       setError(null)
       setLoading(false)
     },
-    [messageId, replaceAttachments]
+    [replaceAttachments]
   )
+
+  const adoptSaved = useCallback((result: SaveDraftResult): void => {
+    if (!mountedRef.current) return
+    for (const { previousAttachmentId, ref } of result.retainedAttachments) {
+      for (const [key, value] of aliasesRef.current) {
+        if (
+          value.messageId === result.previousMessageId &&
+          value.ref.attachmentId === previousAttachmentId
+        )
+          aliasesRef.current.set(key, { messageId: result.messageId, ref })
+      }
+      aliasesRef.current.set(`${result.previousMessageId}~${previousAttachmentId}`, {
+        messageId: result.messageId,
+        ref
+      })
+    }
+    const remap = (ref: MessageAttachmentRef): MessageAttachmentRef =>
+      result.retainedAttachments.find((entry) => entry.previousAttachmentId === ref.attachmentId)
+        ?.ref ?? ref
+    messageIdRef.current = result.messageId
+    setMessageId(result.messageId)
+    setUnresolved((prev) => prev.map(remap))
+    setFailed((prev) => prev.map(remap))
+  }, [])
 
   useEffect(() => {
     let alive = true
@@ -279,6 +315,7 @@ export function useComposerAttachments(
     field,
     retained:
       unresolved.length && messageId ? { retainAttachments: { messageId, refs: unresolved } } : {},
+    adoptSaved,
     error: failed.length
       ? `Could not load: ${failed.map((ref) => ref.filename).join(', ')}`
       : error,

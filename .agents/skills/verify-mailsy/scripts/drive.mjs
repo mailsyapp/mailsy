@@ -525,6 +525,8 @@ try {
 
     for (const scenario of [
       'loading',
+      'rotate',
+      'rotate-queued',
       'edit',
       'remove',
       'retry',
@@ -573,7 +575,11 @@ try {
           .click()
         await page
           .getByRole('complementary', { name: 'Drafts' })
-          .getByRole('button', { name: /^Draft: Q4 attachments/ })
+          .getByRole('button', {
+            name: scenario.startsWith('rotate')
+              ? /^Draft: rotating originals/
+              : /^Draft: Q4 attachments/
+          })
           .click()
         await content.getByLabel('Subject', { exact: true }).waitFor()
       }
@@ -596,7 +602,7 @@ try {
         )
         assert(
           await page.evaluate(async () => {
-            const stored = await window.api.getMessage('msg-draft-q4')
+            const stored = await window.api.getMessage(window.__draftSaves.at(-1).messageId)
             const ref = stored.attachments[0]
             return (
               stored.subject === 'Held attachment draft' &&
@@ -655,6 +661,121 @@ try {
           'picking after loading sends both the original and the picked bytes',
           'loading or picking lost attachment bytes'
         )
+      } else if (scenario === 'rotate') {
+        await content.getByRole('button', { name: 'Retry first.bin', exact: true }).waitFor()
+        await content.getByLabel('Subject', { exact: true }).fill('Rotated once')
+        await page.clock.fastForward(1800)
+        await page.waitForFunction(() => window.__draftSaves.length === 1)
+        await page.clock.fastForward(3600)
+        assert(
+          await page.evaluate(() => window.__draftSaves.length === 1),
+          'adopting replacement refs does not create an autosave loop',
+          'identity-only changes caused extra saves'
+        )
+        assert(
+          await page.evaluate(async () => {
+            try {
+              await window.__readStoredAttachment('msg-rotating', 'rotate-a')
+              return false
+            } catch {
+              return true
+            }
+          }),
+          'saving retires the old message and attachment ids',
+          'the fixture kept old attachment ids alive'
+        )
+        await page.evaluate(() => {
+          window.__attachmentMode = 'ok'
+        })
+        await content.getByRole('button', { name: 'Retry first.bin', exact: true }).click()
+        assert(
+          (await content.getByRole('button', { name: 'Remove first.bin', exact: true }).count()) ===
+            1 &&
+            (await content
+              .getByRole('button', { name: 'Retry first.bin', exact: true })
+              .count()) === 0,
+          'Retry succeeds using the replacement message and attachment ids',
+          'Retry after saved message replacement did not load the original'
+        )
+        await content.getByLabel('Subject', { exact: true }).fill('Rotated twice')
+        await page.clock.fastForward(1800)
+        await page.waitForFunction(() => window.__draftSaves.length >= 2)
+        assert(
+          await page.evaluate(() => {
+            const [first, second] = window.__draftSaves
+            return (
+              second.subject === 'Rotated twice' &&
+              second.retainAttachments.messageId === first.messageId &&
+              second.retainAttachments.refs.length === 1 &&
+              second.retainAttachments.refs[0].filename === 'second.bin'
+            )
+          }),
+          'the next autosave retains the remaining original using refreshed refs',
+          'the next autosave used stale original refs'
+        )
+        await content.getByRole('button', { name: 'Retry second.bin', exact: true }).click()
+        await page.waitForFunction(
+          () => !document.querySelector('button[aria-label="Retry second.bin"]')
+        )
+        await send.click()
+        await content.getByText('Message sent.', { exact: true }).waitFor()
+        assert(
+          await page.evaluate(
+            () =>
+              window.__sent[0]?.attachments?.length === 2 &&
+              window.__sent[0].attachments.some(
+                (file) => file.filename === 'first.bin' && file.data === 'Zmlyc3Q='
+              ) &&
+              window.__sent[0].attachments.some(
+                (file) => file.filename === 'second.bin' && file.data === 'c2Vjb25k'
+              )
+          ),
+          'both originals still send after successive message replacements',
+          'a replacement lost original bytes'
+        )
+        await snapshot(page, 'draft-attachments-rotated')
+      } else if (scenario === 'rotate-queued') {
+        await content.getByRole('button', { name: 'Retry first.bin', exact: true }).waitFor()
+        await page.evaluate(() => {
+          const saveDraft = window.api.saveDraft
+          let first = true
+          window.api.saveDraft = async (request) => {
+            const result = await saveDraft(request)
+            if (first) {
+              first = false
+              await new Promise((resolve) => {
+                window.__releaseSavedDraft = resolve
+              })
+            }
+            return result
+          }
+        })
+        await content.getByLabel('Subject', { exact: true }).fill('First queued edit')
+        await page.clock.fastForward(1800)
+        await page.waitForFunction(() => typeof window.__releaseSavedDraft === 'function')
+        await content.getByRole('button', { name: 'Remove first.bin', exact: true }).click()
+        await content.getByLabel('Subject', { exact: true }).fill('Dismissed queued edit')
+        await page
+          .getByRole('navigation', { name: 'Mail folders' })
+          .getByRole('button', { name: 'Inbox', exact: true })
+          .click()
+        await page.evaluate(() => window.__releaseSavedDraft())
+        await page.waitForFunction(() => window.__draftSaves.length === 2)
+        assert(
+          await page.evaluate(async () => {
+            const [first, second] = window.__draftSaves
+            const stored = await window.api.getMessage(second.messageId)
+            return (
+              second.subject === 'Dismissed queued edit' &&
+              second.retainAttachments.messageId === first.messageId &&
+              stored.attachments.length === 1 &&
+              stored.attachments[0].filename === 'second.bin'
+            )
+          }),
+          'a queued unmount save rebases ids without resurrecting a removed original',
+          'a queued save lost edits or restored removed originals'
+        )
+        await snapshot(page, 'draft-attachments-rotated-queued')
       } else if (scenario === 'edit') {
         await content.getByRole('alert').filter({ hasText: 'Could not load: q4.xlsx' }).waitFor()
         await content.getByLabel('Subject', { exact: true }).fill('Edits survive failed originals')
