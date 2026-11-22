@@ -313,9 +313,8 @@ try {
     })
   }
   const page = await context.newPage()
-  // Fast-forwarding journeys need fake timers installed before the app's
-  // intervals exist; other features run on real time, unchanged.
-  if (FEATURE === 'snooze-emulation') await page.clock.install()
+  // Install the clock before the app creates timers in time-controlled journeys.
+  if (FEATURE === 'snooze-emulation' || FEATURE === 'delete-draft') await page.clock.install()
   await page.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: 'domcontentloaded' })
 
   if (FEATURE === 'sign-in') {
@@ -353,6 +352,8 @@ try {
     await draftSubject.fill('First edit in old account')
     await page.waitForFunction(() => typeof window.__releaseOldDraftSave === 'function')
     await draftSubject.fill('Private pending edit in old account')
+    await page.getByRole('complementary', { name: 'Inbox' }).getByText(/^Old account \d+$/).first().click()
+    await draftSubject.waitFor({ state: 'detached' })
     await signOut.click()
     // Signed-out screen: the sign-in button returns and no mail rows stay
     // on the list. Both reads are the flip proof.
@@ -1202,15 +1203,18 @@ try {
     await content.getByRole('heading', { name: 'Draft', exact: true }).waitFor({ timeout: 10000 })
     const editorId = await page.evaluate(() => window.__draftSaves?.at(-1)?.draftId)
     const unsavedSubject = 'Confirmed delete discards my pending edit'
+    const pauseTime = await page.evaluate(() => Date.now() + 5000)
+    await page.clock.pauseAt(pauseTime)
     await content.getByRole('textbox', { name: 'Subject' }).fill(unsavedSubject)
     const acceptEditor = page.waitForEvent('dialog').then((d) => d.accept())
     // Scoped to the pane: the live row behind this editor also renders a
     // "delete draft" button in the list.
-    await content.getByRole('button', { name: 'delete draft' }).click()
+    await content.getByRole('button', { name: 'delete draft' }).dispatchEvent('click')
     await acceptEditor
     await content
       .getByRole('heading', { name: 'Draft', exact: true })
       .waitFor({ state: 'detached', timeout: 10000 })
+    await page.clock.resume()
     assert(true, 'confirming the editor delete closes the editor cleanly', 'editor stayed open after its own delete')
     await drafts
       .getByText('Deleted mid-edit', { exact: true })
