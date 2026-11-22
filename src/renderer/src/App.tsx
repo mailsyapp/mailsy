@@ -628,34 +628,38 @@ function App(): React.JSX.Element {
     pageRequestRef.current = requestId
     setLoadingMore(true)
     const loadPages = async (): Promise<void> => {
-      const invalidCursor = invalidCursorRef.current
-      const skipRowIds = invalidCursor
-        ? listedThreadsRef.current.map((row) => row.draftId ?? row.id)
-        : undefined
-      const previousDepth = loadedPagesRef.current
-      let depth = invalidCursor ? 0 : previousDepth
-      let pageToken: string | null | undefined = invalidCursor ? undefined : continuation
-      const incoming = new Map<string, ThreadSummary>()
-      do {
-        const page = await window.api.listFolder({
-          maxResults: committedQuery ? SEARCH_PAGE_SIZE : LIST_PAGE_SIZE,
-          pageToken,
-          ...(skipRowIds ? { skipRowIds } : {}),
-          folder: activeFolder,
-          ...(activeLabel ? { userLabelId: activeLabel.id } : {}),
-          ...(committedQuery ? { q: committedQuery } : {})
+      readPages: while (requestIdRef.current === requestId) {
+        const invalidCursor = invalidCursorRef.current
+        const skipRowIds = invalidCursor
+          ? listedThreadsRef.current.map((row) => row.draftId ?? row.id)
+          : undefined
+        const previousDepth = loadedPagesRef.current
+        let depth = invalidCursor ? 0 : previousDepth
+        let pageToken: string | null | undefined = invalidCursor ? undefined : continuation
+        const incoming = new Map<string, ThreadSummary>()
+        do {
+          const page = await window.api.listFolder({
+            maxResults: committedQuery ? SEARCH_PAGE_SIZE : LIST_PAGE_SIZE,
+            pageToken,
+            ...(skipRowIds ? { skipRowIds } : {}),
+            folder: activeFolder,
+            ...(activeLabel ? { userLabelId: activeLabel.id } : {}),
+            ...(committedQuery ? { q: committedQuery } : {})
+          })
+          if (requestIdRef.current !== requestId) return
+          if (invalidCursorRef.current !== invalidCursor) continue readPages
+          for (const row of page.threads) incoming.set(listRowKey(row), row)
+          pageToken = page.nextPageToken
+          depth++
+        } while (pageToken !== null && depth <= previousDepth)
+        const rows = [...incoming.values()]
+        setThreads((prev) => {
+          const seen = new Set(prev.map(listRowKey))
+          return [...prev, ...rows.filter((row) => !seen.has(listRowKey(row)))]
         })
-        if (requestIdRef.current !== requestId || invalidCursorRef.current !== invalidCursor) return
-        for (const row of page.threads) incoming.set(listRowKey(row), row)
-        pageToken = page.nextPageToken
-        depth++
-      } while (pageToken !== null && depth <= previousDepth)
-      const rows = [...incoming.values()]
-      setThreads((prev) => {
-        const seen = new Set(prev.map(listRowKey))
-        return [...prev, ...rows.filter((row) => !seen.has(listRowKey(row)))]
-      })
-      setPageToken(pageToken, depth)
+        setPageToken(pageToken, depth)
+        return
+      }
     }
     void loadPages()
       .catch((e: unknown) => {

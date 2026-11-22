@@ -2908,6 +2908,56 @@ try {
       'deleting one draft changed other rows'
     )
     await snapshot(page, 'pagination-draft-discard')
+    await page.evaluate(() => {
+      const api = window.__packagedFixtureApi ?? window.api
+      const list = api.listFolder
+      window.__pageAfterArchive = []
+      api.listFolder = async (options) => {
+        const result = await list(options)
+        if (options.folder === 'inbox' && options.pageToken && window.__pageAfterArchive.length === 0) {
+          window.__pageAfterArchive = result.threads.map(({ subject }) => subject)
+          await new Promise((resolve) => { window.__releaseArchivePage = resolve })
+        }
+        return result
+      }
+    })
+    await page.getByRole('button', { name: 'Inbox', exact: true }).click()
+    const archivedWhilePaging = inbox.getByText('Launch checklist', { exact: true })
+    await archivedWhilePaging.waitFor({ timeout: 5000 })
+    const pageControl = loadMore.or(inbox.getByText('Loading more...', { exact: true }))
+    if (await pageControl.evaluate((el) => el.tagName === 'BUTTON', undefined, { timeout: 5000 })) {
+      await activateLoadMore(page, inbox)
+    }
+    await page.waitForFunction(() => Boolean(window.__releaseArchivePage))
+    const shiftedRow = await page.evaluate(async () => {
+      const api = window.__packagedFixtureApi ?? window.api
+      const { threads } = await api.listFolder({ folder: 'inbox', maxResults: 30 })
+      const launch = threads.find(({ id }) => id === 'thread-launch')
+      await api.modifyLabels({ kind: 'thread', id: launch.id, removeLabelIds: ['INBOX'] })
+      window.__pushSync({
+        kind: 'delta', historyId: 'remote-archive',
+        threads: [{ ...launch, labelIds: [] }], deletedThreadIds: []
+      })
+      const page = await api.listFolder({ folder: 'inbox', maxResults: 30, pageToken: '30' })
+      return page.threads.at(-1).subject
+    })
+    await archivedWhilePaging.waitFor({ state: 'detached', timeout: 5000 })
+    assert(
+      !(await page.evaluate((subject) => window.__pageAfterArchive.includes(subject), shiftedRow)),
+      'the archive shifts a surviving thread into the held page',
+      'the held response would not miss the shifted thread'
+    )
+    await page.evaluate(() => window.__releaseArchivePage())
+    await inbox.getByText(shiftedRow, { exact: true }).waitFor({ timeout: 5000 }).catch(() => {
+      throw new Error('ASSERT: the archive interrupted Load more without retrying the shifted page')
+    })
+    assert(
+      (await rows.count()) === firstPageSize * 2,
+      'a remote archive during Load more still completes page two without another request from the user',
+      'the retry left a gap or duplicate rows across the archive boundary'
+    )
+    await snapshot(page, 'pagination-archive-during-load')
+    await page.getByRole('button', { name: 'Drafts', exact: true }).click()
     await switchDuringPagination(page)
   } else if (FEATURE === 'signature') {
     // The per-compose signature across all three surfaces: the stored text
