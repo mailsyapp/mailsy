@@ -138,7 +138,8 @@ try {
   const page = await context.newPage()
   // Fast-forwarding journeys need fake timers installed before the app's
   // intervals exist; other features run on real time, unchanged.
-  if (FEATURE === 'snooze-emulation') await page.clock.install()
+  if (FEATURE === 'snooze-emulation' || FEATURE === 'draft-attachments-safe')
+    await page.clock.install()
   await page.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: 'domcontentloaded' })
 
   if (FEATURE === 'sign-in') {
@@ -339,6 +340,215 @@ try {
       'fresh send was misshapen as a reply or draft'
     )
     await snapshot(page, 'compose-new')
+  } else if (FEATURE === 'draft-attachments-safe') {
+    const content = page.getByRole('region', { name: 'Email content' })
+    const send = content.getByRole('button', { name: 'Send', exact: true })
+    const pick = content.getByRole('button', { name: 'Attach files', exact: true })
+    await page.getByText('Launch checklist', { exact: true }).first().waitFor()
+    await page.clock.pauseAt(await page.evaluate(() => Date.now() + 60_000))
+
+    for (const scenario of ['loading', 'remove', 'retry', 'limit']) {
+      if (scenario !== 'loading') {
+        await page.reload()
+        await page.getByText('Launch checklist', { exact: true }).first().waitFor()
+      }
+      if (scenario !== 'limit') {
+        await page.evaluate(
+          (mode) => {
+            const getAttachment = window.api.getAttachment
+            const pickAttachments = window.api.pickAttachments
+            window.__attachmentMode = mode
+            window.__attachmentReads = 0
+            window.__attachmentPicks = 0
+            window.api.getAttachment = async (...args) => {
+              window.__attachmentReads++
+              if (window.__attachmentMode === 'fail')
+                throw new Error('Fixture attachment unavailable')
+              const data = await getAttachment(...args)
+              if (window.__attachmentMode === 'hold') {
+                return new Promise((resolve) => {
+                  window.__releaseAttachment = () => resolve(data)
+                })
+              }
+              return data
+            }
+            window.api.pickAttachments = async () => {
+              window.__attachmentPicks++
+              return pickAttachments()
+            }
+          },
+          scenario === 'loading' ? 'hold' : 'fail'
+        )
+        await page
+          .getByRole('navigation', { name: 'Mail folders' })
+          .getByRole('button', { name: 'Drafts', exact: true })
+          .click()
+        await page
+          .getByRole('complementary', { name: 'Drafts' })
+          .getByRole('button', { name: /^Draft: Q4 attachments/ })
+          .click()
+        await content.getByLabel('Subject', { exact: true }).waitFor()
+      }
+      if (scenario === 'loading') {
+        await page.waitForFunction(() => typeof window.__releaseAttachment === 'function')
+        await content.getByLabel('Subject', { exact: true }).fill('Held attachment draft')
+        await page.clock.fastForward(1800)
+        await snapshot(page, 'draft-attachments-loading')
+        assert(
+          (await send.isDisabled()) &&
+            (await page.evaluate(() => window.__draftSaves.length)) === 0,
+          'loading originals blocks Send and autosave',
+          'loading originals allowed Send or an attachment-stripping autosave'
+        )
+        assert(
+          await pick.isDisabled(),
+          'picking is disabled until originals load',
+          'picking is enabled during prefill'
+        )
+        await pick.evaluate((button) => button.click())
+        await content.locator('form.composer').evaluate((form) => form.requestSubmit())
+        assert(
+          (await page.evaluate(() => window.__attachmentPicks)) === 0 &&
+            (await page.evaluate(() => window.__sent.length)) === 0,
+          'blocked controls cannot pick or send before prefill settles',
+          'a blocked pick or submit reached the boundary'
+        )
+        await content.locator('form.composer').evaluate((form) => {
+          const dataTransfer = new DataTransfer()
+          dataTransfer.items.add(new File(['held drop'], 'held.txt', { type: 'text/plain' }))
+          form.dispatchEvent(
+            new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer })
+          )
+        })
+        await content.getByRole('alert').filter({ hasText: 'still loading' }).waitFor()
+        await page.evaluate(() => window.__releaseAttachment())
+        await content.getByRole('button', { name: 'Remove q4.xlsx', exact: true }).waitFor()
+        await pick.click()
+        await content
+          .getByRole('button', { name: 'Remove fixture-file.pdf', exact: true })
+          .waitFor()
+        await send.click()
+        await content.getByText('Message sent.', { exact: true }).waitFor()
+        assert(
+          await page.evaluate(() => {
+            const files = window.__sent[0]?.attachments ?? []
+            return (
+              window.__attachmentPicks === 1 &&
+              files.length === 2 &&
+              files.some(
+                (file) => file.filename === 'q4.xlsx' && file.data === 'UTQgcGxhbm5pbmcgZGF0YQ=='
+              ) &&
+              files.some(
+                (file) => file.filename === 'fixture-file.pdf' && file.data === 'Zml4dHVyZQ=='
+              )
+            )
+          }),
+          'picking after loading sends both the original and the picked bytes',
+          'loading or picking lost attachment bytes'
+        )
+      } else if (scenario === 'remove') {
+        await content.getByRole('alert').filter({ hasText: 'Could not load: q4.xlsx' }).waitFor()
+        await content
+          .getByLabel('Subject', { exact: true })
+          .fill('Explicitly remove failed original')
+        await page.clock.fastForward(1800)
+        assert(
+          (await send.isDisabled()) &&
+            (await page.evaluate(() => window.__draftSaves.length)) === 0,
+          'a failed original blocks Send and autosave',
+          'a failed original was silently omitted from a send or save'
+        )
+        await snapshot(page, 'draft-attachments-failed')
+        await content.getByRole('button', { name: 'Remove q4.xlsx', exact: true }).click()
+        await page.clock.fastForward(1800)
+        await page.waitForFunction(() => window.__draftSaves.length > 0)
+        assert(
+          await page.evaluate(() => window.__draftSaves.every((save) => !save.attachments?.length)),
+          'explicit Remove permits saving without the failed original',
+          'Remove did not clear the original from the saved draft'
+        )
+        await send.click()
+        await content.getByText('Message sent.', { exact: true }).waitFor()
+        assert(
+          await page.evaluate(
+            () => window.__sent.length === 1 && !window.__sent[0].attachments?.length
+          ),
+          'explicit Remove permits sending an empty attachment set',
+          'the removed original remained in the sent request'
+        )
+      } else if (scenario === 'retry') {
+        await content.getByRole('alert').filter({ hasText: 'Could not load: q4.xlsx' }).waitFor()
+        await content.getByLabel('Subject', { exact: true }).fill('Retry the original')
+        const readsBeforeRetry = await page.evaluate(() => window.__attachmentReads)
+        await content.getByRole('button', { name: 'Retry q4.xlsx', exact: true }).click()
+        await page.waitForFunction((before) => window.__attachmentReads > before, readsBeforeRetry)
+        await page.clock.fastForward(1800)
+        assert(
+          (await send.isDisabled()) &&
+            (await page.evaluate(() => window.__draftSaves.length)) === 0,
+          'an unsuccessful Retry leaves the original protected',
+          'an unsuccessful Retry unblocked saving or sending'
+        )
+        await page.evaluate(() => {
+          window.__attachmentMode = 'ok'
+        })
+        await content.getByRole('button', { name: 'Retry q4.xlsx', exact: true }).click()
+        await content
+          .getByRole('button', { name: 'Retry q4.xlsx', exact: true })
+          .waitFor({ state: 'detached' })
+        await page.clock.fastForward(1800)
+        await page.waitForFunction(() =>
+          window.__draftSaves.some((save) => save.attachments?.length === 1)
+        )
+        await send.click()
+        await content.getByText('Message sent.', { exact: true }).waitFor()
+        assert(
+          (await page.evaluate(
+            () => window.__sent[0]?.attachments?.[0]?.data === 'UTQgcGxhbm5pbmcgZGF0YQ=='
+          )) && (await content.getByRole('alert').count()) === 0,
+          'successful Retry restores the original bytes and clears its error',
+          'Retry lost the original bytes or retained its error'
+        )
+        await snapshot(page, 'draft-attachments-retried')
+      } else {
+        await page.getByRole('button', { name: 'Compose', exact: true }).click()
+        await content.getByLabel('To', { exact: true }).fill('test@example.com')
+        await content.locator('form.composer').evaluate((form) => {
+          for (let i = 0; i < 2; i++) {
+            const dataTransfer = new DataTransfer()
+            dataTransfer.items.add(
+              new File([new Uint8Array(12 * 1024 * 1024)], `large-${i}.bin`, {
+                type: 'application/octet-stream'
+              })
+            )
+            form.dispatchEvent(
+              new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer })
+            )
+          }
+        })
+        await content
+          .getByRole('alert')
+          .filter({ hasText: 'Attachments are too large to send (24 MB)' })
+          .waitFor()
+        assert(
+          (await content.locator('.attachmentChip').count()) === 1,
+          'concurrent 12 MiB drops reject the addition that exceeds 20 MiB',
+          'concurrent drops bypassed the cumulative attachment limit'
+        )
+        await snapshot(page, 'draft-attachments-limit')
+        await send.click()
+        await content.getByText('Message sent.', { exact: true }).waitFor()
+        assert(
+          await page.evaluate(
+            () =>
+              window.__sent[0]?.attachments?.length === 1 &&
+              window.__sent[0].attachments[0].size === 12 * 1024 * 1024
+          ),
+          'the accepted file still sends after the over-limit addition is rejected',
+          'rejecting an over-limit addition lost the accepted file'
+        )
+      }
+    }
   } else if (FEATURE === 'attachments') {
     // Compose flow: two entrances into the same set. A drag drops in first
     // (a real DragEvent carrying a constructed File — the same handler a

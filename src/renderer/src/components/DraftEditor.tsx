@@ -105,7 +105,7 @@ function DraftForm({
     event.preventDefault()
     // The Enter key submits the form even with the Send button disabled, so
     // the receipt test lives here, not only on the button.
-    if (sending || sent || !hasRecipient(recipients)) return
+    if (sending || sent || !attach.ready || !hasRecipient(recipients)) return
 
     setSending(true)
     setSendError(null)
@@ -189,7 +189,10 @@ function DraftForm({
         {/* Once sent, the draft no longer exists server-side (a second send
             would surface a confusing drafts.update 404, not a new mail), so
             the button retires instead of re-arming. */}
-        <button type="submit" disabled={sending || sent || !hasRecipient(recipients)}>
+        <button
+          type="submit"
+          disabled={sending || sent || !attach.ready || !hasRecipient(recipients)}
+        >
           {sending ? 'Sending...' : sent ? 'Sent' : 'Send'}
         </button>
       </div>

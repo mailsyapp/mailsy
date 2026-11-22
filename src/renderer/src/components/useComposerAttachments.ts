@@ -31,6 +31,10 @@ export interface ComposerAttachments {
   field: Pick<SendEmailRequest, 'attachments'>
   error: string | null
   ready: boolean
+  loading: boolean
+  failed: MessageAttachmentRef[]
+  retry: (attachmentId: string) => Promise<void>
+  removeFailed: (attachmentId: string) => void
   picking: boolean
   // True while a file drag hovers anywhere over the composer box, for the
   // dashed affordance CSS styles on `.composer-dragging`.
@@ -81,38 +85,81 @@ export function useComposerAttachments(
   const [attachments, setAttachments] = useState<ComposeAttachment[]>([])
   const [error, setError] = useState<string | null>(null)
   const [picking, setPicking] = useState(false)
-  const [ready, setReady] = useState(!prefill || prefill.refs.length === 0)
+  const [loading, setLoading] = useState(Boolean(prefill?.refs.length))
+  const [failed, setFailed] = useState<MessageAttachmentRef[]>([])
+  const ready = !loading && failed.length === 0
+  const attachmentsRef = useRef<ComposeAttachment[]>([])
+  const mountedRef = useRef(false)
+  const messageId = prefill?.messageId
   const [dropping, setDropping] = useState(false)
   // Nesting depth of the drag over this composer; zero means no drag is
   // hovering, and the counter beats per-element leave events that fire
   // while moving across children.
   const dropDepth = useRef(0)
 
+  const replaceAttachments = useCallback((next: ComposeAttachment[]): void => {
+    attachmentsRef.current = next
+    setAttachments(next)
+  }, [])
+
+  const loadOriginals = useCallback(
+    async (refs: MessageAttachmentRef[], isAlive: () => boolean): Promise<void> => {
+      if (!messageId) return
+      const results = await Promise.all(
+        refs.map(async (ref) => {
+          try {
+            const data = await window.api.getAttachment(messageId, ref.attachmentId)
+            return { attachment: { filename: ref.filename, size: ref.size, data }, failed: null }
+          } catch {
+            return { attachment: null, failed: ref }
+          }
+        })
+      )
+      if (!isAlive()) return
+      replaceAttachments([
+        ...attachmentsRef.current,
+        ...results.flatMap((result) => (result.attachment ? [result.attachment] : []))
+      ])
+      setFailed((prev) => [
+        ...prev.filter((ref) => !refs.some((attempt) => attempt.attachmentId === ref.attachmentId)),
+        ...results.flatMap((result) => (result.failed ? [result.failed] : []))
+      ])
+      setError(null)
+      setLoading(false)
+    },
+    [messageId, replaceAttachments]
+  )
+
   useEffect(() => {
-    if (!prefill || prefill.refs.length === 0) return
     let alive = true
-    Promise.all(
-      prefill.refs.map(async (ref) => {
-        try {
-          const data = await window.api.getAttachment(prefill.messageId, ref.attachmentId)
-          return { attachment: { filename: ref.filename, size: ref.size, data }, failed: null }
-        } catch {
-          return { attachment: null, failed: ref.filename }
-        }
-      })
-    ).then((results) => {
-      if (!alive) return
-      setAttachments(results.flatMap((result) => (result.attachment ? [result.attachment] : [])))
-      const failedNames = results.flatMap((result) => (result.failed ? [result.failed] : []))
-      if (failedNames.length) setError(`Could not load: ${failedNames.join(', ')}`)
-      setReady(true)
-    })
+    mountedRef.current = true
+    if (prefill?.refs.length) void loadOriginals(prefill.refs, () => alive)
     return () => {
       alive = false
+      mountedRef.current = false
     }
     // The refs settle once per open draft: key={detail.id} remounts the form.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  const retry = useCallback(
+    async (attachmentId: string): Promise<void> => {
+      const ref = failed.find((entry) => entry.attachmentId === attachmentId)
+      if (loading || !ref) return
+      setLoading(true)
+      await loadOriginals([ref], () => mountedRef.current)
+    },
+    [failed, loading, loadOriginals]
+  )
+
+  const removeFailed = useCallback(
+    (attachmentId: string): void => {
+      if (loading) return
+      setFailed((prev) => prev.filter((ref) => ref.attachmentId !== attachmentId))
+      setError(null)
+    },
+    [loading]
+  )
 
   // One entrance for every way files arrive: the cumulative budget is
   // checked over the joined set, so splitting the bytes across a picker
@@ -121,19 +168,21 @@ export function useComposerAttachments(
     (incoming: ComposeAttachment[]): void => {
       if (incoming.length === 0) return
       const joinedBytes =
-        attachments.reduce((sum, attachment) => sum + decodedAttachmentBytes(attachment), 0) +
-        incoming.reduce((sum, attachment) => sum + decodedAttachmentBytes(attachment), 0)
+        attachmentsRef.current.reduce(
+          (sum, attachment) => sum + decodedAttachmentBytes(attachment),
+          0
+        ) + incoming.reduce((sum, attachment) => sum + decodedAttachmentBytes(attachment), 0)
       if (joinedBytes > ATTACHMENTS_TOTAL_LIMIT_BYTES) {
         setError(attachmentsLimitError(joinedBytes))
         return
       }
-      setAttachments((prev) => [...prev, ...incoming])
+      replaceAttachments([...attachmentsRef.current, ...incoming])
     },
-    [attachments]
+    [replaceAttachments]
   )
 
   const pick = useCallback(async (): Promise<void> => {
-    if (picking) return
+    if (picking || !ready) return
     setPicking(true)
     setError(null)
     try {
@@ -145,7 +194,7 @@ export function useComposerAttachments(
     } finally {
       setPicking(false)
     }
-  }, [picking, push])
+  }, [picking, push, ready])
 
   // The drag entrance. The dropped File objects are read right here in
   // the renderer: their bytes are already on this side of the bridge, so
@@ -204,22 +253,31 @@ export function useComposerAttachments(
     [addFiles, bodyEditorRef]
   )
 
-  const remove = useCallback((index: number) => {
-    setAttachments((prev) => prev.filter((_, i) => i !== index))
-  }, [])
+  const remove = useCallback(
+    (index: number) => {
+      replaceAttachments(attachmentsRef.current.filter((_, i) => i !== index))
+    },
+    [replaceAttachments]
+  )
 
   const clear = useCallback(() => {
-    setAttachments([])
+    replaceAttachments([])
     setError(null)
-  }, [])
+  }, [replaceAttachments])
 
   const field: Pick<SendEmailRequest, 'attachments'> = attachments.length > 0 ? { attachments } : {}
 
   return {
     attachments,
     field,
-    error,
+    error: failed.length
+      ? `Could not load: ${failed.map((ref) => ref.filename).join(', ')}`
+      : error,
     ready,
+    loading,
+    failed,
+    retry,
+    removeFailed,
     picking,
     dropping,
     drop,
