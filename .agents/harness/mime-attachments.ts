@@ -58,6 +58,18 @@ const plain = await buildRawMessage('me@example.com', {
 })
 assert.equal(Buffer.from(base64UrlToBuffer(plain)).toString('utf-8').includes('multipart/mixed'), false, 'plain message stays single part')
 
+const empty = base64UrlToBuffer(
+  await buildRawMessage('me@example.com', {
+    to: 'you@example.com',
+    subject: 'empty file',
+    body: 'body text',
+    attachments: [{ filename: 'empty.bin', size: 0, data: '' }]
+  })
+).toString('utf-8')
+assert.match(empty, /multipart\/mixed/)
+assert.match(empty, /Content-Disposition: attachment; filename=empty\.bin\r?\n\r?\n(?:\r?\n)?--/)
+console.log('pass: MIME keeps a named zero-byte attachment with an empty part body')
+
 // Inline body images: a composed rich body carries data URLs; the raw
 // message carries them as cid parts grouped with the html (multipart/
 // related), the text fallback unchanged.
