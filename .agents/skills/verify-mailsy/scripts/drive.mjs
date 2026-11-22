@@ -155,7 +155,7 @@ try {
     page = await context.newPage()
     // Fast-forwarding journeys need fake timers installed before the app's
     // intervals exist; other features run on real time, unchanged.
-    if (FEATURE === 'snooze-emulation') await page.clock.install()
+    if (FEATURE === 'snooze-emulation' || FEATURE === 'background-work') await page.clock.install()
     await page.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: 'domcontentloaded' })
   }
 
@@ -2839,6 +2839,12 @@ try {
 
     const rail = page.getByRole('navigation', { name: 'Mail folders' })
     const tipsActive = () => rail.evaluate((nav) => nav.classList.contains('tips-active'))
+    await page.getByRole('searchbox', { name: 'Search emails' }).hover()
+    await page.waitForFunction(
+      () => !document.querySelector('.folder-rail')?.classList.contains('tips-active'),
+      undefined,
+      { timeout: 5000 }
+    )
     await rail.getByRole('button', { name: 'Starred', exact: true }).hover()
     await page.waitForTimeout(200)
     assert(!(await tipsActive()), 'a rail tooltip stays hidden before the dwell', 'the tooltip showed with no dwell')
@@ -2861,25 +2867,29 @@ try {
     )
     assert(true, 'leaving the rail hides the tooltip', 'the tooltip stayed after the pointer left')
 
+    await page.clock.pauseAt(await page.evaluate(() => Date.now() + 60_000))
     const content = page.getByRole('region', { name: 'Email content' })
     await page.getByRole('button', { name: 'Compose', exact: true }).click()
     await content.getByRole('heading', { name: 'New email' }).waitFor({ timeout: 10000 })
     await content.locator('.composerField input').first().fill('brook@example.com')
     await content.locator('.composerField input').nth(1).fill('Closed before the autosave')
     await content.locator('.body-editor').fill('Typed and abandoned at once.')
+    await page.clock.runFor(1)
+    const pausedAt = await page.evaluate(() => Date.now())
     const savesBeforeClose = await page.evaluate(() => (window.__draftSaves ?? []).length)
     await rows.first().click()
     await content.getByRole('heading', { name: 'New email' }).waitFor({ state: 'detached', timeout: 10000 })
     await page.waitForFunction(() => (window.__draftSaves ?? []).length >= 1, undefined, { timeout: 5000 })
     const saves = await page.evaluate(() => window.__draftSaves)
     assert(
-      savesBeforeClose === 0 &&
+      (await page.evaluate(() => Date.now())) === pausedAt &&
+        savesBeforeClose === 0 &&
         saves.length === 1 &&
         JSON.stringify(saves[0]).includes('Typed and abandoned at once.'),
       'closing a compose inside the autosave delay still saves it, once',
       `the abandoned compose was not saved exactly once (before close ${savesBeforeClose}, after ${saves.length})`
     )
-    await page.waitForTimeout(1800)
+    await page.clock.fastForward(1800)
     assert(
       (await page.evaluate(() => window.__draftSaves.length)) === 1 &&
         (await page.evaluate(() => (window.__sent ?? []).length)) === 0,
