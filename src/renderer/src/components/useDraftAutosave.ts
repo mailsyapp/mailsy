@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { errorMessage } from '../lib/format'
-import type { SendEmailRequest } from '../../../shared/types'
+import type { DraftVersion, SendDraftRequest, SendEmailRequest } from '../../../shared/types'
 
 // The composer fields the bridge persists. The optional send fields ride
 // along for drafts that already carry threading (an existing draft keeps
@@ -18,7 +18,7 @@ export interface DraftAutosave {
   flushPending: () => Promise<void>
   // Send wraps its bridge call with these: suspended dispatches no new
   // write, so content typed under a sending send can never interleave the
-  // atomic update+send pair in the main process. A failed send resumes so
+  // draft send in the main process. A failed send resumes so
   // the retry attempt still autosaves.
   suspend: () => void
   resume: () => void
@@ -26,7 +26,7 @@ export interface DraftAutosave {
   // Cancel discarded it): the pending timer and the unmount flush stand
   // down instead of writing to a retired draft id.
   stop: () => void
-  currentDraftId: () => string | undefined
+  currentDraft: () => Pick<SendDraftRequest, 'draftId' | 'expectedMessageId'> | undefined
   status: 'idle' | 'saving' | 'saved'
   error: string | null
 }
@@ -39,14 +39,14 @@ export interface DraftAutosave {
 // user text.
 export function useDraftAutosave(
   fields: AutosaveFields,
-  initialDraftId: string | undefined,
+  initialDraft: DraftVersion | undefined,
   enabled: boolean
 ): DraftAutosave {
   const [status, setStatus] = useState<DraftAutosave['status']>('idle')
   const [error, setError] = useState<string | null>(null)
 
   const fieldsRef = useRef(fields)
-  const draftIdRef = useRef(initialDraftId)
+  const draftRef = useRef(initialDraft)
   // The serialized fields already on the draft: unchanged renders and
   // untouched composers never schedule a write.
   const lastSavedRef = useRef(JSON.stringify(fields))
@@ -82,13 +82,14 @@ export function useDraftAutosave(
         // write away, and the same string records what was written below.
         const written = JSON.stringify(fieldsRef.current)
         if (written === lastSavedRef.current) return
+        const target = draftRef.current
         return window.api
           .saveDraft({
             ...fieldsRef.current,
-            ...(draftIdRef.current ? { draftId: draftIdRef.current } : {})
+            ...(target ? { draftId: target.draftId, expectedMessageId: target.messageId } : {})
           })
-          .then((draftId) => {
-            draftIdRef.current = draftId
+          .then((draft) => {
+            draftRef.current = draft
             lastSavedRef.current = written
             setStatus('saved')
             setError(null)
@@ -158,7 +159,7 @@ export function useDraftAutosave(
       }
       // Await the in-flight write itself, not the ref object: a ref has no
       // `then`, so awaiting it would resolve before the save does and send
-      // would read currentDraftId() while the drafts.create still flew.
+      // would read the draft version while drafts.create still flew.
       await pendingSaveRef.current
     },
     stop: (): void => {
@@ -178,10 +179,12 @@ export function useDraftAutosave(
     resume: (): void => {
       suspendedRef.current = false
     },
-    currentDraftId: (): string | undefined =>
-      // Retired after send or Cancel: the draft was consumed or discarded,
-      // so it no longer exists for any later write to target.
-      retiredRef.current ? undefined : draftIdRef.current,
+    currentDraft: () => {
+      const draft = draftRef.current
+      return !retiredRef.current && draft
+        ? { draftId: draft.draftId, expectedMessageId: draft.messageId }
+        : undefined
+    },
     status,
     error
   }

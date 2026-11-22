@@ -94,7 +94,11 @@ function DraftForm({
   // dismissed edit (row click, folder switch, reset) is not lost either.
   // Rows without a draft id keep today's no-autosave shape: they send fresh
   // and cannot be updated.
-  const autosave = useDraftAutosave(request, draftId, draftId !== undefined && attach.ready)
+  const autosave = useDraftAutosave(
+    request,
+    draftId ? { draftId, messageId: detail.id } : undefined,
+    draftId !== undefined && attach.ready
+  )
 
   async function handleSend(event: React.FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault()
@@ -109,15 +113,9 @@ function DraftForm({
       await autosave.flushPending()
       autosave.suspend()
       try {
-        if (draftId) {
-          // Atomic send: drafts.send removes the draft server-side in the same
-          // operation. Sending succeeds => the row is guaranteed to be pruned
-          // by App; a failure here leaves the draft and this form (with its
-          // error) in place to retry — never a silently lingering draft. The
-          // draft's own In-Reply-To header is the message it replies to;
-          // detail.messageId is the draft's unsent Message-ID and would be
-          // bogus to send.
-          await window.api.sendDraft({ draftId, ...request })
+        const target = autosave.currentDraft()
+        if (target) {
+          await window.api.sendDraft({ ...request, ...target })
         } else {
           // No draft ID (shouldn't happen for rows from the Drafts folder):
           // send as a new message without the stored linkage, and do NOT

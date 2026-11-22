@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 import type {
   ComposeAttachment,
+  DraftVersion,
   EmailDetail,
   EmailThread,
   ListFolderOptions,
@@ -41,14 +42,15 @@ const api = {
       ipcRenderer.removeListener('gmail:sync-result', wrapped)
     }
   },
-  getMessage: (id: string): Promise<EmailDetail> => ipcRenderer.invoke('gmail:get', id),
+  getMessage: (id: string, draftId?: string): Promise<EmailDetail> =>
+    ipcRenderer.invoke('gmail:get', id, draftId),
   getThread: (threadId: string): Promise<EmailThread> =>
     ipcRenderer.invoke('gmail:thread', threadId),
   sendEmail: (request: SendEmailRequest): Promise<void> =>
     ipcRenderer.invoke('gmail:send', request),
   sendDraft: (request: SendDraftRequest): Promise<void> =>
     ipcRenderer.invoke('gmail:send-draft', request),
-  saveDraft: (request: SaveDraftRequest): Promise<string> =>
+  saveDraft: (request: SaveDraftRequest): Promise<DraftVersion> =>
     ipcRenderer.invoke('gmail:save-draft', request),
   discardDraft: (draftId: string): Promise<void> =>
     ipcRenderer.invoke('gmail:discard-draft', draftId),

@@ -977,10 +977,39 @@ try {
       'a renamed draft stays open after leaving the search results',
       'the search reset closed a draft that still exists'
     )
+    await subjectField.fill('Another local rename')
+    await page.waitForFunction(() =>
+      window.__draftSaves.some((draft) => draft.draftId === 'draft-q4' && draft.subject === 'Another local rename')
+    )
+    await page.evaluate(async () => {
+      const api = window.__packagedFixtureApi ?? window.api
+      await api.saveDraft({
+        draftId: 'draft-q4', to: 'remote@example.com',
+        subject: 'Remote edit', body: 'Edited in Gmail'
+      })
+    })
+    await subjectField.fill('Local edit that must stay visible')
+    const conflict = content.getByRole('alert').filter({ hasText: 'Draft changed in Gmail' })
+    await conflict.waitFor({ timeout: 5000 }).catch(() => {
+      throw new Error('ASSERT: autosaving an off-list draft silently overwrote a newer Gmail edit')
+    })
+    await content.getByRole('button', { name: 'Send', exact: true }).click()
+    await content.getByRole('alert').filter({ hasText: /^Draft changed in Gmail/ }).waitFor({ timeout: 5000 })
+    assert(
+      (await subjectField.inputValue()) === 'Local edit that must stay visible' &&
+        (await page.evaluate(() => window.__draftSaves.filter((d) => d.draftId === 'draft-q4').at(-1).subject)) === 'Remote edit' &&
+        (await page.evaluate(() => window.__sent.some((entry) => entry.draftId === 'draft-q4'))) === false,
+      'autosave and send preserve the newer Gmail draft and leave local text visible',
+      'a conflict discarded either the newer Gmail draft or the local edit'
+    )
+    await snapshot(page, 'drafts-search-edit-conflict')
     await page.evaluate(async () => {
       const api = window.__packagedFixtureApi ?? window.api
       await api.discardDraft('draft-q4')
-      window.__pushSync({ kind: 'reset' })
+      window.__pushSync({
+        kind: 'delta', historyId: 'remote-draft-delete',
+        threads: [], deletedThreadIds: ['thread-draft-q4']
+      })
     })
     await editor.waitFor({ state: 'detached', timeout: 5000 }).catch(() => {
       throw new Error('ASSERT: a deleted draft remains editable after a search refresh')
@@ -1167,6 +1196,15 @@ try {
       { timeout: 10000 }
     )
     assert(true, 'draft edit autosaved on the stored draft id', 'draft edit did not autosave')
+    await drafts.getByText('Draft: Q4 attachments', { exact: true }).first().click()
+    await content.getByRole('heading', { name: 'Draft', exact: true }).waitFor({ timeout: 10000 })
+    await drafts.getByText('Draft: Q4 planning notes', { exact: true }).first().click()
+    await content.getByRole('heading', { name: 'Draft', exact: true }).waitFor({ timeout: 10000 })
+    assert(
+      (await bodyTextOf(content.locator('.body-editor'))).includes('Adding the Q4 agenda line.'),
+      'reopening from the still-loaded draft row reads the current Gmail message',
+      'the still-loaded row opened an older draft message'
+    )
     await page.getByRole('button', { name: 'Inbox' }).click()
     await inbox.waitFor({ timeout: 10000 })
     await page.getByText('Launch checklist', { exact: true }).first().click()
@@ -2964,6 +3002,7 @@ try {
         if (options.folder === 'inbox' && options.pageToken && window.__pageAfterArchive.length === 0) {
           window.__pageAfterArchive = result.threads.map(({ subject }) => subject)
           await new Promise((resolve) => { window.__releaseArchivePage = resolve })
+          throw new Error('Invalid page token')
         }
         return result
       }

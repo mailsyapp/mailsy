@@ -24,7 +24,7 @@ type ComposeEditorProps = {
 // The compose autosaves into a real Gmail draft as it is typed, Gmail-style:
 // closing the pane without Cancel or Send (row click, folder switch, reset)
 // leaves the draft in the Drafts folder instead of losing the text. Cancel
-// discards it; Send consumes it through the atomic update+send pair.
+// discards it; Send consumes it through drafts.send.
 export function ComposeEditor({ onClose }: ComposeEditorProps): React.JSX.Element {
   // One recipients block, not three loose lines: a recipient edit is one
   // spread and the send payloads reuse the object as-is.
@@ -58,7 +58,7 @@ export function ComposeEditor({ onClose }: ComposeEditorProps): React.JSX.Elemen
     // leaves the draft in the Drafts folder — visible there, never
     // silently lost.
     await autosave.flushPending()
-    const draftId = autosave.currentDraftId()
+    const draftId = autosave.currentDraft()?.draftId
     autosave.stop()
     onClose()
     if (draftId) void window.api.discardDraft(draftId)
@@ -74,17 +74,16 @@ export function ComposeEditor({ onClose }: ComposeEditorProps): React.JSX.Elemen
     setSendError(null)
     try {
       // Absorb any autosave write in flight, then branch by whether the
-      // compose has a server draft at all: with one, send through the
-      // atomic update+send pair so it is consumed in the same operation
-      // (messages.send would leave the live draft lingering in Drafts);
+      // compose has a server draft at all: with one, send through
+      // drafts.send so it is consumed in the same operation;
       // without one, the typed-and-sent-instantly case is still today's
       // fresh send.
       await autosave.flushPending()
-      const draftId = autosave.currentDraftId()
+      const target = autosave.currentDraft()
       autosave.suspend()
       try {
-        if (draftId) {
-          await window.api.sendDraft({ draftId, ...request })
+        if (target) {
+          await window.api.sendDraft({ ...request, ...target })
         } else {
           await window.api.sendEmail(request)
         }

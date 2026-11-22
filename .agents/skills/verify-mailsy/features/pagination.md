@@ -25,7 +25,7 @@ Run `node scripts/drive.mjs --feature pagination --run-id "$RUN_ID" --port "$VER
 
 - **Overlap.** Seed 64 additional Inbox threads, activate **Load more**, and hold the response. Deliver new mail and push two resets. Releasing the response shows both the delivery and page two.
 - **Removals.** Archive and delete two threads from page two, then activate **Load more**. The remaining threads each appear once and there is no fourth page.
-- **Remote archive during pagination.** Hold page two, archive a page-one thread in the mailbox, and push its delta. Releasing the stale page retries with a rebuilt cursor and shows both pages without a second click.
+- **Remote archive during pagination.** Hold page two, archive a page-one thread in the mailbox, and push its delta. Reject the old token; the app rebuilds the cursor and shows both pages without a second click.
 - **Shared conversation.** Load the first two of three Drafts pages, with three drafts from one conversation. Send one and use **Load more** during the send confirmation to reach every surviving draft before deleting another. Only the selected rows leave the list.
 - **Switch views.** Hold Inbox's next page, switch to Drafts or Receipts, and start paging there. Releasing the old response neither changes the destination rows nor ends its loading state.
 - **Proof.** `pagination-overlap`, `pagination`, `pagination-archive-during-load`, `pagination-drafts`, `pagination-draft-send`, `pagination-draft-discard`, `pagination-switch-drafts`, and `pagination-switch-receipts` snapshots and screenshots, plus `pagination.log`.

@@ -5,8 +5,16 @@ import { base64UrlToBuffer } from './mime'
 import { noteHistoryId } from './sync'
 import { DETAIL_CONCURRENCY, mapWithConcurrency, withQuotaRetry } from './resilience'
 
-export async function fetchMessage(id: string): Promise<EmailDetail> {
+export async function fetchMessage(id: string, draftId?: string): Promise<EmailDetail> {
   const gmail = getGmailClient()
+  if (draftId !== undefined) {
+    if (typeof draftId !== 'string' || !draftId.trim()) throw new Error('Draft ID is required')
+    const draft = await withQuotaRetry(() =>
+      gmail.users.drafts.get({ userId: 'me', id: draftId, format: 'full' })
+    )
+    if (!draft.data.message?.id) throw new Error('Gmail returned no draft message')
+    return toEmailDetail(gmail, draft.data.message)
+  }
   const msg = await withQuotaRetry(() =>
     gmail.users.messages.get({ userId: 'me', id, format: 'full' })
   )

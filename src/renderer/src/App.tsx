@@ -79,7 +79,7 @@ function App(): React.JSX.Element {
   )
 
   const selectionRef = useRef<string | null>(null)
-  const selectedDraftRef = useRef<{ key: string; id: string } | null>(null)
+  const selectedDraftRef = useRef<{ key: string; id: string; threadId: string } | null>(null)
   const sentinelRef = useRef<HTMLDivElement | null>(null)
   const sidebarRef = useRef<HTMLElement | null>(null)
   const requestIdRef = useRef(0)
@@ -268,18 +268,21 @@ function App(): React.JSX.Element {
     const draftHere = draftsFolder || (activeFolder === 'all' && row.hasDraft === true)
     setSelectedIsDraft(draftHere)
     if (!draftHere) return
-    if (row.draftId) selectedDraftRef.current = { key: rowKey, id: row.draftId }
+    const draft = row.draftId ? { key: rowKey, id: row.draftId, threadId: row.id } : null
+    selectedDraftRef.current = draft
+    const stillSelected = (): boolean =>
+      selectionRef.current === rowKey && selectedDraftRef.current === draft
     setDraftDetailLoading(true)
     window.api
-      .getMessage(row.messageIds[row.messageIds.length - 1])
+      .getMessage(row.messageIds[row.messageIds.length - 1], row.draftId)
       .then((detail) => {
-        if (selectionRef.current === rowKey) setDraftDetail(detail)
+        if (stillSelected()) setDraftDetail(detail)
       })
       .catch((e: unknown) => {
-        if (selectionRef.current === rowKey) recordError(e)
+        if (stillSelected()) recordError(e)
       })
       .finally(() => {
-        if (selectionRef.current === rowKey) setDraftDetailLoading(false)
+        if (stillSelected()) setDraftDetailLoading(false)
       })
   }
 
@@ -650,14 +653,23 @@ function App(): React.JSX.Element {
         let pageToken: string | null | undefined = invalidCursor ? undefined : continuation
         const incoming = new Map<string, ThreadSummary>()
         do {
-          const page = await window.api.listFolder({
-            maxResults: committedQuery ? SEARCH_PAGE_SIZE : LIST_PAGE_SIZE,
-            pageToken,
-            ...(skipRowIds ? { skipRowIds } : {}),
-            folder: activeFolder,
-            ...(activeLabel ? { userLabelId: activeLabel.id } : {}),
-            ...(committedQuery ? { q: committedQuery } : {})
-          })
+          let page: ThreadPage
+          try {
+            page = await window.api.listFolder({
+              maxResults: committedQuery ? SEARCH_PAGE_SIZE : LIST_PAGE_SIZE,
+              pageToken,
+              ...(skipRowIds ? { skipRowIds } : {}),
+              folder: activeFolder,
+              ...(activeLabel ? { userLabelId: activeLabel.id } : {}),
+              ...(committedQuery ? { q: committedQuery } : {})
+            })
+          } catch (e) {
+            if (requestIdRef.current !== requestId) return
+            if (!isDeadGrantError(e) && invalidCursorRef.current !== invalidCursor) {
+              continue readPages
+            }
+            throw e
+          }
           if (requestIdRef.current !== requestId) return
           if (invalidCursorRef.current !== invalidCursor) continue readPages
           for (const row of page.threads) incoming.set(listRowKey(row), row)
@@ -857,7 +869,9 @@ function App(): React.JSX.Element {
         })
       }
       const listedIds = new Set(threads.map((row) => row.id))
+      const draft = selectedDraftRef.current
       if (
+        (draft && result.deletedThreadIds.includes(draft.threadId)) ||
         result.deletedThreadIds.some((id) => listedIds.has(id)) ||
         result.threads.some(
           (row) => viewLabel === null || row.labelIds.includes(viewLabel) || listedIds.has(row.id)

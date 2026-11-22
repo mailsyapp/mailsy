@@ -1,8 +1,9 @@
-import { getAccountEmail, getGmailClient } from '../auth'
+import { getAccountEmail, getGmailClient, getMailSession } from '../auth'
 import {
   attachmentsLimitError,
   ATTACHMENTS_TOTAL_LIMIT_BYTES,
   decodedAttachmentBytes,
+  type DraftVersion,
   type SaveDraftRequest,
   type SendDraftRequest,
   type SendEmailRequest
@@ -94,86 +95,71 @@ export async function sendDraft(request: SendDraftRequest): Promise<void> {
   if (typeof request.draftId !== 'string' || !request.draftId.trim()) {
     throw new Error('Draft ID is required')
   }
+  assertExpectedMessageId(request.expectedMessageId)
 
   try {
+    const session = getMailSession()
     const gmail = getGmailClient()
     const from = await getAccountEmail()
-
-    // Atomicity contract of the Gmail drafts API: drafts.update replaces
-    // the draft content with exactly what the editor showed, then
-    // drafts.send transmits and deletes the draft in one operation. Using
-    // messages.send plus drafts.delete instead leaves a window where the
-    // mail is out but the draft lingers, and a retry after a successful
-    // send can duplicate the mail.
     const raw = await buildRawMessage(from, request)
-    await writeDraft(gmail, request.draftId, raw, request.threadId)
-    await withQuotaRetry(() =>
-      gmail.users.drafts.send({
+    const { draftId, expectedMessageId, threadId } = request
+    await withQuotaRetry(async () => {
+      await ensureDraftVersion(gmail, draftId, expectedMessageId, session)
+      return gmail.users.drafts.send({
         userId: 'me',
-        requestBody: { id: request.draftId }
+        requestBody: { id: draftId, message: { raw, ...(threadId ? { threadId } : {}) } }
       })
-    )
+    }, session)
   } catch (e) {
     rethrowDeadGrant(e)
     throw e
   }
 }
 
-// One draft-content write, the update half of both the autosave and the
-// atomic send: it replaces the stored draft with exactly what the caller
-// showed. sendDraft's comment above carries the atomicity contract.
-async function writeDraft(
-  gmail: gmail_v1.Gmail,
-  draftId: string,
-  raw: string,
-  threadId?: string
-): Promise<void> {
-  await withQuotaRetry(() =>
-    gmail.users.drafts.update({
-      userId: 'me',
-      id: draftId,
-      requestBody: {
-        message: {
-          raw,
-          ...(threadId ? { threadId } : {})
-        }
-      }
-    })
-  )
+function assertExpectedMessageId(id: unknown): void {
+  if (id !== undefined && (typeof id !== 'string' || !id.trim())) {
+    throw new Error('Invalid draft message ID')
+  }
 }
 
-// The autosave persistence primitive: applies the composer's fields to a
-// real Gmail draft, creating it on the first write, and answers with the
-// draft id that later saves and the send path then keep using. Recipient
-// is optional here, so this carries its own check, not the send one.
-export async function saveDraft(request: SaveDraftRequest): Promise<string> {
+async function ensureDraftVersion(
+  gmail: gmail_v1.Gmail,
+  draftId: string,
+  expectedMessageId: string | undefined,
+  session: symbol
+): Promise<void> {
+  // Gmail replaces the underlying message on every update, but does not offer a conditional write.
+  if (expectedMessageId === undefined) return
+  const current = await gmail.users.drafts.get({ userId: 'me', id: draftId, format: 'minimal' })
+  if (getMailSession() !== session) throw new Error('Mail account changed')
+  if (current.data.message?.id !== expectedMessageId) {
+    throw new Error('Draft changed in Gmail. Copy your edits and reopen the draft before retrying.')
+  }
+}
+
+export async function saveDraft(request: SaveDraftRequest): Promise<DraftVersion> {
   assertMessageFields(request, false)
   if (request.draftId !== undefined && typeof request.draftId !== 'string') {
     throw new Error('Invalid draft request')
   }
+  assertExpectedMessageId(request.expectedMessageId)
 
   try {
+    const session = getMailSession()
     const gmail = getGmailClient()
     const from = await getAccountEmail()
     const raw = await buildRawMessage(from, request)
 
-    if (request.draftId) {
-      await writeDraft(gmail, request.draftId, raw, request.threadId)
-      return request.draftId
-    }
-    const created = await withQuotaRetry(() =>
-      gmail.users.drafts.create({
-        userId: 'me',
-        requestBody: {
-          message: {
-            raw,
-            ...(request.threadId ? { threadId: request.threadId } : {})
-          }
-        }
-      })
-    )
-    if (!created.data.id) throw new Error('Gmail returned no draft ID')
-    return created.data.id
+    const { draftId, expectedMessageId, threadId } = request
+    const requestBody = { message: { raw, ...(threadId ? { threadId } : {}) } }
+    const saved = await withQuotaRetry(async () => {
+      if (!draftId) return gmail.users.drafts.create({ userId: 'me', requestBody })
+      await ensureDraftVersion(gmail, draftId, expectedMessageId, session)
+      return gmail.users.drafts.update({ userId: 'me', id: draftId, requestBody })
+    }, session)
+    if (!saved.data.id || !saved.data.message?.id)
+      throw new Error('Gmail returned no draft version')
+    return { draftId: saved.data.id, messageId: saved.data.message.id }
   } catch (e) {
     rethrowDeadGrant(e)
     throw e

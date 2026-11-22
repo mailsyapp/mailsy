@@ -25,11 +25,11 @@ declare global {
       listFolder(options?: ListFolderOptions): Promise<MailPage>
       syncMail(reason: SyncReason): Promise<SyncResult>
       onSyncResult(listener: (result: SyncResult) => void): () => void
-      getMessage(id: string): Promise<EmailDetail>
+      getMessage(id: string, draftId?: string): Promise<EmailDetail>
       getThread(threadId: string): Promise<EmailThread>
       sendEmail(request: SendEmailRequest): Promise<void>
       sendDraft(request: SendDraftRequest): Promise<void>
-      saveDraft(request: SaveDraftRequest): Promise<string>
+      saveDraft(request: SaveDraftRequest): Promise<import('../shared/types').DraftVersion>
       discardDraft(draftId: string): Promise<void>
       draftExists(draftId: string): Promise<boolean>
       pickAttachments(): Promise<import('../shared/types').ComposeAttachment[]>

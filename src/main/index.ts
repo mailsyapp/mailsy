@@ -94,7 +94,7 @@ app.whenReady().then(() => {
   // out of a session land there.
   ipcMain.handle('auth:sign-out', () => signOut())
   ipcMain.handle('gmail:list', (_event, options?: ListFolderOptions) => fetchFolder(options))
-  ipcMain.handle('gmail:get', (_event, id: string) => fetchMessage(id))
+  ipcMain.handle('gmail:get', (_event, id: string, draftId?: string) => fetchMessage(id, draftId))
   ipcMain.handle('gmail:thread', (_event, threadId: string) => fetchThread(threadId))
   // The canonical refresh: the renderer's Refresh button is the only
   // renderer-invoked path; the adaptive clock and window focus fire

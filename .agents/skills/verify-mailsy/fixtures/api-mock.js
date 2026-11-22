@@ -554,6 +554,15 @@
     if (!signedIn) throw new Error('Not signed in yet')
   }
 
+  function draftForWrite({ draftId, expectedMessageId }) {
+    const target = seed.find((m) => m.draftId === draftId)
+    if (!target || deletedDrafts.includes(draftId)) throw new Error(`mock: no draft ${draftId}`)
+    if (expectedMessageId !== undefined && target.id !== expectedMessageId) {
+      throw new Error('Draft changed in Gmail. Copy your edits and reopen the draft before retrying.')
+    }
+    return target
+  }
+
   window.api = {
     signIn: async () => {
       signedIn = true
@@ -626,9 +635,9 @@
       }
       return pageSlice([...groups.values()].map(threadRowOf), options)
     },
-    getMessage: async (id) => {
+    getMessage: async (id, draftId) => {
       ensureSignedIn()
-      const m = byId.get(id)
+      const m = draftId ? draftForWrite({ draftId }) : byId.get(id)
       if (!m) throw new Error(`mock: no message ${id}`)
       // The attachment ref list is a boundary contract now: the detail
       // always carries it (empty for plain messages) the way toEmailDetail
@@ -697,7 +706,7 @@
       saves.push({ messageId, attachmentId, filename })
       return true
     },
-    // Mirrors drafts.update + drafts.send: the sent content is recorded and
+    // Mirrors drafts.send with replacement content: the message is recorded and
     // the draft disappears from the Drafts folder in one step. Throws on an
     // unknown draft ID (e.g. a message ID passed by mistake) so the mock
     // keeps discriminating ID confusion like the live API's 404 would.
@@ -713,8 +722,7 @@
       ) {
         throw new Error('Recipient is required')
       }
-      const target = seed.find((m) => m.draftId === request.draftId)
-      if (!target) throw new Error(`mock: no draft ${request.draftId}`)
+      draftForWrite(request)
       sent.push({ ...request })
       deletedDrafts.push(request.draftId)
     },
@@ -741,9 +749,15 @@
       }
       let draftId
       if (request.draftId) {
-        const target = seed.find((m) => m.draftId === request.draftId)
-        if (!target) throw new Error(`mock: no draft ${request.draftId}`)
+        const target = draftForWrite(request)
         draftId = target.draftId
+        const oldMessageId = target.id
+        byId.delete(oldMessageId)
+        for (const key of attachmentStore.keys()) {
+          if (key.startsWith(`${oldMessageId}~`)) attachmentStore.delete(key)
+        }
+        target.id = `msg-${draftId}-v${draftSaves.length + 1}`
+        byId.set(target.id, target)
         target.to = request.to
         target.cc = request.cc || ''
         target.bcc = request.bcc || ''
@@ -803,7 +817,7 @@
         attachmentStore.set(`${msgId}~att-${draftId}-${i}`, a.data)
       })
       draftSaves.push({ ...request, draftId })
-      return draftId
+      return { draftId, messageId: msgId }
     },
     // Mirrors drafts.delete from the explicit Cancel path. A vanished draft
     // is already gone, so the boundary settles it as success; the mock

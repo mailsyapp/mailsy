@@ -251,14 +251,17 @@ export interface SendEmailRequest {
 // it as an extension makes the field sets identical by construction.
 export interface SendDraftRequest extends SendEmailRequest {
   draftId: string
+  expectedMessageId?: string
 }
 
-// One composer autosave write. Same field set as a send, but the recipient
-// is optional (Gmail keeps recipient-less drafts) and the target draft is
-// optional: absent means create one. The resolved draft id comes back, so
-// the autosave and the send path stay pinned to the same server draft.
 export interface SaveDraftRequest extends SendEmailRequest {
   draftId?: string
+  expectedMessageId?: string
+}
+
+export interface DraftVersion {
+  draftId: string
+  messageId: string
 }
 
 export interface ModifyLabelsRequest {
