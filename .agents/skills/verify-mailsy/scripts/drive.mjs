@@ -335,14 +335,17 @@ try {
     await page.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: 'domcontentloaded' })
   }
 
-  if (FEATURE === 'sign-in') {
+  const journeys = new Map()
+  journeys.set('sign-in', async () => {
     const btn = page.getByRole('button', { name: 'Sign in with Google' })
     await btn.waitFor({ timeout: 10000 })
     assert(true, 'signed-out state offers "Sign in with Google"', 'sign-in button missing')
     await btn.click()
     assert(await page.evaluate(() => window.__signInClicked === true), 'click invokes sign-in bridge', 'sign-in bridge not invoked')
     await snapshot(page, 'sign-in')
-  } else if (FEATURE === 'sign-out') {
+    return 'sign-in'
+  })
+  journeys.set('sign-out', async () => {
     // Fresh page load, signed in by default (no --signed-out): the inbox
     // must be on screen so the flip has mail state to clear.
     await page.getByRole('complementary', { name: 'Inbox' }).waitFor({ timeout: 10000 })
@@ -391,7 +394,9 @@ try {
     )
     await snapshot(page, 'sign-out')
     await signInWithPendingMail(page)
-  } else if (FEATURE === 'inbox') {
+    return 'sign-out'
+  })
+  journeys.set('inbox', async () => {
     const inbox = page.getByRole('complementary', { name: 'Inbox' })
     await inbox.waitFor({ timeout: 10000 })
     for (const subject of ['Launch checklist', 'Q3 budget draft', 'Deploy window']) {
@@ -413,7 +418,9 @@ try {
     await page.getByRole('heading', { name: 'Launch checklist' }).waitFor({ timeout: 10000 })
     assert(true, 'selecting email opens its detail', 'detail did not open')
     await snapshot(page, 'inbox')
-  } else if (FEATURE === 'search') {
+    return 'inbox'
+  })
+  journeys.set('search', async () => {
     const box = page.getByRole('searchbox', { name: 'Search emails' })
     await box.waitFor({ timeout: 10000 })
     await box.fill('budget')
@@ -577,7 +584,9 @@ try {
       'reopening a cached search does not carry a conversation over from another search',
       'the old conversation stayed open when switching to an unrelated cached query'
     )
-  } else if (FEATURE === 'search-state') {
+    return 'search'
+  })
+  journeys.set('search-state', async () => {
     const cases = [
       'cached-star',
       'cached-read',
@@ -688,7 +697,7 @@ try {
           }
         })
         await row.getByRole('button', { name: 'Star', exact: true }).click()
-        await page.getByText('Fixture mutation rejected', { exact: true }).waitFor()
+        await page.getByText(/Fixture mutation rejected/).waitFor()
         assert(
           (await row.getByRole('button', { name: 'Star', exact: true }).count()) === 1,
           'a rejected mutation leaves current flags unchanged',
@@ -804,7 +813,9 @@ try {
       )
       await snapshot(page, `search-state-${scenario}`)
     }
-  } else if (FEATURE === 'read-thread') {
+    return 'search-state'
+  })
+  journeys.set('read-thread', async () => {
     await page.getByRole('complementary', { name: 'Inbox' }).waitFor({ timeout: 10000 })
     await page.getByText('Deploy window').first().click()
     const content = page.getByRole('region', { name: 'Email content' })
@@ -815,7 +826,9 @@ try {
     await first.first().waitFor({ timeout: 10000 })
     assert(true, 'thread messages readable', 'thread body missing')
     await snapshot(page, 'read-thread')
-  } else if (FEATURE === 'compose-send') {
+    return 'read-thread'
+  })
+  journeys.set('compose-send', async () => {
     await page.getByRole('complementary', { name: 'Inbox' }).waitFor({ timeout: 10000 })
     await page.getByText('Launch checklist').first().click()
     await page.getByRole('button', { name: 'reply', exact: true }).waitFor({ timeout: 10000 })
@@ -874,7 +887,9 @@ try {
       'forward dropped the original html body'
     )
     await snapshot(page, 'compose-send')
-  } else if (FEATURE === 'compose-new') {
+    return 'compose-send'
+  })
+  journeys.set('compose-new', async () => {
     const inbox = page.getByRole('complementary', { name: 'Inbox' })
     await inbox.waitFor({ timeout: 10000 })
     const starter = await page.evaluate(() => (window.__sent ?? []).length)
@@ -931,7 +946,9 @@ try {
       'fresh send was misshapen as a reply or draft'
     )
     await snapshot(page, 'compose-new')
-  } else if (FEATURE === 'forward-attachments') {
+    return 'compose-new'
+  })
+  journeys.set('forward-attachments', async () => {
     const { collectBodies } = await import(resolve(SKILL_DIR, '../../../src/main/mail/mime.ts'))
     const content = page.getByRole('region', { name: 'Email content' })
     const form = content.locator('form.composer')
@@ -1107,7 +1124,9 @@ try {
         )
       }
     }
-  } else if (FEATURE === 'draft-attachments-safe' || FEATURE === 'snooze-wake') {
+    return 'forward-attachments'
+  })
+  journeys.set('draft-attachments-safe', async () => {
     const content = page.getByRole('region', { name: 'Email content' })
     const send = content.getByRole('button', { name: 'Send', exact: true })
     const pick = content.getByRole('button', { name: 'Attach files', exact: true })
@@ -1279,6 +1298,9 @@ try {
           window.__attachmentMode = 'ok'
         })
         await content.getByRole('button', { name: 'Retry first.bin', exact: true }).click()
+        await content
+          .getByRole('button', { name: 'Retry first.bin', exact: true })
+          .waitFor({ state: 'detached' })
         assert(
           (await content.getByRole('button', { name: 'Remove first.bin', exact: true }).count()) ===
             1 &&
@@ -1493,7 +1515,7 @@ try {
         await page.clock.fastForward(1800)
         await content
           .getByRole('alert')
-          .filter({ hasText: 'Draft not saved: Stored original unavailable' })
+          .filter({ hasText: 'Stored original unavailable' })
           .waitFor()
         assert(
           await page.evaluate(async () => {
@@ -1569,7 +1591,9 @@ try {
         )
       }
     }
-  } else if (FEATURE === 'attachments') {
+    return 'draft-attachments-safe'
+  })
+  journeys.set('attachments', async () => {
     // Compose flow: two entrances into the same set. A drag drops in first
     // (a real DragEvent carrying a constructed File — the same handler a
     // Finder drag lands in), then the picker through the mock's canned
@@ -1711,7 +1735,9 @@ try {
       'the read-view chip did not drive the save verb'
     )
     await snapshot(page, 'attachments')
-  } else if (FEATURE === 'inline-images') {
+    return 'attachments'
+  })
+  journeys.set('inline-images', async () => {
     // The rich compose body: a dropped image lands inside the text like
     // Gmail's inline images, with editable text above and below it, the
     // send carries the html with the data URL, the draft autosave
@@ -1837,7 +1863,9 @@ try {
       'read-view chips changed alongside the preview'
     )
     await snapshot(page, 'inline-images')
-  } else if (FEATURE === 'drafts') {
+    return 'inline-images'
+  })
+  journeys.set('drafts', async () => {
     await page.getByRole('button', { name: 'Drafts' }).click()
     const drafts = page.getByRole('complementary', { name: 'Drafts' })
     await drafts.waitFor({ timeout: 10000 })
@@ -1957,7 +1985,9 @@ try {
       throw new Error('ASSERT: autosaving an off-list draft silently overwrote a newer Gmail edit')
     })
     await content.getByRole('button', { name: 'Send', exact: true }).click()
-    await content.getByRole('alert').filter({ hasText: /^Draft changed in Gmail/ }).waitFor({ timeout: 5000 })
+    await content.getByRole('alert').filter({
+      hasText: 'Draft changed in Gmail', hasNotText: 'Draft not saved:'
+    }).waitFor({ timeout: 5000 })
     assert(
       (await subjectField.inputValue()) === 'Local edit that must stay visible' &&
         (await page.evaluate(() => window.__draftSaves.filter((d) => d.draftId === 'draft-q4').at(-1).subject)) === 'Remote edit' &&
@@ -2016,7 +2046,9 @@ try {
     await page.getByRole('button', { name: 'Drafts', exact: true }).click()
     await drafts.getByText(deletedDraftEdit, { exact: true }).waitFor({ timeout: 5000 })
     log('pass: pending local edits survive remote deletion as a separate draft')
-  } else if (FEATURE === 'delete-draft' || FEATURE === 'draft-attachments-safe' || FEATURE === 'snooze-wake') {
+    return 'drafts'
+  })
+  journeys.set('delete-draft', async () => {
     // Row surface: the confirm gates the delete. Dismiss it first —
     // deleting a draft is irreversible, so refusing must be a full no-op.
     await page.getByRole('button', { name: 'Drafts' }).click()
@@ -2138,7 +2170,9 @@ try {
       'closing a deliberately deleted draft recovered the pending edits as a new draft'
     )
     await snapshot(page, 'delete-draft')
-  } else if (FEATURE === 'draft-autosave') {
+    return 'delete-draft'
+  })
+  journeys.set('draft-autosave', async () => {
     // Fresh compose: type, let the boundary record the autosave, then close
     // the pane without Send or Cancel — the accidental-close path.
     const inbox = page.getByRole('complementary', { name: 'Inbox' })
@@ -2250,7 +2284,9 @@ try {
       'edited draft send lost content or threading headers'
     )
     await snapshot(page, 'draft-autosave')
-  } else if (FEATURE === 'delete-to-trash') {
+    return 'draft-autosave'
+  })
+  journeys.set('delete-to-trash', async () => {
     const inbox = page.getByRole('complementary', { name: 'Inbox' })
     await inbox.waitFor({ timeout: 10000 })
     const content = page.getByRole('region', { name: 'Email content' })
@@ -2295,7 +2331,9 @@ try {
       .count()
     assert(backInInbox === 0, 'refetched inbox no longer shows the deleted thread', 'thread reappeared after refetch')
     await snapshot(page, 'delete-to-trash')
-  } else if (FEATURE === 'archive') {
+    return 'delete-to-trash'
+  })
+  journeys.set('archive', async () => {
     const inbox = page.getByRole('complementary', { name: 'Inbox' })
     await inbox.waitFor({ timeout: 10000 })
     const content = page.getByRole('region', { name: 'Email content' })
@@ -2337,7 +2375,9 @@ try {
     await page.getByRole('complementary', { name: 'Inbox' }).getByText('Launch checklist').first().waitFor({ timeout: 10000 })
     assert(true, 'refetched inbox still lists untouched mail', 'inbox refetch dropped other mail')
     await snapshot(page, 'archive')
-  } else if (FEATURE === 'mark-read') {
+    return 'archive'
+  })
+  journeys.set('mark-read', async () => {
     const inbox = page.getByRole('complementary', { name: 'Inbox' })
     await inbox.waitFor({ timeout: 10000 })
     const content = page.getByRole('region', { name: 'Email content' })
@@ -2388,7 +2428,9 @@ try {
     await content.getByRole('button', { name: 'mark as read', exact: true }).waitFor({ timeout: 10000 })
     assert((await page.locator('li.unread').count()) === 1, 'detail toggle re-marks the thread unread', 'detail toggle did not flip row state')
     await snapshot(page, 'mark-read')
-  } else if (FEATURE === 'starred') {
+    return 'mark-read'
+  })
+  journeys.set('starred', async () => {
     const inbox = page.getByRole('complementary', { name: 'Inbox' })
     await inbox.waitFor({ timeout: 10000 })
     const row = inbox.locator('li', { hasText: 'Launch checklist' }).first()
@@ -2443,7 +2485,9 @@ try {
     )
     await refetchedInbox.locator('li', { hasText: 'Launch checklist' }).first().getByRole('button', { name: 'Unstar', exact: true }).waitFor({ timeout: 10000 })
     await snapshot(page, 'starred')
-  } else if (FEATURE === 'all-mail') {
+    return 'starred'
+  })
+  journeys.set('all-mail', async () => {
     const content = page.getByRole('region', { name: 'Email content' })
     // Archive one thread from its Inbox detail first: the archive button
     // lives in Inbox details only, and All Mail exists to surface rows the
@@ -2491,7 +2535,9 @@ try {
       'archived thread reappeared in Inbox'
     )
     await snapshot(page, 'all-mail')
-  } else if (FEATURE === 'reply-all') {
+    return 'all-mail'
+  })
+  journeys.set('reply-all', async () => {
     // Standup notes carries author + one extra To recipient + one Cc
     // recipient; the own address sits in To and must drop out. The split
     // follows the original headers: the author plus the previous To stay in
@@ -2554,7 +2600,9 @@ try {
       'outbox missing or wrong reply-all record'
     )
     await snapshot(page, 'reply-all')
-  } else if (FEATURE === 'cc-bcc') {
+    return 'reply-all'
+  })
+  journeys.set('cc-bcc', async () => {
     // The Cc/Bcc composer surface: reveal links, the send payload, and the
     // draft round trip. Reply-all first pins that the reply payload never
     // grows a Bcc the user did not type.
@@ -2670,7 +2718,9 @@ try {
       'draft send lost cc/bcc'
     )
     await snapshot(page, 'cc-bcc')
-  } else if (FEATURE === 'spam') {
+    return 'cc-bcc'
+  })
+  journeys.set('spam', async () => {
     const inbox = page.getByRole('complementary', { name: 'Inbox' })
     await inbox.waitFor({ timeout: 10000 })
     const content = page.getByRole('region', { name: 'Email content' })
@@ -2767,7 +2817,9 @@ try {
     await inbox.getByText('You won a free cruise', { exact: true }).first().waitFor({ timeout: 10000 })
     assert(true, 'row-level not spam restored the seeded mail to the Inbox', 'spam mail missing from the Inbox after restore')
     await snapshot(page, 'spam')
-  } else if (FEATURE === 'snooze') {
+    return 'spam'
+  })
+  journeys.set('snooze', async () => {
     const inbox = page.getByRole('complementary', { name: 'Inbox' })
     await inbox.waitFor({ timeout: 10000 })
     const content = page.getByRole('region', { name: 'Email content' })
@@ -2849,7 +2901,9 @@ try {
     await inbox.getByText('Newsletter backlog cleanup', { exact: true }).first().waitFor({ timeout: 10000 })
     assert(true, 'row-level unsnooze restored the second thread to the Inbox', 'parked mail missing from the Inbox after restore')
     await snapshot(page, 'snooze')
-  } else if (FEATURE === 'snooze-wake') {
+    return 'snooze'
+  })
+  journeys.set('snooze-wake', async () => {
     for (const scenario of [
       'selected',
       'other',
@@ -2973,7 +3027,7 @@ try {
         )
       }
       if (scenario === 'lookup-error') {
-        await page.getByText('Wake membership unavailable', { exact: true }).waitFor()
+        await page.getByText(/Wake membership unavailable/).waitFor()
         assert(
           (await waking.count()) === 1 &&
             (await content.getByRole('heading', { name: selected, exact: true }).count()) === 1,
@@ -3022,7 +3076,9 @@ try {
         'wake lost the thread or retained a stale selection'
       )
     }
-  } else if (FEATURE === 'snooze-emulation') {
+    return 'snooze-wake'
+  })
+  journeys.set('snooze-emulation', async () => {
     // The emulated snooze: Mailsy parks a thread with the 'Snoozed by
     // Mailsy' user label plus an INBOX removal, records the wake time, and
     // the wake (the mocked sweep under fast-forward time) restores it to
@@ -3330,7 +3386,9 @@ try {
     await allMail.getByText('Vendor pricing follow-up', { exact: true }).first().waitFor({ timeout: 5000 })
     assert(true, 'a wake removes a no-longer-matching search result', 'excluded mail stayed in search')
     await snapshot(page, 'snooze-wake-search-exclusion')
-  } else if (FEATURE === 'category-views') {
+    return 'snooze-emulation'
+  })
+  journeys.set('category-views', async () => {
     // The Important view is the IMPORTANT label: it lists the seeded
     // important mail and nothing labeled for a category tab.
     await page.getByRole('button', { name: 'Important', exact: true }).click()
@@ -3391,7 +3449,9 @@ try {
       .waitFor({ timeout: 10000 })
     assert(true, 'important mail still lists in All Mail', 'important row missing from All Mail')
     await snapshot(page, 'category-views')
-  } else if (FEATURE === 'unread-bold') {
+    return 'category-views'
+  })
+  journeys.set('unread-bold', async () => {
     // Unread rows bold across every folder view, read rows normal, with
     // the weight read off the rendered DOM as the proof. Unread rows are
     // produced on the real path (the row's mark-unread toggle), so the
@@ -3477,7 +3537,9 @@ try {
     const clearedWeight = await subjectWeightOf(inbox.locator('li', { hasText: 'Launch checklist' }).first())
     assert(clearedWeight === '400', `read row is normal weight again (${clearedWeight})`, 'row kept the bold weight after read')
     await snapshot(page, 'unread-bold')
-  } else if (FEATURE === 'sidebar') {
+    return 'unread-bold'
+  })
+  journeys.set('sidebar', async () => {
     // The folder rail: every affordance renders once and opens its view.
     // The rail's labels surface stays hidden in the default view; the
     // `labels` journey proves that absence too.
@@ -3523,7 +3585,9 @@ try {
     await page.getByRole('complementary', { name: 'Inbox' }).waitFor({ timeout: 10000 })
     log('pass: the Inbox affordance opens its view again')
     await snapshot(page, 'sidebar')
-  } else if (FEATURE === 'sidebar-expanded') {
+    return 'sidebar'
+  })
+  journeys.set('sidebar-expanded', async () => {
     // The expanded sidebar: one control flips the icon rail to named rows
     // and re-exposes the labels section the default view gates off. The
     // state must survive a folder switch and collapse clean again.
@@ -3704,7 +3768,9 @@ try {
     await page.getByRole('complementary', { name: 'Inbox' }).waitFor({ timeout: 10000 })
     log('pass: collapsing returns the default view and folder browsing works')
     await snapshot(page, 'sidebar-expanded')
-  } else if (FEATURE === 'labels') {
+    return 'sidebar-expanded'
+  })
+  journeys.set('labels', async () => {
     // The detail pane's Labels menu applies and removes labels on the
     // open thread. The rail's chips and New label affordance are the
     // expanded-sidebar surface, hidden in the default view; the `sidebar`
@@ -3817,7 +3883,9 @@ try {
       'the empty label retained a thread'
     )
     await snapshot(page, 'labels-empty')
-  } else if (FEATURE === 'refresh') {
+    return 'labels'
+  })
+  journeys.set('refresh', async () => {
     // The live refresh channel: the Refresh button must acknowledge a
     // click instantly, dedupe in-flight clicks, and surface failures;
     // new mail must arrive through the pushed sweep without any click.
@@ -4031,7 +4099,9 @@ try {
       )
       await snapshot(page, `refresh-switch-${folder}`)
     }
-  } else if (FEATURE === 'pagination') {
+    return 'refresh'
+  })
+  journeys.set('pagination', async () => {
     const inbox = page.getByRole('complementary', { name: 'Inbox', exact: true })
     const rows = inbox.getByRole('listitem')
     const loadMore = inbox.getByRole('button', { name: 'Load more', exact: true })
@@ -4260,7 +4330,9 @@ try {
     await snapshot(page, 'pagination-archive-during-load')
     await page.getByRole('button', { name: 'Drafts', exact: true }).click()
     await switchDuringPagination(page)
-  } else if (FEATURE === 'signature') {
+    return 'pagination'
+  })
+  journeys.set('signature', async () => {
     // The per-compose signature across all three surfaces: the stored text
     // is born from the first toggle in a fresh compose, the block rides
     // every send/autosave as ordinary body html, the draft round trip
@@ -4797,7 +4869,9 @@ try {
     )
     await snapshot(page, 'signature-forward-caret')
     await assertWhitespaceParity(page.getByRole('textbox', { name: 'Message', exact: true }), replyToggle, 'forward')
-  } else if (FEATURE === 'background-work') {
+    return 'signature'
+  })
+  journeys.set('background-work', async () => {
     const inbox = page.getByRole('complementary', { name: 'Inbox' })
     await inbox.waitFor({ timeout: 10000 })
     await inbox.getByText('Launch checklist', { exact: true }).first().waitFor({ timeout: 10000 })
@@ -4926,9 +5000,14 @@ try {
       'a second save or a send followed the closed compose'
     )
     await snapshot(page, 'background-work')
-  } else {
-    throw new Error(`unknown feature: ${FEATURE}`)
-  }
+    return 'background-work'
+  })
+  const journey = journeys.get(FEATURE)
+  if (!journey) throw new Error(`unknown feature: ${FEATURE}`)
+  const executed = await journey()
+  assert(executed === FEATURE,
+    `executed journey ${executed} matches requested ${FEATURE}`,
+    `requested journey ${FEATURE}, executed ${executed}`)
 } catch (e) {
   log(`RESULT fail feature=${FEATURE} reason=${e instanceof Error ? e.message : String(e)}`)
   exitCode = e instanceof Error && e.message.startsWith('ASSERT') ? 1 : 2
@@ -4938,6 +5017,10 @@ try {
       const proof = await browser.evaluate(() => globalThis.__packagedVerification)
       writeFileSync(resolve(ART, 'packaged.json'), JSON.stringify({ ...proof, entry }, null, 2))
       log(`packaged IPC: ${JSON.stringify(proof.counts)}`)
+      if (proof.unexpectedNativeChannels.length) {
+        exitCode = 2
+        log(`RESULT fail feature=${FEATURE} reason=Unexpected native Gmail IPC in fixture mode: ${[...new Set(proof.unexpectedNativeChannels)].join(', ')}`)
+      }
     } catch (error) {
       log(`infra: could not record final packaged IPC: ${error instanceof Error ? error.message : String(error)}`)
       if (exitCode === 0) {

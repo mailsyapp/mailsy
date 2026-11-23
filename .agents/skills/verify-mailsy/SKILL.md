@@ -111,7 +111,9 @@ node .agents/skills/verify-mailsy/scripts/drive.mjs --feature signature \
   --run-id packaged-signature --executable "$PWD/dist/linux-unpacked/mailsy"
 ```
 
-All 31 mapped features are supported, including `sign-in --signed-out`.
+All 35 mapped features are supported, including `sign-in --signed-out`.
+`drive.mjs` registers each feature's journey by ID and checks the executed
+journey's ID against the request; unknown IDs and mismatches fail the run.
 Run each with its own run ID. Their journey assertions and
 screenshots are identical to the Chromium tier; `--port` is not required.
 Run `doctor.sh --executable <packaged-binary>` before driving. It checks the
@@ -128,10 +130,14 @@ starting a scaffold server:
 RUN_ID=packaged-appimage .agents/skills/verify-mailsy/scripts/run-all.sh \
   --executable "$PWD/dist/mailsy-0.1.0.AppImage"
 RUN_ID=packaged-deb .agents/skills/verify-mailsy/scripts/run-all.sh --executable /usr/bin/mailsy
+RUN_ID=packaged-targeted .agents/skills/verify-mailsy/scripts/run-all.sh \
+  --executable "$PWD/dist/linux-unpacked/mailsy" \
+  --features draft-attachments-safe,drafts,search-state,snooze-wake
 ```
 
-The runner applies `--signed-out` only to the sign-in journey. Transcripts
-and preflight live in `artifacts/<run-id>/`; each journey's screenshots,
+Omit `--features` to run every feature; unknown or empty IDs are rejected.
+The runner prints pass/fail totals and applies `--signed-out` only to the
+sign-in journey. Transcripts and preflight live in `artifacts/<run-id>/`; each journey's screenshots,
 profile and final IPC counts live in `artifacts/<run-id>-<feature>/`.
 
 `scripts/packaged.mjs` uses Playwright `_electron.launch({ executablePath })`.
@@ -142,6 +148,9 @@ existing fixture runs in a separate namespace, leaving `window.api` intact;
 test-installed main-process IPC handlers forward packaged preload calls to
 that fixture namespace. Fixture recording arrays remain readable by the
 unchanged journeys. Production source, preload, and ASAR are never patched.
+Gmail invokes, including `gmail:draft-exists`, use fixture handlers. Any
+unintercepted native Gmail handler is blocked and its channel is recorded in
+`packaged.json`; even a renderer-caught rejection fails the run.
 
 Signed-out fixtures override only the separate fixture auth methods, never
 the native preload API. Clock-driven journeys install Playwright's clock

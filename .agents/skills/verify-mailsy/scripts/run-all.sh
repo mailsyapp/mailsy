@@ -1,17 +1,43 @@
 #!/bin/bash
 # Runs every mapped journey against the scaffold or a packaged executable.
-# Usage: RUN_ID=<id> ./scripts/run-all.sh [--executable <packaged-binary>]
+# Usage: RUN_ID=<id> ./scripts/run-all.sh [--executable <packaged-binary>] [--features <id,id,...>]
 # Exit 0 only when every feature in features/ passes.
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SKILL_DIR="$(dirname "$HERE")"
 EXECUTABLE=""
-if [ "$#" -gt 0 ]; then
-  if [ "$#" -ne 2 ] || [ "$1" != --executable ] || [ -z "$2" ]; then
-    echo "usage: run-all.sh [--executable <packaged-binary>]" >&2
+FEATURES=""
+while [ "$#" -gt 0 ]; do
+  if [ "$#" -lt 2 ] || [ -z "$2" ]; then
+    echo "usage: run-all.sh [--executable <packaged-binary>] [--features <id,id,...>]" >&2
     exit 2
   fi
-  EXECUTABLE="$2"
+  case "$1" in
+    --executable) EXECUTABLE="$2" ;;
+    --features) FEATURES="$2" ;;
+    *) echo "unknown option: $1" >&2; exit 2 ;;
+  esac
+  shift 2
+done
+features=()
+if [ -n "$FEATURES" ]; then
+  if [[ "$FEATURES" == *, ]]; then
+    echo "empty feature ID" >&2
+    exit 2
+  fi
+  IFS=',' read -r -a features <<< "$FEATURES"
+  for feature in "${features[@]}"; do
+    if [[ ! "$feature" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]] ||
+      [ ! -f "$SKILL_DIR/features/$feature.md" ]; then
+      echo "unknown feature: $feature" >&2
+      exit 2
+    fi
+  done
+else
+  for file in "$SKILL_DIR"/features/*.md; do
+    feature="$(basename "$file" .md)"
+    [ "$feature" = "README" ] || features+=("$feature")
+  done
 fi
 export RUN_ID="${RUN_ID:-run-$(date +%s)}"
 export VERIFY_MAILSY_PORT="${VERIFY_MAILSY_PORT:-4317}"
@@ -26,9 +52,8 @@ else
 fi
 
 failed=()
-for file in "$SKILL_DIR"/features/*.md; do
-  feature="$(basename "$file" .md)"
-  [ "$feature" = "README" ] && continue
+passed=0
+for feature in "${features[@]}"; do
   flags=()
   [ "$feature" = "sign-in" ] && flags+=(--signed-out)
   feature_run_id="$RUN_ID"
@@ -41,6 +66,7 @@ for file in "$SKILL_DIR"/features/*.md; do
   if timeout 180 node "$HERE/drive.mjs" --feature "$feature" --run-id "$feature_run_id" \
     "${flags[@]}" >"$ART/$feature.stdout" 2>&1; then
     echo "pass $feature"
+    passed=$((passed + 1))
   else
     echo "FAIL $feature"
     tail -n 5 "$ART/$feature.stdout"
@@ -48,6 +74,7 @@ for file in "$SKILL_DIR"/features/*.md; do
   fi
 done
 
+echo "SUMMARY passed=$passed failed=${#failed[@]}"
 if [ "${#failed[@]}" -gt 0 ]; then
   echo "${#failed[@]} feature(s) failed: ${failed[*]}"
   exit 1
