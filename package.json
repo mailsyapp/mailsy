@@ -9,7 +9,8 @@
   "license": "AGPL-3.0-only",
   "scripts": {
     "format": "prettier --write .",
-    "lint": "eslint --cache .",
+    "lint": "eslint --max-warnings 0 .",
+    "test": "node --test \"eslint-rules/tests/*.test.mjs\"",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json --composite false",
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json --composite false",
     "typecheck": "npm run typecheck:node && npm run typecheck:web",

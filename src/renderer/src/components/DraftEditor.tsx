@@ -14,21 +14,11 @@ import { useComposerAttachments } from './useComposerAttachments'
 import { plainTextToHtml } from '../lib/emailHtml'
 
 type DraftEditorProps = {
-  // The draft row: subject plus the draftId/messageIds the send path needs.
   row: ThreadSummary
   detail: EmailDetailData | null
   detailLoading: boolean
-  // Reports the sent draft's row id once the send succeeded. Row removal is
-  // owned by App (2s delay so the "Message sent." proof stays on screen,
-  // exactly-once by construction because App never unmounts).
   onSent: (id: string) => void
-  // Asks App to delete this draft. App owns the confirm, the bridge call
-  // and the row prune; the editor only retires when App re-renders it away.
   onDraftDiscard: () => void
-  // The failed delete for this row, if the attempt just ended that way. The
-  // editor shows it because App's global banner is not what the open form
-  // displays: the form says "Draft saved." and means it, while the delete
-  // it requested never landed.
   discardError: string | null
 }
 
@@ -47,22 +37,12 @@ function DraftForm({
   onDraftDiscard: () => void
   discardError: string | null
 }): React.JSX.Element {
-  // One recipients block, not three loose lines: a recipient edit is one
-  // spread, a Gmail draft's stored headers map straight onto it, and the
-  // send/autosave payloads reuse the object as-is. Gmail drafts carry their
-  // own Cc/Bcc headers, so a draft saved with carbon lists reopens with them
-  // (and opens the matching field).
   const [recipients, setRecipients] = useState<RecipientState>({
     to: detail.to || '',
     cc: detail.cc || '',
     bcc: detail.bcc || ''
   })
   const [subject, setSubject] = useState(detail.subject || '')
-  // The draft's stored content in the editor's two forms: the rich html
-  // the detail carries (cid images already resolved to data URLs by the
-  // boundary) with the plain-text fallback beside it. One derivation
-  // feeds both the initial state and the editor prefill; the editor's
-  // mount report re-derives the exact editor view from this same content.
   const initialHtml = detail.bodyHtml ?? plainTextToHtml(detail.bodyText || detail.snippet || '')
   const initialText = detail.bodyText || detail.snippet || ''
   const [body, setBody] = useState<ComposeBody>(() => ({ html: initialHtml, text: initialText }))
@@ -71,19 +51,10 @@ function DraftForm({
   const [sendError, setSendError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [sent, setSent] = useState(false)
-  // The draft's stored files resolve back into composer state before the
-  // first autosave fires: drafts.update replaces the whole raw message, so
-  // writing without the data would strip them off the draft. `ready` gates
-  // the autosave until every ref has settled (resolved or failed). Images
-  // dropped on the composer chrome insert into the rich body.
   const attach = useComposerAttachments(
     detail.attachments.length ? { messageId: detail.id, refs: detail.attachments } : undefined,
     bodyRef
   )
-  // The shared composer payload, with the draft's stored linkage. Same
-  // header set for the autosave and the atomic send: drafts.update replaces
-  // the whole stored message, so a payload without the reply headers would
-  // strip its linkage to the parent thread.
   const request = composeRequest({
     recipients,
     subject,
@@ -95,16 +66,10 @@ function DraftForm({
       references: detail.references || undefined
     }
   })
-  // Editing an existing draft autosaves through drafts.update, so a
-  // dismissed edit (row click, folder switch, reset) is not lost either.
-  // Rows without a draft id keep today's no-autosave shape: they send fresh
-  // and cannot be updated.
   const autosave = useDraftAutosave(request, draftId, draftId !== undefined && attach.ready)
 
   async function handleSend(event: React.FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault()
-    // The Enter key submits the form even with the Send button disabled, so
-    // the receipt test lives here, not only on the button.
     if (sending || sent || !hasRecipient(recipients)) return
 
     setSending(true)
@@ -115,19 +80,8 @@ function DraftForm({
       autosave.suspend()
       try {
         if (draftId) {
-          // Atomic send: drafts.send removes the draft server-side in the same
-          // operation. Sending succeeds => the row is guaranteed to be pruned
-          // by App; a failure here leaves the draft and this form (with its
-          // error) in place to retry — never a silently lingering draft. The
-          // draft's own In-Reply-To header is the message it replies to;
-          // detail.messageId is the draft's unsent Message-ID and would be
-          // bogus to send.
           await window.api.sendDraft({ draftId, ...request })
         } else {
-          // No draft ID (shouldn't happen for rows from the Drafts folder):
-          // send as a new message without the stored linkage, and do NOT
-          // report sent — the unknown draft is still in Gmail, and dropping
-          // the row would hide that fact.
           await window.api.sendEmail(
             composeRequest({ recipients, subject, body, attachments: attach.attachments })
           )
@@ -186,9 +140,6 @@ function DraftForm({
         <button type="button" onClick={onDraftDiscard} disabled={sending || sent}>
           delete draft
         </button>
-        {/* Once sent, the draft no longer exists server-side (a second send
-            would surface a confusing drafts.update 404, not a new mail), so
-            the button retires instead of re-arming. */}
         <button type="submit" disabled={sending || sent || !hasRecipient(recipients)}>
           {sending ? 'Sending...' : sent ? 'Sent' : 'Send'}
         </button>
@@ -206,9 +157,6 @@ export function DraftEditor({
   onDraftDiscard,
   discardError
 }: DraftEditorProps): React.JSX.Element {
-  // Mount the form only once the draft content arrives so fields initialize
-  // from it directly. Remounting via key={row.id} in App resets per draft,
-  // and the row id (thread id) is what App prunes on send.
   if (detailLoading || !detail) {
     return (
       <div>

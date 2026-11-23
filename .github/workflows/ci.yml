@@ -1,0 +1,51 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run lint
+      - run: npm test
+      - run: npm run typecheck
+
+  journeys:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm ci
+        working-directory: .agents/skills/verify-mailsy
+      - run: npx playwright install --with-deps chromium-headless-shell
+        working-directory: .agents/skills/verify-mailsy
+      - run: ./scripts/run-all.sh
+        working-directory: .agents/skills/verify-mailsy
+        env:
+          RUN_ID: ci
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: journey-artifacts
+          path: .agents/skills/verify-mailsy/artifacts/ci

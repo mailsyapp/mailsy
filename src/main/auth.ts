@@ -132,18 +132,9 @@ export function getGmailClient(): GmailClient {
 
   const client = makeClient()
   client.setCredentials({ refresh_token: refreshToken })
-  // google-auth-library caches the access token and refreshes it once
-  // expired; nothing here manages tokens manually.
   return google.gmail({ version: 'v1', auth: client })
 }
 
-// Delete-then-revoke: removing the file makes sign-out instant and final even
-// when the Google call fails (offline or the token is already dead), whereas
-// revoking first could leave the app usable with a token we just told Google
-// to kill. The revoke is fire-and-forget; its only job is best-effort cleanup
-// of the grant on Google's side. A fresh bare client does the revoking: the
-// revoke endpoint needs no OAuth credentials, so sign-out must not depend on
-// them staying present.
 export function signOut(): void {
   const refreshToken = loadRefreshToken()
   accountEmailPromise = null
@@ -162,16 +153,8 @@ export function onSessionEnded(listener: SessionEndedListener): void {
   sessionEndedListeners.push(listener)
 }
 
-// A refresh token rejected with invalid_grant is dead: Google expired or
-// revoked it, and no retry reactivates it. Only a fresh consent round
-// restores mail access, so keeping the file would make isSignedIn() report
-// signed-in forever and leave every launch in the same dead end.
 export function invalidateStoredGrant(): void {
   if (fs.existsSync(tokenPath())) fs.unlinkSync(tokenPath())
-  // Every teardown of the stored grant ends the mailbox session the sync
-  // cursor is positioned for: a live sign-out and a dead grant alike land
-  // here. Listeners registered at boot tear down per-account state, so the
-  // next sign-in starts from a clean position in its own mailbox.
   for (const listener of sessionEndedListeners) listener()
 }
 
@@ -179,10 +162,6 @@ export function isSignedIn(): boolean {
   return loadRefreshToken() !== null
 }
 
-// The signed-in account's address, cached because send and thread fetches
-// both need it and a profile call per send is quota for nothing. A failed
-// lookup is not cached, so the next call retries; sign-out drops the cache
-// because a new session is a different account.
 let accountEmailPromise: Promise<string> | null = null
 
 export function getAccountEmail(): Promise<string> {

@@ -13,11 +13,6 @@ export async function fetchMessage(id: string): Promise<EmailDetail> {
   return toEmailDetail(gmail, msg.data)
 }
 
-// One stored attachment's bytes, standard base64. The draft-editor round
-// trip is the only consumer: a drafts.update rebuilds the raw message, so
-// an edit must fetch what the draft carries before the first autosave
-// write or those files would silently drop. Gmail returns the payload in
-// base64url; standard base64 is what the composer's records carry.
 export async function fetchAttachment(messageId: string, attachmentId: string): Promise<string> {
   if (!messageId.trim() || !attachmentId.trim()) throw new Error('Attachment ID is required')
   const gmail = getGmailClient()
@@ -38,19 +33,12 @@ export async function fetchThread(threadId: string): Promise<EmailThread> {
     })
   )
   noteHistoryId(thread.data.historyId)
-  // getAccountEmail rides along concurrently so the thread open is not
-  // serialized behind a profile call, and its failure degrades to an empty
-  // exclusion set (reply-all excludes nothing) rather than failing the open:
-  // a broken profile must not block reading mail a dead-grant token would
-  // anyway surface at the message fetches above.
   const [messages, userEmail] = await Promise.all([
     mapWithConcurrency(thread.data.messages ?? [], DETAIL_CONCURRENCY, (msg) =>
       toEmailDetail(gmail, msg)
     ),
     getAccountEmail().catch(() => '')
   ])
-  // The thread's full label id set, deduped: EmailThread carries label
-  // membership at the boundary so the labels menu never re-parses messages.
   const labelIds = new Set<string>()
   for (const msg of thread.data.messages ?? []) {
     for (const labelId of msg.labelIds ?? []) labelIds.add(labelId)

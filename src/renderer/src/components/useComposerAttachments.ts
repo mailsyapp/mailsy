@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
+import { useOnMount } from '../hooks/useOnMount'
 import type { RefObject } from 'react'
 import { errorMessage } from '../lib/format'
 import {
@@ -11,45 +12,20 @@ import {
 } from '../../../shared/types'
 import { dragsFiles, fileToAttachment, looksLikeImageFile } from '../lib/attachmentFile'
 
-// One composer's attachment set, shared by the three composer surfaces
-// (new compose, draft edit, reply/forward). State lives here; the content
-// rides the compose fields exactly like text, so no layer ever owns
-// attachments separately. `field` is that ride: the empty-list-free
-// request field every autosave and send payload spreads. `prefill` is the
-// draft-editor round trip: the stored refs of the draft being edited,
-// resolved to full records before `ready` flips true — an autosave that
-// started earlier would replace the stored raw message and silently strip
-// those files. Resolve failures surface in `error` with the missing
-// names; the loaded rest still attach.
-//
-// Files enter through either entrance the OS offers: the native picker
-// (`pick`) or a drag onto the composer (`drop`/`dropping`). Both funnel
-// through the same cumulative-budget push, so the 20 MB rule holds no
-// matter how files arrive.
 export interface ComposerAttachments {
   attachments: ComposeAttachment[]
   field: Pick<SendEmailRequest, 'attachments'>
   error: string | null
   ready: boolean
   picking: boolean
-  // True while a file drag hovers anywhere over the composer box, for the
-  // dashed affordance CSS styles on `.composer-dragging`.
   dropping: boolean
   drop: DragHandlers
   pick: () => Promise<void>
-  // Also the editor's handoff for non-image files dropped into the body:
-  // the same chip entry point the form-level drop uses.
   addFiles: (files: File[]) => Promise<void>
   remove: (index: number) => void
-  // The composer's own abandon verb: Cancel throws the files away the way
-  // it discards the text, so they never leak into the next form this
-  // hook's instance survives into.
   clear: () => void
 }
 
-// The four handlers spread straight onto the composer `<form>`; the depth
-// counter inside makes nested children (chips, textareas) not flicker the
-// highlight on the way through.
 export interface DragHandlers {
   onDragEnter: (event: React.DragEvent) => void
   onDragOver: (event: React.DragEvent) => void
@@ -62,18 +38,8 @@ export type AttachmentPrefill = {
   refs: MessageAttachmentRef[]
 }
 
-// The decoded-bytes accounting is shared/types' rule (same unit the send
-// boundary and the picker count). Here it sums over the hook's own set.
-
 export function useComposerAttachments(
   prefill?: AttachmentPrefill,
-  // Where image files belong: the rich body's handle. Image files dropped
-  // on the composer chrome (outside the editor's own surface) insert
-  // through this ref read at handler time, so the wiring carries no
-  // stale-closure risk and needs no callback layer. Files-on-chips and
-  // images-in-text stay separated by type, never by where the drag landed.
-  // Structural on purpose: the only member the routing needs is the image
-  // insert, and both handles (editor and content unit) expose exactly it.
   bodyEditorRef?: RefObject<{
     insertImages: (files: File[]) => Promise<void>
   } | null>
@@ -83,14 +49,10 @@ export function useComposerAttachments(
   const [picking, setPicking] = useState(false)
   const [ready, setReady] = useState(!prefill || prefill.refs.length === 0)
   const [dropping, setDropping] = useState(false)
-  // Nesting depth of the drag over this composer; zero means no drag is
-  // hovering, and the counter beats per-element leave events that fire
-  // while moving across children.
   const dropDepth = useRef(0)
 
-  useEffect(() => {
+  useOnMount((isMounted) => {
     if (!prefill || prefill.refs.length === 0) return
-    let alive = true
     Promise.all(
       prefill.refs.map(async (ref) => {
         try {
@@ -101,22 +63,14 @@ export function useComposerAttachments(
         }
       })
     ).then((results) => {
-      if (!alive) return
+      if (!isMounted()) return
       setAttachments(results.flatMap((result) => (result.attachment ? [result.attachment] : [])))
       const failedNames = results.flatMap((result) => (result.failed ? [result.failed] : []))
       if (failedNames.length) setError(`Could not load: ${failedNames.join(', ')}`)
       setReady(true)
     })
-    return () => {
-      alive = false
-    }
-    // The refs settle once per open draft: key={detail.id} remounts the form.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  })
 
-  // One entrance for every way files arrive: the cumulative budget is
-  // checked over the joined set, so splitting the bytes across a picker
-  // and a drag cannot slip past 20 MB either.
   const push = useCallback(
     (incoming: ComposeAttachment[]): void => {
       if (incoming.length === 0) return
@@ -137,8 +91,6 @@ export function useComposerAttachments(
     setPicking(true)
     setError(null)
     try {
-      // Main rejects an over-budget pick with this same sentence; the
-      // cumulative total across several picks is the renderer's own rule.
       push(await window.api.pickAttachments())
     } catch (e) {
       setError(errorMessage(e))
@@ -147,17 +99,9 @@ export function useComposerAttachments(
     }
   }, [picking, push])
 
-  // The drag entrance. The dropped File objects are read right here in
-  // the renderer: their bytes are already on this side of the bridge, so
-  // no main-process round trip exists to add one. Image files route to
-  // the rich body instead of the chip list, so the same drag onto the
-  // composer behaves Gmail-shaped regardless of where it lands.
   const addFiles = useCallback(
     async (files: File[]): Promise<void> => {
       if (files.length === 0) return
-      // A resolving draft's stored refs come back wholesale when they
-      // land; accepting files before that would be silently overwritten,
-      // so the drop says so instead.
       if (!ready) {
         setError('This draft is still loading its attachments. Try again in a moment.')
         return
@@ -200,7 +144,6 @@ export function useComposerAttachments(
         void addFiles(others)
       }
     }),
-    // bodyEditorRef is a stable ref object; read at handler time.
     [addFiles, bodyEditorRef]
   )
 
