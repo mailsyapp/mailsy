@@ -7,11 +7,9 @@ import fs from 'node:fs'
 import path from 'node:path'
 import type { AddressInfo } from 'node:net'
 import type { OAuthCredentials, OAuthCredentialsStatus } from '../shared/types'
-
 const CLIENT_ID = import.meta.env.MAIN_VITE_GOOGLE_CLIENT_ID as string
 const CLIENT_SECRET = import.meta.env.MAIN_VITE_GOOGLE_CLIENT_SECRET as string
 const SCOPES = ['https://www.googleapis.com/auth/gmail.modify']
-
 function makeClient(redirectUri?: string): OAuth2Client {
   const credentials = resolveOAuthCredentials()
   if (!credentials) {
@@ -22,9 +20,7 @@ function makeClient(redirectUri?: string): OAuth2Client {
     redirectUri
   })
 }
-
 const credentialsPath = (): string => path.join(app.getPath('userData'), 'oauth-credentials.bin')
-
 function validateOAuthCredentials(input: unknown): OAuthCredentials {
   if (typeof input !== 'object' || input === null) {
     throw new Error('Client ID and client secret must be non-empty strings.')
@@ -38,7 +34,6 @@ function validateOAuthCredentials(input: unknown): OAuthCredentials {
   }
   return { clientId: clientId.trim(), clientSecret: clientSecret.trim() }
 }
-
 function resolveOAuthCredentials(): OAuthCredentials | null {
   if (CLIENT_ID && CLIENT_SECRET) return { clientId: CLIENT_ID, clientSecret: CLIENT_SECRET }
   try {
@@ -49,49 +44,39 @@ function resolveOAuthCredentials(): OAuthCredentials | null {
     return null
   }
 }
-
 export function saveOAuthCredentials(input: unknown): void {
   const credentials = validateOAuthCredentials(input)
   fs.writeFileSync(credentialsPath(), safeStorage.encryptString(JSON.stringify(credentials)))
 }
-
 export function getOAuthCredentialsStatus(): OAuthCredentialsStatus {
   if (CLIENT_ID && CLIENT_SECRET) return { configured: true, source: 'built-in' }
   const configured = resolveOAuthCredentials() !== null
   return { configured, source: configured ? 'stored' : null }
 }
-
 const tokenPath = (): string => path.join(app.getPath('userData'), 'refresh-token.bin')
-
 function saveRefreshToken(token: string): void {
   fs.writeFileSync(tokenPath(), safeStorage.encryptString(token))
 }
-
 function loadRefreshToken(): string | null {
   if (!fs.existsSync(tokenPath())) return null
   return safeStorage.decryptString(fs.readFileSync(tokenPath()))
 }
-
 export function signIn(): Promise<void> {
   return new Promise((resolve, reject) => {
     const state = crypto.randomBytes(16).toString('hex')
     const server = http.createServer()
-
     server.listen(0, '127.0.0.1', async () => {
       try {
         const port = (server.address() as AddressInfo).port
         const client = makeClient(`http://127.0.0.1:${port}`)
         const { codeVerifier, codeChallenge } = await client.generateCodeVerifierAsync()
-
         server.on('request', async (req, res) => {
           const url = new URL(req.url ?? '/', `http://127.0.0.1:${port}`)
           const code = url.searchParams.get('code')
-
           if (!code || url.searchParams.get('state') !== state) {
             res.end('Waiting for Google...')
             return
           }
-
           try {
             const { tokens } = await client.getToken({ code, codeVerifier })
             if (!tokens.refresh_token) throw new Error('Google sent no refresh token')
@@ -106,7 +91,6 @@ export function signIn(): Promise<void> {
             server.closeAllConnections()
           }
         })
-
         const authUrl = client.generateAuthUrl({
           access_type: 'offline',
           prompt: 'consent',
@@ -123,18 +107,14 @@ export function signIn(): Promise<void> {
     })
   })
 }
-
 export type GmailClient = ReturnType<typeof google.gmail>
-
 export function getGmailClient(): GmailClient {
   const refreshToken = loadRefreshToken()
   if (!refreshToken) throw new Error('Not signed in yet')
-
   const client = makeClient()
   client.setCredentials({ refresh_token: refreshToken })
   return google.gmail({ version: 'v1', auth: client })
 }
-
 export function signOut(): void {
   const refreshToken = loadRefreshToken()
   accountEmailPromise = null
@@ -145,25 +125,24 @@ export function signOut(): void {
       .catch((e) => console.warn('Gmail token revoke failed:', e))
   }
 }
-
 type SessionEndedListener = () => void
 const sessionEndedListeners: SessionEndedListener[] = []
-
+let mailSession = Symbol()
+export function getMailSession(): symbol {
+  return mailSession
+}
 export function onSessionEnded(listener: SessionEndedListener): void {
   sessionEndedListeners.push(listener)
 }
-
 export function invalidateStoredGrant(): void {
   if (fs.existsSync(tokenPath())) fs.unlinkSync(tokenPath())
+  mailSession = Symbol()
   for (const listener of sessionEndedListeners) listener()
 }
-
 export function isSignedIn(): boolean {
   return loadRefreshToken() !== null
 }
-
 let accountEmailPromise: Promise<string> | null = null
-
 export function getAccountEmail(): Promise<string> {
   if (!accountEmailPromise) {
     accountEmailPromise = (async () => {

@@ -6,19 +6,16 @@ import { SignatureBar } from './SignatureBar'
 import { loadSignature } from '../lib/signature'
 import { plainTextToHtml } from '../lib/emailHtml'
 import type { ComposerAttachments } from './useComposerAttachments'
-
 export interface ComposerBodyHandle {
   insertImages: (files: File[]) => Promise<void>
 }
-
 type ComposerBodyProps = {
   attach: ComposerAttachments
-  onBodyChange: (body: { html: string; text: string }) => void
+  onBodyChange: (body: { html: string; text: string }, source: 'edit' | 'prefill') => void
   initialHtml?: string
   remountKey?: string | number
   autoSignature?: boolean
 }
-
 export const ComposerBody = forwardRef<ComposerBodyHandle, ComposerBodyProps>(function ComposerBody(
   { attach, onBodyChange, initialHtml, remountKey, autoSignature },
   ref
@@ -33,9 +30,15 @@ export const ComposerBody = forwardRef<ComposerBodyHandle, ComposerBodyProps>(fu
     []
   )
   const handleBodyChange = useCallback(
-    (content: { html: string; text: string }) => {
+    (
+      content: {
+        html: string
+        text: string
+      },
+      source: 'edit' | 'prefill'
+    ) => {
       setSignaturePresent(editorRef.current?.hasSignatureBlock() ?? false)
-      onBodyChange(content)
+      onBodyChange(content, source)
     },
     [onBodyChange]
   )

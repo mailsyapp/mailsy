@@ -1,5 +1,4 @@
 export {}
-
 declare global {
   type EmailSummary = import('../shared/types').EmailSummary
   type EmailDetail = import('../shared/types').EmailDetail
@@ -13,7 +12,6 @@ declare global {
   type MailLabel = import('../shared/types').MailLabel
   type SyncReason = import('../shared/sync').SyncReason
   type SyncResult = import('../shared/sync').SyncResult
-
   interface Window {
     api: {
       signIn(): Promise<void>
@@ -24,12 +22,13 @@ declare global {
       listFolder(options?: ListFolderOptions): Promise<MailPage>
       syncMail(reason: SyncReason): Promise<SyncResult>
       onSyncResult(listener: (result: SyncResult) => void): () => void
-      getMessage(id: string): Promise<EmailDetail>
+      getMessage(id: string, draftId?: string): Promise<EmailDetail>
       getThread(threadId: string): Promise<EmailThread>
       sendEmail(request: SendEmailRequest): Promise<void>
       sendDraft(request: SendDraftRequest): Promise<void>
-      saveDraft(request: SaveDraftRequest): Promise<string>
+      saveDraft(request: SaveDraftRequest): Promise<import('../shared/types').DraftVersion>
       discardDraft(draftId: string): Promise<void>
+      draftExists(draftId: string): Promise<boolean>
       pickAttachments(): Promise<import('../shared/types').ComposeAttachment[]>
       getAttachment(messageId: string, attachmentId: string): Promise<string>
       saveAttachment(messageId: string, attachmentId: string, filename: string): Promise<boolean>

@@ -513,22 +513,30 @@
   function pageSlice(rows, options) {
     const start = options.pageToken ? parseInt(options.pageToken, 10) || 0 : 0
     const size = options.maxResults || PAGE_SIZE
-    const slice = rows.slice(start, start + size)
+    const skip = new Set(options.skipRowIds)
+    const slice = rows
+      .slice(start, start + size)
+      .filter((row) => !skip.has(options.folder === 'drafts' ? row.draftId : row.id))
     return {
       threads: slice,
       nextPageToken: start + size < rows.length ? String(start + size) : null
     }
   }
 
-  // Minimal Gmail-style query support: plain text matches subject/from/snippet,
-  // tokens shaped like `key:value` are passed through as a literal filter.
+  // Minimal Gmail-style query support: plain text and selected label predicates.
   function matches(m, q) {
     if (!q || !q.trim()) return true
     const hay = `${m.subject} ${m.from} ${m.snippet}`.toLowerCase()
     return q
       .toLowerCase()
       .split(/\s+/)
-      .every((tok) => hay.includes(tok))
+      .every((tok) => {
+        const inInbox = (m.labelIds ?? []).includes('INBOX')
+        if (tok === 'in:inbox') return inInbox
+        if (tok === '-in:inbox') return !inInbox
+        if (tok === 'is:unread') return (m.labelIds ?? []).includes('UNREAD')
+        return hay.includes(tok)
+      })
   }
 
   window.__sent = sent
@@ -537,6 +545,7 @@
   window.__seedIds = seed.map((m) => m.id)
   window.__draftSaves = draftSaves
   window.__draftDiscards = draftDiscards
+  window.__deleteDraftRemotely = (draftId) => deletedDrafts.push(draftId)
 
   // Mirrors the real boundary: getGmailClient throws this exact sentence
   // when no stored token exists, and recordError flips to the sign-in
@@ -546,8 +555,24 @@
     if (!signedIn) throw new Error('Not signed in yet')
   }
 
+  function findDraft(draftId, allowMissing = false) {
+    const target = deletedDrafts.includes(draftId) ? undefined : seed.find((m) => m.draftId === draftId)
+    if (!target && !allowMissing) throw new Error(`mock: no draft ${draftId}`)
+    return target
+  }
+
+  function hasDraftConflict(target, expectedMessageId) {
+    return expectedMessageId !== undefined && target.id !== expectedMessageId
+  }
+
+  function draftConflict() {
+    return new Error('Draft changed in Gmail. Leaving keeps your unsaved edits as a separate draft.')
+  }
+
   window.api = {
-    signIn: async () => undefined,
+    signIn: async () => {
+      signedIn = true
+    },
     isSignedIn: async () => signedIn,
     // Mirrors the sign-out bridge: the stored token is dropped in memory the
     // way the real bridge deletes the token file, so isSignedIn() flips to
@@ -616,9 +641,9 @@
       }
       return pageSlice([...groups.values()].map(threadRowOf), options)
     },
-    getMessage: async (id) => {
+    getMessage: async (id, draftId) => {
       ensureSignedIn()
-      const m = byId.get(id)
+      const m = draftId ? findDraft(draftId) : byId.get(id)
       if (!m) throw new Error(`mock: no message ${id}`)
       // The attachment ref list is a boundary contract now: the detail
       // always carries it (empty for plain messages) the way toEmailDetail
@@ -687,7 +712,7 @@
       saves.push({ messageId, attachmentId, filename })
       return true
     },
-    // Mirrors drafts.update + drafts.send: the sent content is recorded and
+    // Mirrors drafts.send with replacement content: the message is recorded and
     // the draft disappears from the Drafts folder in one step. Throws on an
     // unknown draft ID (e.g. a message ID passed by mistake) so the mock
     // keeps discriminating ID confusion like the live API's 404 would.
@@ -703,13 +728,14 @@
       ) {
         throw new Error('Recipient is required')
       }
-      const target = seed.find((m) => m.draftId === request.draftId)
-      if (!target) throw new Error(`mock: no draft ${request.draftId}`)
+      if (hasDraftConflict(findDraft(request.draftId), request.expectedMessageId)) {
+        throw draftConflict()
+      }
       sent.push({ ...request })
       deletedDrafts.push(request.draftId)
     },
     // Mirrors saveDraft: a write with no draft id creates a draft-shaped
-    // seed entry (own singleton thread, DRAFT label) and answers its id;
+    // seed entry (its own or a supplied thread, DRAFT label) and answers its id;
     // a write with one updates the stored draft in place the way
     // drafts.update replaces the message. Send-style validation only:
     // Gmail keeps recipient-less drafts, so To may be empty here.
@@ -729,11 +755,22 @@
       if (request.draftId !== undefined && typeof request.draftId !== 'string') {
         throw new Error('Invalid draft request')
       }
+      const target = request.draftId ? findDraft(request.draftId, request.copyOnConflict === true) : null
+      const conflict = request.draftId && (!target || hasDraftConflict(target, request.expectedMessageId))
+      if (conflict && request.copyOnConflict !== true) throw draftConflict()
+      if (conflict && draftDiscards.some((entry) => entry.draftId === request.draftId)) {
+        throw new Error('Draft was discarded')
+      }
       let draftId
-      if (request.draftId) {
-        const target = seed.find((m) => m.draftId === request.draftId)
-        if (!target) throw new Error(`mock: no draft ${request.draftId}`)
+      if (target && !conflict) {
         draftId = target.draftId
+        const oldMessageId = target.id
+        byId.delete(oldMessageId)
+        for (const key of attachmentStore.keys()) {
+          if (key.startsWith(`${oldMessageId}~`)) attachmentStore.delete(key)
+        }
+        target.id = `msg-${draftId}-v${draftSaves.length + 1}`
+        byId.set(target.id, target)
         target.to = request.to
         target.cc = request.cc || ''
         target.bcc = request.bcc || ''
@@ -750,7 +787,7 @@
         const id = `msg-${draftId}`
         const message = {
           id,
-          threadId: id,
+          threadId: (!conflict && request.threadId) || id,
           from: 'me@example.com',
           subject: request.subject,
           date: new Date().toUTCString(),
@@ -793,7 +830,7 @@
         attachmentStore.set(`${msgId}~att-${draftId}-${i}`, a.data)
       })
       draftSaves.push({ ...request, draftId })
-      return draftId
+      return { draftId, messageId: msgId }
     },
     // Mirrors drafts.delete from the explicit Cancel path. A vanished draft
     // is already gone, so the boundary settles it as success; the mock
@@ -808,6 +845,10 @@
       // exclusion filter.
       deletedDrafts.push(draftId)
       draftDiscards.push({ draftId })
+    },
+    draftExists: async (draftId) => {
+      ensureSignedIn()
+      return !deletedDrafts.includes(draftId) && seed.some((message) => message.draftId === draftId)
     },
     // Mirrors gmail.users.messages/threads.modify: error strings match the
     // main process validation, targets resolve by threadId or id, and the
@@ -1058,7 +1099,7 @@
   // movement behind it, and answers the same delta shape the real
   // boundary builds: a fresh list row plus the thread's current label
   // set, so pushing it is the faithful stand-in for main's pushed sweep.
-  window.__deliverMail = ({ from, subject, snippet }) => {
+  window.__deliverMail = ({ from, subject, snippet, prepend = false }) => {
     const n = ++deliveredCount
     const message = {
       id: `msg-delivered-${n}`,
@@ -1078,7 +1119,8 @@
       folder: 'inbox',
       labelIds: ['INBOX', 'UNREAD']
     }
-    seed.push(message)
+    if (prepend) seed.unshift(message)
+    else seed.push(message)
     byId.set(message.id, message)
     const delta = {
       kind: 'delta',

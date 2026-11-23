@@ -8,6 +8,7 @@ Search lets a signed-in user filter mail from the inbox sidebar: typing commits 
 - `search-match` keeps title/body/snippet matches and removes non-matches.
 - `search-clear` restores the full inbox and empties the box.
 - `search-fallback` fuzzy-matches cached inbox mail when the server returns nothing.
+- `search-pagination` reaches every match across four result pages.
 
 ## How to get to it (user POV)
 
@@ -24,8 +25,10 @@ Preconditions:
 
 - **Match.** Type `budget` in the searchbox. Run `node scripts/drive.mjs --feature search --run-id "$RUN_ID" --port "$VERIFY_MAILSY_PORT"`. `Q3 budget draft` remains visible and `Launch checklist` is filtered out.
 - **Clear.** Choose `Clear search` (same command). The box empties and `Launch checklist` returns.
-- **Footer regression.** The populated `budget` search shows `End of results`. Submit `from:nobody@example.invalid`: the no-results status appears with no mail rows and no `End of results` footer. Capture `search-empty` before clearing.
-- **Proof.** Capture the restored inbox. The driver writes `artifacts/<run-id>/search.aria.txt` and `artifacts/<run-id>/search.png`. Both identify the feature, the query, and the visible result.
+- **Footer regression.** The populated `budget` search shows `End of results`; an empty `from:nobody@example.invalid` search does not.
+- **Pagination and refresh.** Load two pages of a 34-match search, then restore two older matches into page two via a delta and a reset. Keep paging to verify that all 36 matches appear exactly once.
+- **Open reply.** Open an unread result and start a reply. Sync can remove the auto-read row and later update its star without losing the reply. Switching to a matching cached query keeps the reply; switching to an excluding query closes the old pane.
+- **Proof.** The driver writes `search`, `search-pagination`, and `search-open-reply` ARIA snapshots and screenshots under `artifacts/<run-id>/`.
 
 ## Gotchas
 

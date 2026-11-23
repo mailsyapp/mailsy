@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 import type {
   ComposeAttachment,
+  DraftVersion,
   EmailDetail,
   EmailThread,
   ListFolderOptions,
@@ -15,7 +16,6 @@ import type {
   ThreadPage
 } from '../shared/types'
 import type { SyncReason, SyncResult } from '../shared/sync'
-
 const api = {
   signIn: (): Promise<void> => ipcRenderer.invoke('auth:sign-in'),
   saveOAuthCredentials: (creds: OAuthCredentials): Promise<void> =>
@@ -35,17 +35,20 @@ const api = {
       ipcRenderer.removeListener('gmail:sync-result', wrapped)
     }
   },
-  getMessage: (id: string): Promise<EmailDetail> => ipcRenderer.invoke('gmail:get', id),
+  getMessage: (id: string, draftId?: string): Promise<EmailDetail> =>
+    ipcRenderer.invoke('gmail:get', id, draftId),
   getThread: (threadId: string): Promise<EmailThread> =>
     ipcRenderer.invoke('gmail:thread', threadId),
   sendEmail: (request: SendEmailRequest): Promise<void> =>
     ipcRenderer.invoke('gmail:send', request),
   sendDraft: (request: SendDraftRequest): Promise<void> =>
     ipcRenderer.invoke('gmail:send-draft', request),
-  saveDraft: (request: SaveDraftRequest): Promise<string> =>
+  saveDraft: (request: SaveDraftRequest): Promise<DraftVersion> =>
     ipcRenderer.invoke('gmail:save-draft', request),
   discardDraft: (draftId: string): Promise<void> =>
     ipcRenderer.invoke('gmail:discard-draft', draftId),
+  draftExists: (draftId: string): Promise<boolean> =>
+    ipcRenderer.invoke('gmail:draft-exists', draftId),
   pickAttachments: (): Promise<ComposeAttachment[]> => ipcRenderer.invoke('attachments:pick'),
   getAttachment: (messageId: string, attachmentId: string): Promise<string> =>
     ipcRenderer.invoke('gmail:get-attachment', messageId, attachmentId),
@@ -63,7 +66,6 @@ const api = {
     ipcRenderer.invoke('gmail:create-label', name),
   deleteUserLabel: (id: string): Promise<void> => ipcRenderer.invoke('gmail:delete-label', id)
 }
-
 if (process.contextIsolated) {
   try {
     contextBridge.exposeInMainWorld('electron', electronAPI)

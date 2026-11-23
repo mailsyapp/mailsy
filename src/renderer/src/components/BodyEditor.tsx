@@ -4,27 +4,31 @@ import { useLatest } from '../hooks/useLatest'
 import { useOnMount } from '../hooks/useOnMount'
 import { imageToPayload, looksLikeImageFile } from '../lib/attachmentFile'
 import { SIGNATURE_BLOCK_CLASS, SIGNATURE_BLOCK_SELECTOR } from '../lib/signature'
-
 export interface BodyEditorHandle {
   insertImages: (files: File[]) => Promise<void>
-  insertSignatureBlock: (html: string, options?: { focusCaret?: boolean }) => void
+  insertSignatureBlock: (
+    html: string,
+    options?: {
+      focusCaret?: boolean
+    }
+  ) => void
   removeSignatureBlock: () => void
   hasSignatureBlock: () => boolean
 }
-
 type BodyEditorProps = {
   initialHtml: string
   placeholder?: string
-  onChange: (content: { html: string; text: string }) => void
+  onChange: (content: { html: string; text: string }, source: 'edit' | 'prefill') => void
   onNonImageFiles: (files: File[]) => void
 }
-
-function readContent(editor: HTMLDivElement): { html: string; text: string } {
+function readContent(editor: HTMLDivElement): {
+  html: string
+  text: string
+} {
   const html = editor.innerHTML
   const text = editor.innerText
   return { html: /^(\s|<br\/?>)*$/i.test(html) ? '' : html, text }
 }
-
 function isVisuallyEmpty(editor: HTMLElement): boolean {
   for (const node of editor.childNodes) {
     if (node.nodeType === Node.TEXT_NODE && node.textContent?.trim() === '') continue
@@ -35,24 +39,20 @@ function isVisuallyEmpty(editor: HTMLElement): boolean {
   }
   return true
 }
-
 function isBlankNode(node: Node): boolean {
   if (node.nodeType === Node.TEXT_NODE) return (node.textContent ?? '').trim() === ''
   if (node.nodeName === 'BR') return true
   return false
 }
-
 function isBlockElement(node: Node): boolean {
   return (
     node.nodeType === Node.ELEMENT_NODE &&
     !getComputedStyle(node as Element).display.startsWith('inline')
   )
 }
-
 function removeNode(node: Node): void {
   ;(node as ChildNode).remove()
 }
-
 function placeCaret(
   editor: HTMLDivElement,
   selection: Selection,
@@ -66,13 +66,11 @@ function placeCaret(
   selection.addRange(placed)
   editor.focus()
 }
-
 function mergeBackward(editor: HTMLDivElement): boolean {
   const selection = window.getSelection()
   if (!selection || selection.rangeCount === 0) return false
   const range = selection.getRangeAt(0)
   if (!range.collapsed) return false
-
   if (range.startContainer.nodeType === Node.ELEMENT_NODE) {
     const container = range.startContainer
     const index = range.startOffset
@@ -83,12 +81,10 @@ function mergeBackward(editor: HTMLDivElement): boolean {
       return true
     }
   }
-
   if (range.startOffset !== 0) return false
   const start = range.startContainer
   const caretElement = start.nodeType === Node.TEXT_NODE ? start.parentElement : (start as Element)
   if (!caretElement || caretElement === editor) return eatAheadUnit(editor, selection)
-
   let probe: Node | null = caretElement
   let anchor: Node | null = null
   while (probe && probe !== editor) {
@@ -101,7 +97,6 @@ function mergeBackward(editor: HTMLDivElement): boolean {
     probe = probe.parentElement
   }
   if (!anchor) return eatAheadUnit(editor, selection)
-
   const anchorParent = anchor.parentElement as HTMLElement
   const blanksBefore: Node[] = []
   let content: Node | null = null
@@ -114,13 +109,11 @@ function mergeBackward(editor: HTMLDivElement): boolean {
     blanksBefore.unshift(sibling)
     sibling = sibling.previousSibling
   }
-
   if (!content) {
     if (blanksBefore.length === 0) return false
     removeNode(blanksBefore[blanksBefore.length - 1])
     return true
   }
-
   if (isBlockElement(content)) {
     const target = content as HTMLElement
     const moved = Array.from(anchor.childNodes)
@@ -131,7 +124,6 @@ function mergeBackward(editor: HTMLDivElement): boolean {
     placeCaret(editor, selection, target, seam >= 0 ? seam : target.childNodes.length)
     return true
   }
-
   const moved = Array.from(anchor.childNodes)
   const anchorIndex = Array.prototype.indexOf.call(anchorParent.childNodes, anchor)
   for (const child of moved) anchorParent.insertBefore(child, anchor)
@@ -139,14 +131,12 @@ function mergeBackward(editor: HTMLDivElement): boolean {
   placeCaret(editor, selection, anchorParent, anchorIndex)
   return true
 }
-
 function eatAheadUnit(editor: HTMLDivElement, selection: Selection): boolean {
   if (selection.rangeCount === 0) return false
   const range = selection.getRangeAt(0)
   const container = range.startContainer
   if (container.nodeType === Node.TEXT_NODE && (container.textContent ?? '').length > 0)
     return false
-
   const markers: Node[] = []
   let node: Node = container
   let first = true
@@ -185,12 +175,10 @@ function eatAheadUnit(editor: HTMLDivElement, selection: Selection): boolean {
     node = node.parentElement as Node
   }
 }
-
 function reportNow(editor: HTMLDivElement, onChange: BodyEditorProps['onChange']): void {
   editor.toggleAttribute('data-empty', isVisuallyEmpty(editor))
-  onChange(readContent(editor))
+  onChange(readContent(editor), 'edit')
 }
-
 function insertDataUrlAtCaret(editor: HTMLDivElement, dataUrl: string): void {
   const img = document.createElement('img')
   img.src = dataUrl
@@ -212,7 +200,6 @@ function insertDataUrlAtCaret(editor: HTMLDivElement, dataUrl: string): void {
   selection?.removeAllRanges()
   selection?.addRange(after)
 }
-
 async function insertImageFiles(editor: HTMLDivElement, files: File[]): Promise<File[]> {
   const leftovers: File[] = []
   for (const file of files) {
@@ -222,16 +209,13 @@ async function insertImageFiles(editor: HTMLDivElement, files: File[]): Promise<
   }
   return leftovers
 }
-
 const SIGNATURE_OWNED_SELECTOR = `:scope > ${SIGNATURE_BLOCK_SELECTOR}`
-
 function removeSignatureBlocks(editor: HTMLDivElement): void {
   for (const existing of Array.from(editor.querySelectorAll(SIGNATURE_OWNED_SELECTOR))) {
     existing.remove()
   }
   if (isVisuallyEmpty(editor)) editor.replaceChildren()
 }
-
 function signatureBodyParagraph(editor: HTMLDivElement): HTMLElement {
   const quoteSelector = 'blockquote, .gmail_quote, .gmail_quote_container'
   const excluded = `${quoteSelector}, ${SIGNATURE_BLOCK_SELECTOR}`
@@ -270,7 +254,6 @@ function signatureBodyParagraph(editor: HTMLDivElement): HTMLElement {
   editor.insertBefore(paragraph, quote)
   return paragraph
 }
-
 function insertSignatureBlockInto(editor: HTMLDivElement, html: string, focusCaret: boolean): void {
   removeSignatureBlocks(editor)
   const block = document.createElement('div')
@@ -312,7 +295,6 @@ function insertSignatureBlockInto(editor: HTMLDivElement, html: string, focusCar
   }
   placeCaret(editor, selection, container, offset)
 }
-
 export const BodyEditor = forwardRef<BodyEditorHandle, BodyEditorProps>(function BodyEditor(
   { initialHtml, placeholder, onChange, onNonImageFiles },
   ref
@@ -322,14 +304,13 @@ export const BodyEditor = forwardRef<BodyEditorHandle, BodyEditorProps>(function
   const reportAfterEditTransaction = useAfterCurrentTask(() => {
     if (editorRef.current) reportNow(editorRef.current, onChangeRef.current)
   })
-
   useOnMount(() => {
     const editor = editorRef.current
     if (!editor) return
     if (initialHtml) editor.innerHTML = initialHtml
-    reportNow(editor, onChange)
+    editor.toggleAttribute('data-empty', isVisuallyEmpty(editor))
+    onChange(readContent(editor), 'prefill')
   })
-
   useImperativeHandle(
     ref,
     () => ({
@@ -340,7 +321,12 @@ export const BodyEditor = forwardRef<BodyEditorHandle, BodyEditorProps>(function
         editor.focus()
         reportNow(editor, onChangeRef.current)
       },
-      insertSignatureBlock: (html: string, options?: { focusCaret?: boolean }) => {
+      insertSignatureBlock: (
+        html: string,
+        options?: {
+          focusCaret?: boolean
+        }
+      ) => {
         const editor = editorRef.current
         if (!editor) return
         insertSignatureBlockInto(editor, html, options?.focusCaret ?? true)
@@ -355,10 +341,8 @@ export const BodyEditor = forwardRef<BodyEditorHandle, BodyEditorProps>(function
       },
       hasSignatureBlock: () => Boolean(editorRef.current?.querySelector(SIGNATURE_OWNED_SELECTOR))
     }),
-
     [onChangeRef]
   )
-
   async function handleDrop(event: React.DragEvent<HTMLDivElement>): Promise<void> {
     if (event.dataTransfer.types.includes('Files')) event.preventDefault()
     event.stopPropagation()
@@ -376,7 +360,6 @@ export const BodyEditor = forwardRef<BodyEditorHandle, BodyEditorProps>(function
     editor.focus()
     reportNow(editor, onChange)
   }
-
   return (
     <div
       ref={editorRef}

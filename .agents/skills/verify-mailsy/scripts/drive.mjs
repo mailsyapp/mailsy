@@ -127,6 +127,183 @@ async function snapshot(page, name) {
   log(`evidence: ${name}.aria.txt + ${name}.png`)
 }
 
+async function activateLoadMore(page, view) {
+  await view.getByRole('button', { name: 'Load more', exact: true }).evaluate(
+    (button) => button.focus({ preventScroll: true }), undefined, { timeout: 5000 }
+  )
+  await page.keyboard.press('Enter')
+}
+
+async function holdContinuations(page) {
+  await page.evaluate(() => {
+    const listFolder = (window.__packagedFixtureApi ?? window.api).listFolder
+    window.__heldContinuations = []
+    ;(window.__packagedFixtureApi ?? window.api).listFolder = async (options) => {
+      const result = await listFolder(options)
+      if (options.pageToken) {
+        await new Promise((release) => window.__heldContinuations.push({
+          release, subjects: result.threads.map(({ subject }) => subject)
+        }))
+      }
+      return result
+    }
+  })
+}
+
+async function releaseContinuation(page, index) {
+  await page.evaluate(async (at) => {
+    window.__heldContinuations[at].release()
+    await new Promise(requestAnimationFrame)
+    await new Promise(requestAnimationFrame)
+  }, index)
+}
+
+async function startOrObserveLoadMore(page, view, heldCount) {
+  const trigger = view.getByRole('button', { name: 'Load more', exact: true }).or(
+    view.getByRole('status').filter({ hasText: 'Loading more...' })
+  )
+  const focusedButton = await trigger.evaluate((el) => {
+    if (el.tagName !== 'BUTTON') return false
+    el.focus({ preventScroll: true })
+    return true
+  }, undefined, { timeout: 5000 })
+  if (focusedButton) await page.keyboard.press('Enter')
+  await page.waitForFunction((n) => window.__heldContinuations.length === n, heldCount, { timeout: 5000 })
+}
+
+async function switchDuringPagination(page) {
+  const inbox = page.getByRole('complementary', { name: 'Inbox', exact: true })
+  const rail = page.getByRole('navigation', { name: 'Mail folders' })
+  const labels = rail.getByRole('button', { name: 'Labels', exact: true })
+  if (await labels.count()) await labels.click()
+  await page.evaluate(async () => {
+    const labels = await (window.__packagedFixtureApi ?? window.api).listLabels()
+    const receipts = labels.find(({ name }) => name === 'Receipts')
+    for (let i = 1; i <= 35; i++) {
+      const { delta } = window.__deliverMail({ subject: `Label paging ${i}` })
+      await (window.__packagedFixtureApi ?? window.api).modifyLabels({
+        kind: 'thread', id: delta.threads[0].id, addLabelIds: [receipts.id]
+      })
+    }
+  })
+  await holdContinuations(page)
+
+  for (const [index, name, lastSubject] of [[0, 'Drafts', 'Later draft 30'], [2, 'Receipts', 'Label paging 35']]) {
+    await rail.getByRole('button', { name: 'Inbox', exact: true }).click()
+    await inbox.getByRole('listitem').nth(29).waitFor({ timeout: 5000 })
+    await startOrObserveLoadMore(page, inbox, index + 1)
+
+    await rail.getByRole('button', { name, exact: true }).click()
+    const destination = page.getByRole('complementary', { name, exact: true })
+    await destination.getByRole('listitem').nth(29).waitFor({ timeout: 5000 })
+    await startOrObserveLoadMore(page, destination, index + 2).catch(() => {
+      throw new Error(`ASSERT: the abandoned Inbox request blocked pagination in ${name}`)
+    })
+    log(`pass: ${name} can load its next page while Inbox is still in flight`)
+    const oldSubjects = await page.evaluate((n) => window.__heldContinuations[n].subjects, index)
+    assert(oldSubjects.length > 0, 'the held Inbox page contains rows', 'the held Inbox page was empty')
+    await releaseContinuation(page, index)
+    const busy = destination.getByRole('status').filter({ hasText: 'Loading more...' })
+    const leakedRows = await Promise.all(oldSubjects.map(
+      (subject) => destination.getByText(subject, { exact: true }).count()
+    ))
+    assert(
+      (await busy.count()) === 1 && leakedRows.every((count) => count === 0),
+      `the old Inbox response neither paints ${name} nor clears its busy state`,
+      `the superseded request changed the active ${name} list or its loading state`
+    )
+    await releaseContinuation(page, index + 1)
+    await destination.getByText(lastSubject, { exact: true }).waitFor({ timeout: 5000 })
+    await snapshot(page, `pagination-switch-${name.toLowerCase()}`)
+  }
+}
+
+async function holdAccountRequests(page, inbox) {
+  await page.evaluate(() => {
+    for (let i = 1; i <= 32; i++) window.__deliverMail({ subject: `Old account ${i}` })
+    window.__pushSync({ kind: 'reset' })
+    window.__heldRefreshes = []
+    ;(window.__packagedFixtureApi ?? window.api).syncMail = () => new Promise((resolve) => window.__heldRefreshes.push(resolve))
+  })
+  await holdContinuations(page)
+  await activateLoadMore(page, inbox)
+  await page.waitForFunction(() => window.__heldContinuations.length === 1)
+  await page.getByRole('button', { name: 'Refresh mail' }).click()
+  await page.waitForFunction(() => window.__heldRefreshes.length === 1)
+}
+
+async function signInWithPendingMail(page) {
+  await page.evaluate(() => {
+    const subjects = Array.from({ length: 32 }, (_, i) => `New account ${i + 1}`)
+    const rows = subjects.map((subject) => window.__deliverMail({ subject }).delta.threads[0])
+    ;(window.__packagedFixtureApi ?? window.api).listFolder = async (options) => options.pageToken
+      ? { threads: rows.slice(30), nextPageToken: null }
+      : { threads: rows.slice(0, 30), nextPageToken: '30' }
+  })
+  await page.getByRole('button', { name: 'Sign in with Google' }).click()
+  const inbox = page.getByRole('complementary', { name: 'Inbox', exact: true })
+  await inbox.getByText('New account 1', { exact: true }).waitFor({ timeout: 5000 })
+  await page.evaluate(async () => {
+    window.__releaseOldDraftSave()
+    await new Promise(requestAnimationFrame)
+    await new Promise(requestAnimationFrame)
+  })
+  assert(
+    (await page.evaluate(() => window.__accountDraftWrites))?.join() === 'First edit in old account',
+    'the old composer cannot save into the new account after a held write settles',
+    'an old composer dispatched a draft save into the next account'
+  )
+  const refresh = page.getByRole('button', { name: 'Refresh mail' })
+  const oldRefreshCleared = (await refresh.getAttribute('aria-busy')) === 'false'
+  await refresh.click()
+  const startedOwnRefresh = await page.evaluate(() => window.__heldRefreshes.length === 2)
+
+  await page.evaluate(async () => {
+    const { delta } = window.__deliverMail({ subject: 'Late refresh from prior account' })
+    window.__heldRefreshes[0](delta)
+    await new Promise(requestAnimationFrame)
+    await new Promise(requestAnimationFrame)
+  })
+  assert(
+    (await inbox.getByText('Late refresh from prior account', { exact: true }).count()) === 0,
+    'the late refresh never displays mail from the previous account',
+    'a refresh started before sign-out displayed its old account mail after sign-in'
+  )
+  assert(
+    oldRefreshCleared && startedOwnRefresh && (await refresh.getAttribute('aria-busy')) === 'true',
+    'the second account owns its refresh button independently',
+    'the old refresh blocked or cleared the second account refresh'
+  )
+  assert(
+    (await inbox.getByRole('button', { name: 'Load more', exact: true }).count()) === 1,
+    'the second account can page while the old list request is held',
+    'the previous account still owns the pagination control'
+  )
+  await activateLoadMore(page, inbox)
+  await inbox.getByText('New account 32', { exact: true }).waitFor({ timeout: 5000 })
+  await releaseContinuation(page, 0)
+  await page.evaluate(() => window.__heldRefreshes[1]({
+    kind: 'delta', historyId: 'new-account', threads: [], deletedThreadIds: []
+  }))
+  assert(
+    (await inbox.getByRole('listitem').count()) === 32 &&
+      (await inbox.getByText(/^Old account /).count()) === 0,
+    'the new mailbox keeps only its own results after both old requests settle',
+    'late page results changed the new mailbox'
+  )
+  await snapshot(page, 'sign-in-pending-mail')
+
+  const rail = page.getByRole('navigation', { name: 'Mail folders' })
+  const labels = rail.getByRole('button', { name: 'Labels', exact: true })
+  if (await labels.count()) await labels.click()
+  await rail.getByRole('button', { name: 'Receipts', exact: true }).click()
+  await page.getByRole('complementary', { name: 'Receipts', exact: true }).waitFor({ timeout: 5000 })
+  await page.getByRole('button', { name: 'Sign out' }).click()
+  await page.getByRole('button', { name: 'Sign in with Google' }).click()
+  await inbox.getByText('New account 1', { exact: true }).waitFor({ timeout: 5000 })
+  assert(true, 'signing back in after leaving a label opens Inbox', 'the previous account label was retained')
+}
+
 let browser
 let exitCode = 0
 try {
@@ -134,7 +311,7 @@ try {
   if (EXECUTABLE) {
     const packaged = await launchPackaged({
       executablePath: resolve(EXECUTABLE), artifactDir: ART, mockPath: MOCK,
-      signedOut: SIGNED_OUT, clock: FEATURE === 'snooze-emulation' || FEATURE === 'background-work'
+      signedOut: SIGNED_OUT, clock: FEATURE === 'snooze-emulation' || FEATURE === 'background-work' || FEATURE === 'delete-draft'
     })
     browser = packaged.browser
     page = packaged.page
@@ -147,14 +324,14 @@ try {
     await context.addInitScript({ path: MOCK })
     if (SIGNED_OUT) {
       await context.addInitScript(() => {
-        window.api.isSignedIn = async () => false
-        window.api.signIn = async () => { window.__signInClicked = true }
+        ;(window.__packagedFixtureApi ?? window.api).isSignedIn = async () => false
+        ;(window.__packagedFixtureApi ?? window.api).signIn = async () => { window.__signInClicked = true }
       })
     }
     page = await context.newPage()
     // Fast-forwarding journeys need fake timers installed before the app's
     // intervals exist; other features run on real time, unchanged.
-    if (FEATURE === 'snooze-emulation' || FEATURE === 'background-work') await page.clock.install()
+    if (FEATURE === 'snooze-emulation' || FEATURE === 'background-work' || FEATURE === 'delete-draft') await page.clock.install()
     await page.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: 'domcontentloaded' })
   }
 
@@ -173,6 +350,29 @@ try {
     const signOut = page.getByRole('button', { name: 'Sign out' })
     await signOut.waitFor({ timeout: 10000 })
     assert(true, 'signed-in state offers the "Sign out" button', 'Sign out button missing while signed in')
+    await holdAccountRequests(page, page.getByRole('complementary', { name: 'Inbox' }))
+    await page.evaluate(() => {
+      const api = window.__packagedFixtureApi ?? window.api
+      const saveDraft = api.saveDraft
+      window.__accountDraftWrites = []
+      api.saveDraft = (request) => {
+        window.__accountDraftWrites.push(request.subject)
+        if (request.subject !== 'First edit in old account') return saveDraft(request)
+        return new Promise((resolve) => {
+          window.__releaseOldDraftSave = () => resolve({
+            draftId: 'old-account-draft', messageId: 'old-account-message'
+          })
+        })
+      }
+    })
+    await page.getByRole('button', { name: 'Compose', exact: true }).click()
+    const draftSubject = page.getByRole('region', { name: 'Email content' }).getByRole('textbox', { name: 'Subject' })
+    await draftSubject.fill('First edit in old account')
+    await page.waitForFunction(() => typeof window.__releaseOldDraftSave === 'function')
+    await draftSubject.fill('Private pending edit in old account')
+    // Closing while still signed in queues the edit behind the held save.
+    await page.getByRole('complementary', { name: 'Inbox' }).getByText(/^Old account \d+$/).first().click()
+    await draftSubject.waitFor({ state: 'detached' })
     await signOut.click()
     // Signed-out screen: the sign-in button returns and no mail rows stay
     // on the list. Both reads are the flip proof.
@@ -190,6 +390,7 @@ try {
       'sign-out bridge not invoked'
     )
     await snapshot(page, 'sign-out')
+    await signInWithPendingMail(page)
   } else if (FEATURE === 'inbox') {
     const inbox = page.getByRole('complementary', { name: 'Inbox' })
     await inbox.waitFor({ timeout: 10000 })
@@ -224,6 +425,7 @@ try {
     // strict-mode waitFor trips on the locator, not the app.
     await page.getByText('Launch checklist', { exact: true }).waitFor({ state: 'detached', timeout: 10000 })
     await page.getByText('Q3 budget draft').first().waitFor({ timeout: 10000 })
+    await page.getByText(/results? for “budget”/).waitFor({ timeout: 5000 })
     assert(true, 'search "budget" surfaces the budget draft and filters the rest', 'filtering did not happen')
     await page.getByText('End of results', { exact: true }).waitFor({ timeout: 10000 })
     await box.fill('from:nobody@example.invalid')
@@ -240,6 +442,141 @@ try {
     await page.getByText('Launch checklist').first().waitFor({ timeout: 10000 })
     assert(true, 'clear restores the full inbox', 'inbox not restored after clear')
     await snapshot(page, 'search')
+
+    const inbox = page.getByRole('complementary', { name: 'Inbox' })
+    await page.evaluate(async () => {
+      const api = window.__packagedFixtureApi ?? window.api
+      const parked = new Map()
+      for (let i = 1; i <= 34; i++) {
+        window.__deliverMail({ subject: `Paged search ${i}` })
+        if (i === 14 || i === 16) {
+          const { delta } = window.__deliverMail({ subject: `Paged search restored ${i}` })
+          parked.set(i, delta)
+          await api.modifyLabels({ kind: 'thread', id: delta.threads[0].id, removeLabelIds: ['INBOX'] })
+        }
+      }
+      window.__restoreSearchMatch = async (i) => {
+        const delta = parked.get(i)
+        await api.modifyLabels({ kind: 'thread', id: delta.threads[0].id, addLabelIds: ['INBOX'] })
+        window.__pushSync(i === 14 ? delta : { kind: 'reset' })
+      }
+    })
+    await box.fill('Paged search')
+    await box.press('Enter')
+    await inbox.getByText('10 results for “Paged search”', { exact: true }).waitFor({ timeout: 5000 })
+    await activateLoadMore(page, inbox)
+    await inbox.getByText('20 results for “Paged search”', { exact: true }).waitFor({ timeout: 5000 })
+    for (const i of [14, 16]) {
+      const restored = inbox.getByText(`Paged search restored ${i}`, { exact: true })
+      assert((await restored.count()) === 0, 'the parked match is not in search yet', 'parked match appeared early')
+      await page.evaluate((id) => window.__restoreSearchMatch(id), i)
+      await restored.waitFor({ timeout: 5000 })
+    }
+    for (const count of [20, 30]) {
+      await inbox.getByText(`${count} results for “Paged search”`, { exact: true }).waitFor({ timeout: 5000 })
+      await activateLoadMore(page, inbox)
+    }
+    await inbox.getByText('End of results', { exact: true }).waitFor({ timeout: 5000 })
+    const subjects = [
+      ...Array.from({ length: 34 }, (_, i) => `Paged search ${i + 1}`),
+      'Paged search restored 14',
+      'Paged search restored 16'
+    ]
+    const counts = await Promise.all(subjects.map((subject) => inbox.getByText(subject, { exact: true }).count()))
+    assert(
+      counts.every((count) => count === 1) && (await inbox.getByRole('listitem').count()) === subjects.length,
+      'search reaches all 36 matches exactly once across four pages after a delta and reset',
+      'search over 30 results skipped, duplicated, or mixed in other rows'
+    )
+    await snapshot(page, 'search-pagination')
+
+    await inbox.getByRole('button', { name: 'Clear search' }).click()
+    const unreadResult = inbox.getByRole('listitem').filter({ hasText: 'Launch checklist' })
+    await unreadResult.getByRole('button', { name: 'mark unread', exact: true }).click()
+    await unreadResult.getByRole('button', { name: 'mark read', exact: true }).waitFor({ timeout: 5000 })
+    const matchingQuery = 'in:inbox Launch checklist'
+    await box.fill(matchingQuery)
+    await box.press('Enter')
+    const matchingCount = inbox.getByText('1 result for “in:inbox Launch checklist”', { exact: true })
+    await matchingCount.waitFor({ timeout: 5000 })
+    await box.fill('is:unread Launch checklist')
+    await box.press('Enter')
+    await inbox.getByText(/results? for “is:unread Launch checklist”/).waitFor({ timeout: 5000 })
+    await unreadResult.getByText('Launch checklist', { exact: true }).click()
+    await page.waitForFunction(() => window.__mods.some(
+      (mod) => mod.id === 'thread-launch' && mod.removeLabelIds?.includes('UNREAD')
+    ))
+    const content = page.getByRole('region', { name: 'Email content' })
+    await content.getByRole('button', { name: 'reply', exact: true }).click()
+    const body = content.locator('.body-editor')
+    await typeAtStart(body, 'Keep this unsent reply.\n\n')
+    await page.evaluate(async () => {
+      const api = window.__packagedFixtureApi ?? window.api
+      const { threads } = await api.listFolder({ folder: 'inbox', q: 'Launch checklist' })
+      window.__pushSync({
+        kind: 'delta', historyId: 'mark-read',
+        threads: [{ ...threads.find(({ id }) => id === 'thread-launch'), labelIds: ['INBOX'] }],
+        deletedThreadIds: []
+      })
+    })
+    await unreadResult.waitFor({ state: 'detached', timeout: 5000 })
+    assert(
+      (await body.count()) === 1 && (await bodyTextOf(body)).includes('Keep this unsent reply.'),
+      'the search drops an auto-read result without losing its open reply',
+      'background search refresh discarded the unsent reply'
+    )
+    await page.evaluate(async () => {
+      const api = window.__packagedFixtureApi ?? window.api
+      await api.modifyLabels({ kind: 'thread', id: 'thread-launch', addLabelIds: ['STARRED'] })
+      const { threads } = await api.listFolder({ folder: 'inbox', q: 'Launch checklist' })
+      window.__pushSync({
+        kind: 'delta', historyId: 'mark-starred',
+        threads: [{ ...threads.find(({ id }) => id === 'thread-launch'), labelIds: ['INBOX', 'STARRED'] }],
+        deletedThreadIds: []
+      })
+    })
+    await content.getByRole('button', { name: 'starred', exact: true }).waitFor({ timeout: 5000 })
+    assert((await bodyTextOf(body)).includes('Keep this unsent reply.'), 'the open reply reflects Gmail star changes', 'the star update lost the reply')
+    await snapshot(page, 'search-open-reply')
+
+    await page.evaluate(() => {
+      const api = window.__packagedFixtureApi ?? window.api
+      const list = api.listFolder
+      window.__searchFetches = []
+      api.listFolder = (options) => {
+        window.__searchFetches.push(options.q)
+        return list(options)
+      }
+    })
+    await box.fill(matchingQuery)
+    await box.press('Enter')
+    await matchingCount.waitFor({ timeout: 5000 })
+    await unreadResult.getByText('Launch checklist', { exact: true }).waitFor({ timeout: 5000 })
+    assert(
+      !(await page.evaluate((q) => window.__searchFetches.includes(q), matchingQuery)),
+      'the prior Launch checklist query comes from the search cache',
+      'the missed cache would not exercise a matching cached transition'
+    )
+    assert(
+      (await body.count()) === 1 && (await bodyTextOf(body)).includes('Keep this unsent reply.'),
+      'a cached query that includes the thread preserves its open reply',
+      'the matching cached query unmounted the reply before restoring the conversation'
+    )
+
+    await box.fill('budget')
+    await box.press('Enter')
+    await inbox.getByText(/results? for “budget”/).waitFor({ timeout: 5000 })
+    await inbox.getByText('Q3 budget draft', { exact: true }).first().waitFor({ timeout: 5000 })
+    assert(
+      !(await page.evaluate(() => window.__searchFetches.includes('budget'))),
+      'the prior budget query comes from the search cache',
+      'the missed cache would not exercise selection ownership'
+    )
+    assert(
+      (await content.getByText('Nothing open yet :P').count()) === 1 && (await body.count()) === 0,
+      'reopening a cached search does not carry a conversation over from another search',
+      'the old conversation stayed open when switching to an unrelated cached query'
+    )
   } else if (FEATURE === 'read-thread') {
     await page.getByRole('complementary', { name: 'Inbox' }).waitFor({ timeout: 10000 })
     await page.getByText('Deploy window').first().click()
@@ -678,6 +1015,142 @@ try {
       .count()
     assert(leftover === 0, 'refetched Drafts no longer shows the sent draft', 'draft reappeared after refetch')
     await snapshot(page, 'drafts')
+
+    const uneditedSubject = 'Untouched attachment draft'
+    const uneditedDraftId = await page.evaluate(async (subject) => {
+      const api = window.__packagedFixtureApi ?? window.api
+      const { draftId } = await api.saveDraft({
+        to: 'reader@example.com',
+        subject,
+        body: 'No edits in this editor',
+        attachments: [{ filename: 'preloaded.txt', size: 3, data: 'dHh0' }]
+      })
+      return draftId
+    }, uneditedSubject)
+    const savesBeforeOpening = await page.evaluate(() => window.__draftSaves.length)
+    await page.evaluate(() => window.__pushSync({ kind: 'reset' }))
+    await drafts.getByText(uneditedSubject, { exact: true }).click()
+    await content.getByRole('button', { name: 'Remove preloaded.txt' }).waitFor({ timeout: 5000 })
+    await page.evaluate(async (draftId) => {
+      const api = window.__packagedFixtureApi ?? window.api
+      await api.saveDraft({
+        draftId, to: 'reader@example.com', subject: 'Remote revision', body: 'Remote text',
+        attachments: [{ filename: 'preloaded.txt', size: 3, data: 'dHh0' }]
+      })
+    }, uneditedDraftId)
+    await page.getByRole('button', { name: 'Inbox', exact: true }).click()
+    await page.getByRole('button', { name: 'Drafts', exact: true }).click()
+    await drafts.getByText('Remote revision', { exact: true }).waitFor({ timeout: 5000 })
+    assert(
+      (await page.evaluate(() => window.__draftSaves.length)) === savesBeforeOpening + 1,
+      'loading an untouched draft attachment does not save or create a conflict copy',
+      'attachment prefill was mistaken for an edit and saved a stale draft copy'
+    )
+    await drafts.getByText('Remote revision', { exact: true }).click()
+    await content.getByRole('button', { name: 'Remove preloaded.txt' }).click()
+    await page.waitForFunction((draftId) => {
+      const saved = window.__draftSaves.at(-1)
+      return saved?.draftId === draftId && saved.attachments === undefined
+    }, uneditedDraftId)
+    log('pass: manually removing the attachment is an edit and autosaves')
+
+    const draftSearch = page.getByRole('searchbox', { name: 'Search emails' })
+    await draftSearch.fill('Q4 attachments')
+    await draftSearch.press('Enter')
+    await drafts.getByText(/results? for “Q4 attachments”/).waitFor({ timeout: 5000 })
+    const remoteDraft = drafts.getByText('Draft: Q4 attachments', { exact: true }).first()
+    await remoteDraft.click()
+    const editor = content.getByRole('heading', { name: 'Draft', exact: true })
+    await editor.waitFor({ timeout: 5000 })
+    const subjectField = content.getByRole('textbox', { name: 'Subject' })
+    const renamedSubject = 'Updated planning note'
+    await subjectField.fill(renamedSubject)
+    await page.waitForFunction((subject) => window.__draftSaves.some(
+      (draft) => draft.draftId === 'draft-q4' && draft.subject === subject
+    ), renamedSubject)
+    await page.evaluate(() => window.__pushSync({ kind: 'reset' }))
+    await remoteDraft.waitFor({ state: 'detached', timeout: 5000 })
+    assert(
+      (await editor.count()) === 1 && (await subjectField.inputValue()) === renamedSubject,
+      'a renamed draft stays open after leaving the search results',
+      'the search reset closed a draft that still exists'
+    )
+    await subjectField.fill('Another local rename')
+    await page.waitForFunction(() =>
+      window.__draftSaves.some((draft) => draft.draftId === 'draft-q4' && draft.subject === 'Another local rename')
+    )
+    await page.evaluate(async () => {
+      const api = window.__packagedFixtureApi ?? window.api
+      await api.saveDraft({
+        draftId: 'draft-q4', to: 'remote@example.com',
+        subject: 'Remote edit', body: 'Edited in Gmail'
+      })
+    })
+    await subjectField.fill('Local edit that must stay visible')
+    const conflict = content.getByRole('alert').filter({ hasText: 'Draft changed in Gmail' })
+    await conflict.waitFor({ timeout: 5000 }).catch(() => {
+      throw new Error('ASSERT: autosaving an off-list draft silently overwrote a newer Gmail edit')
+    })
+    await content.getByRole('button', { name: 'Send', exact: true }).click()
+    await content.getByRole('alert').filter({ hasText: /^Draft changed in Gmail/ }).waitFor({ timeout: 5000 })
+    assert(
+      (await subjectField.inputValue()) === 'Local edit that must stay visible' &&
+        (await page.evaluate(() => window.__draftSaves.filter((d) => d.draftId === 'draft-q4').at(-1).subject)) === 'Remote edit' &&
+        (await page.evaluate(() => window.__sent.some((entry) => entry.draftId === 'draft-q4'))) === false,
+      'autosave and send preserve the newer Gmail draft and leave local text visible',
+      'a conflict discarded either the newer Gmail draft or the local edit'
+    )
+    await snapshot(page, 'drafts-search-edit-conflict')
+    const leavingSubject = 'Pending edits when leaving the draft'
+    await subjectField.fill(leavingSubject)
+    await page.getByRole('button', { name: 'Inbox', exact: true }).click()
+    await page.waitForFunction((subject) =>
+      window.__draftSaves.some((d) => d.draftId !== 'draft-q4' && d.subject === subject),
+      leavingSubject,
+      { timeout: 5000 }
+    ).catch(() => {
+      throw new Error('ASSERT: navigating away silently lost the conflicting local edits')
+    })
+    await page.getByRole('button', { name: 'Drafts', exact: true }).click()
+    await drafts.getByText(leavingSubject, { exact: true }).waitFor({ timeout: 5000 })
+    log('pass: navigation preserves the pending local edit as a separate draft')
+    await draftSearch.fill('Remote edit')
+    await draftSearch.press('Enter')
+    await drafts.getByText(/results? for “Remote edit”/).waitFor({ timeout: 5000 })
+    const remoteCopy = drafts.getByText('Remote edit', { exact: true }).first()
+    await remoteCopy.click()
+    await editor.waitFor({ timeout: 5000 })
+    await subjectField.fill('Renamed before remote deletion')
+    await page.waitForFunction(() =>
+      window.__draftSaves.some((d) => d.draftId === 'draft-q4' && d.subject === 'Renamed before remote deletion')
+    )
+    await page.evaluate(() => window.__pushSync({ kind: 'reset' }))
+    await remoteCopy.waitFor({ state: 'detached', timeout: 5000 })
+    await page.evaluate(() => window.__deleteDraftRemotely('draft-q4'))
+    const deletedDraftEdit = 'Pending edits after Gmail deleted the draft'
+    await subjectField.fill(deletedDraftEdit)
+    await page.evaluate(() =>
+      window.__pushSync({
+        kind: 'delta', historyId: 'remote-draft-delete',
+        threads: [], deletedThreadIds: ['thread-draft-q4']
+      })
+    )
+    await editor.waitFor({ state: 'detached', timeout: 5000 }).catch(() => {
+      throw new Error('ASSERT: a deleted draft remains editable after a search refresh')
+    })
+    log('pass: search closes a draft editor after the draft is deleted externally')
+    await snapshot(page, 'drafts-search-remote-delete')
+    await page.waitForFunction((subject) =>
+      window.__draftSaves.some((d) => d.draftId !== 'draft-q4' && d.subject === subject),
+      deletedDraftEdit,
+      { timeout: 5000 }
+    ).catch(() => {
+      throw new Error('ASSERT: remote deletion silently lost pending local edits')
+    })
+    await page.getByRole('button', { name: 'Inbox', exact: true }).click()
+    await page.getByRole('button', { name: 'Drafts', exact: true }).click()
+    await drafts.getByText(deletedDraftEdit, { exact: true }).waitFor({ timeout: 5000 })
+    log('pass: pending local edits survive remote deletion as a separate draft')
   } else if (FEATURE === 'delete-draft') {
     // Row surface: the confirm gates the delete. Dismiss it first —
     // deleting a draft is irreversible, so refusing must be a full no-op.
@@ -759,6 +1232,10 @@ try {
       .click()
     await content.getByRole('heading', { name: 'Draft', exact: true }).waitFor({ timeout: 10000 })
     const editorId = await page.evaluate(() => window.__draftSaves?.at(-1)?.draftId)
+    const unsavedSubject = 'Confirmed delete discards my pending edit'
+    const pauseTime = await page.evaluate(() => Date.now() + 5000)
+    await page.clock.pauseAt(pauseTime)
+    await content.getByRole('textbox', { name: 'Subject' }).fill(unsavedSubject)
     const acceptEditor = page.waitForEvent('dialog').then((d) => d.accept())
     // Scoped to the pane: the live row behind this editor also renders a
     // "delete draft" button in the list.
@@ -767,6 +1244,7 @@ try {
     await content
       .getByRole('heading', { name: 'Draft', exact: true })
       .waitFor({ state: 'detached', timeout: 10000 })
+    await page.clock.resume()
     assert(true, 'confirming the editor delete closes the editor cleanly', 'editor stayed open after its own delete')
     await drafts
       .getByText('Deleted mid-edit', { exact: true })
@@ -778,6 +1256,21 @@ try {
       lastDiscard === editorId && editorId !== 'draft-1',
       `boundary recorded the editor discard (${lastDiscard})`,
       `editor discard record wrong or the wrong draft died: last=${lastDiscard} editor=${editorId}`
+    )
+    await page.getByRole('button', { name: 'Inbox', exact: true }).click()
+    await page.getByRole('button', { name: 'Drafts', exact: true }).click()
+    await drafts.getByText('Draft: Q4 attachments', { exact: true }).first().waitFor({ timeout: 5000 })
+    const pendingWrites = await page.evaluate((subject) =>
+      window.__draftSaves.filter((draft) => draft.subject === subject), unsavedSubject)
+    assert(
+      !pendingWrites.some((draft) => !draft.copyOnConflict),
+      'the edit was still pending when delete closed the editor',
+      'an ordinary autosave committed the edit before delete could exercise recovery'
+    )
+    assert(
+      pendingWrites.length === 0 && (await drafts.getByText(unsavedSubject, { exact: true }).count()) === 0,
+      'confirming delete discards pending edits without a recovery copy',
+      'closing a deliberately deleted draft recovered the pending edits as a new draft'
     )
     await snapshot(page, 'delete-draft')
   } else if (FEATURE === 'draft-autosave') {
@@ -858,6 +1351,15 @@ try {
       { timeout: 10000 }
     )
     assert(true, 'draft edit autosaved on the stored draft id', 'draft edit did not autosave')
+    await drafts.getByText('Draft: Q4 attachments', { exact: true }).first().click()
+    await content.getByRole('heading', { name: 'Draft', exact: true }).waitFor({ timeout: 10000 })
+    await drafts.getByText('Draft: Q4 planning notes', { exact: true }).first().click()
+    await content.getByRole('heading', { name: 'Draft', exact: true }).waitFor({ timeout: 10000 })
+    assert(
+      (await bodyTextOf(content.locator('.body-editor'))).includes('Adding the Q4 agenda line.'),
+      'reopening from the still-loaded draft row reads the current Gmail message',
+      'the still-loaded row opened an older draft message'
+    )
     await page.getByRole('button', { name: 'Inbox' }).click()
     await inbox.waitFor({ timeout: 10000 })
     await page.getByText('Launch checklist', { exact: true }).first().click()
@@ -1551,14 +2053,79 @@ try {
     // The wake: fast-forward past the preset's absolute time. The renderer's
     // tick sweeps the mock schedule, restores the pair, and the refreshed
     // Inbox lists the returned thread.
+    await page.evaluate(() => {
+      for (let i = 1; i <= 31; i++) {
+        window.__deliverMail({ subject: `Wake pagination ${i}`, snippet: 'Launch checklist notes', prepend: i <= 14 })
+      }
+      const api = window.__packagedFixtureApi ?? window.api
+      const snoozeTick = api.snoozeTick
+      let held = false
+      api.snoozeTick = async () => {
+        if (held) return 0
+        held = true
+        await new Promise((release) => { window.__releaseSnoozeTick = release })
+        api.snoozeTick = snoozeTick
+        return snoozeTick()
+      }
+    })
     await page.clock.fastForward(48 * 60 * 60 * 1000)
+    await page.waitForFunction(() => Boolean(window.__releaseSnoozeTick), undefined, { timeout: 5000 })
     await page.getByRole('button', { name: 'Inbox', exact: true }).click()
-    await inbox.waitFor({ timeout: 10000 })
-    await inbox
-      .getByText('Launch checklist', { exact: true })
-      .first()
-      .waitFor({ timeout: 10000 })
-    assert(true, 'wake returned the thread to the Inbox', 'thread missing from the Inbox after wake')
+    await inbox.getByText('Wake pagination 1', { exact: true }).waitFor({ timeout: 5000 })
+    const query = page.getByRole('searchbox', { name: 'Search emails' })
+    await query.fill('Launch checklist')
+    await query.press('Enter')
+    await inbox.getByText('10 results for “Launch checklist”', { exact: true }).waitFor({ timeout: 5000 })
+    await activateLoadMore(page, inbox)
+    const tail = inbox.getByText('Wake pagination 19', { exact: true })
+    const returned = inbox.getByText('Launch checklist', { exact: true }).first()
+    await tail.waitFor({ timeout: 5000 })
+    assert(
+      (await returned.count()) === 0,
+      'Inbox loads both pages before the wake restores the thread',
+      'the wake completed before Inbox pagination'
+    )
+    const inboxRows = await inbox.getByRole('listitem').count()
+    await page.evaluate(() => {
+      const api = window.__packagedFixtureApi ?? window.api
+      const listFolder = api.listFolder
+      window.__wakeListings = []
+      api.listFolder = (options) => {
+        window.__wakeListings.push(options)
+        return listFolder(options)
+      }
+      window.__restoreWakeListings = () => { api.listFolder = listFolder }
+      window.__releaseSnoozeTick()
+    })
+    await returned.waitFor({ timeout: 5000 }).catch(() => {
+      throw new Error('ASSERT: the late wake forgot to refresh the open Inbox')
+    })
+    const listings = await page.evaluate(() => {
+      window.__restoreWakeListings()
+      return window.__wakeListings
+    })
+    assert(
+      listings.length > 0 &&
+        listings.every(({ folder, q }) => folder === 'inbox' && q === 'Launch checklist') &&
+        (await inbox.getByRole('listitem').count()) === inboxRows &&
+        (await tail.count()) === 1,
+      'a late wake refreshes the loaded Inbox search without dropping page two',
+      'the late wake refreshed the wrong view or lost loaded search results'
+    )
+    for (const count of [20, 30]) {
+      await inbox.getByText(`${count} results for “Launch checklist”`, { exact: true }).waitFor({ timeout: 5000 })
+      await activateLoadMore(page, inbox)
+    }
+    await inbox.getByText('End of results', { exact: true }).waitFor({ timeout: 5000 })
+    const matches = ['Launch checklist', ...Array.from({ length: 31 }, (_, i) => `Wake pagination ${i + 1}`)]
+    const matchesOnce = await Promise.all(matches.map((subject) => inbox.getByText(subject, { exact: true }).count()))
+    assert(
+      matchesOnce.every((count) => count === 1) && (await inbox.getByRole('listitem').count()) === matches.length,
+      'the resumed search reaches every match exactly once',
+      'the resumed search skipped or duplicated a result'
+    )
+    await snapshot(page, 'snooze-wake-view-switch')
+    await inbox.getByRole('button', { name: 'Clear search' }).click()
     const scheduleAfterWake = await page.evaluate(() => [...(window.__snoozeSchedule ?? [])])
     assert(
       scheduleAfterWake.length === 0,
@@ -1627,25 +2194,41 @@ try {
       .waitFor({ state: 'detached', timeout: 10000 })
     await page.getByRole('button', { name: 'Snoozed', exact: true }).click()
     await snoozed.waitFor({ timeout: 10000 })
-    await snoozed
-      .getByText('Launch checklist', { exact: true })
-      .first()
-      .click()
+    await page.evaluate(async () => {
+      const api = window.__packagedFixtureApi ?? window.api
+      await api.modifyLabels({ kind: 'thread', id: 'thread-launch', addLabelIds: ['UNREAD'] })
+    })
+    await query.fill('is:unread Launch checklist')
+    await query.press('Enter')
+    await snoozed.getByText(/results? for “is:unread Launch checklist”/).waitFor({ timeout: 5000 })
+    const snoozedResult = snoozed.getByText('Launch checklist', { exact: true }).first()
+    await snoozedResult.click()
     await page.getByRole('heading', { name: 'Launch checklist' }).waitFor({ timeout: 10000 })
+    await page.waitForFunction(() => window.__mods.at(-1)?.removeLabelIds?.includes('UNREAD'))
+    await page.evaluate(async () => {
+      const api = window.__packagedFixtureApi ?? window.api
+      const { threads } = await api.listFolder({ folder: 'snoozed' })
+      const { snoozedByMailsy, ...row } = threads.find(({ id }) => id === 'thread-launch')
+      window.__pushSync({
+        kind: 'delta', historyId: 'snoozed-read',
+        threads: [{ ...row, labelIds: ['Snoozed by Mailsy'] }], deletedThreadIds: []
+      })
+    })
+    await snoozedResult.waitFor({ state: 'detached', timeout: 5000 })
     await content.getByRole('button', { name: 'unsnooze', exact: true }).click()
     await snoozed
       .getByText('Launch checklist', { exact: true })
       .first()
       .waitFor({ state: 'detached', timeout: 10000 })
-    const detailRestoreMods = await page.evaluate(() => window.__mods)
+    await content.getByRole('button', { name: 'unsnooze', exact: true }).waitFor({ state: 'detached', timeout: 5000 })
+    const detailRestoreMod = await page.evaluate(() => window.__mods.at(-1))
     assert(
-      detailRestoreMods.length === 6 &&
-        detailRestoreMods[5].kind === 'thread' &&
-        detailRestoreMods[5].id === 'thread-launch' &&
-        (detailRestoreMods[5].addLabelIds ?? []).includes('INBOX') &&
-        (detailRestoreMods[5].removeLabelIds ?? []).includes('Snoozed by Mailsy'),
-      `detail restore pair recorded ${JSON.stringify(detailRestoreMods)}`,
-      'detail restore side effect not recorded'
+      detailRestoreMod.kind === 'thread' &&
+        detailRestoreMod.id === 'thread-launch' &&
+        (detailRestoreMod.addLabelIds ?? []).includes('INBOX') &&
+        (detailRestoreMod.removeLabelIds ?? []).includes('Snoozed by Mailsy'),
+      `detail restore pair survives the search change: ${JSON.stringify(detailRestoreMod)}`,
+      'search lost Mailsy parking metadata and left the snooze label attached'
     )
     const scheduleFinal = await page.evaluate(() => [...(window.__snoozeSchedule ?? [])])
     assert(
@@ -1661,6 +2244,54 @@ try {
       .waitFor({ timeout: 10000 })
     assert(true, 'detail restore returned the thread to the Inbox', 'thread missing from the Inbox')
     await snapshot(page, 'snooze-emulation')
+
+    await page.evaluate(async () => {
+      const api = window.__packagedFixtureApi ?? window.api
+      await api.snoozeThread('thread-launch', Date.now() + 1000)
+    })
+    await page.getByRole('button', { name: 'All Mail', exact: true }).click()
+    await allMail.getByText('Launch checklist', { exact: true }).first().waitFor({ timeout: 5000 })
+    await activateLoadMore(page, allMail)
+    const allMailTail = allMail.getByText('Wake pagination 31', { exact: true })
+    await allMailTail.waitFor({ timeout: 5000 })
+    const allMailRows = await allMail.getByRole('listitem').count()
+    await page.evaluate(() => {
+      const api = window.__packagedFixtureApi ?? window.api
+      const listFolder = api.listFolder
+      window.__allMailRelists = 0
+      api.listFolder = (options) => {
+        if (options.folder === 'all') window.__allMailRelists++
+        return listFolder(options)
+      }
+    })
+    await page.clock.fastForward(30000)
+    await page.waitForFunction(() => [...window.__snoozeSchedule].length === 0, undefined, { timeout: 5000 })
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+    assert(
+      (await page.evaluate(() => window.__allMailRelists)) === 0 &&
+        (await allMailTail.count()) === 1 &&
+        (await allMail.getByRole('listitem').count()) === allMailRows,
+      'a wake in All Mail leaves both already loaded pages intact',
+      'a wake collapsed the loaded All Mail pages'
+    )
+    await snapshot(page, 'snooze-wake-all-mail')
+
+    await page.evaluate(async () => {
+      const api = window.__packagedFixtureApi ?? window.api
+      await api.snoozeThread('thread-launch', Date.now() + 1000)
+    })
+    await query.fill('-in:inbox')
+    await query.press('Enter')
+    const excludedAfterWake = allMail.getByText('Launch checklist', { exact: true }).first()
+    await allMail.getByText(/results for “-in:inbox”/).waitFor({ timeout: 5000 })
+    await excludedAfterWake.waitFor({ timeout: 5000 })
+    await page.clock.fastForward(30000)
+    await excludedAfterWake.waitFor({ state: 'detached', timeout: 5000 }).catch(() => {
+      throw new Error('ASSERT: search keeps a stale match after the snoozed mail returned to Inbox')
+    })
+    await allMail.getByText('Vendor pricing follow-up', { exact: true }).first().waitFor({ timeout: 5000 })
+    assert(true, 'a wake removes a no-longer-matching search result', 'excluded mail stayed in search')
+    await snapshot(page, 'snooze-wake-search-exclusion')
   } else if (FEATURE === 'category-views') {
     // The Important view is the IMPORTANT label: it lists the seeded
     // important mail and nothing labeled for a category tab.
@@ -2230,7 +2861,367 @@ try {
     })
     await inbox.getByText('Delivered at the fold', { exact: true }).first().waitFor({ timeout: 5000 })
     assert(true, 'a pushed reset re-folds the first page with its new mail', 'pushed reset did not re-fold')
+
+    const firstPageSize = 30
+    const rows = inbox.getByRole('listitem')
+    const loadMore = inbox.getByRole('button', { name: 'Load more', exact: true })
+    const remaining = firstPageSize - (await rows.count())
+    assert(remaining > 0, 'the starting inbox fits on one page', 'fixtures already fill the first page')
+    await page.evaluate((count) => {
+      for (let i = 0; i < count; i++) window.__deliverMail({ subject: `Fill first page ${i + 1}` })
+      window.__pushSync({ kind: 'reset' })
+    }, remaining)
+    await inbox.getByText(`Fill first page ${remaining}`, { exact: true }).waitFor({ timeout: 5000 })
+    assert(
+      (await rows.count()) === firstPageSize && (await loadMore.count()) === 0,
+      'the open inbox has exactly one full page and no continuation',
+      'expected a full first page without a Load more button'
+    )
+
+    // The fixture appends this delivery after page one, so the only route
+    // to it is the continuation returned by the quiet first-page fold.
+    const overflowSubject = 'Delivered onto page two'
+    await page.evaluate((subject) => {
+      window.__deliverMail({ subject })
+      window.__pushSync({ kind: 'reset' })
+    }, overflowSubject)
+    await loadMore.waitFor({ timeout: 5000 }).catch(() => {
+      throw new Error('ASSERT: Load more did not appear after the open inbox grew past 30 threads')
+    })
+    assert(true, 'a pushed reset exposes Load more without reopening the inbox', 'missing continuation')
+    await snapshot(page, 'refresh-pagination')
+    // Focus without scrolling so the observer does not load the page first.
+    await loadMore.evaluate((button) => button.focus({ preventScroll: true }))
+    await page.keyboard.press('Enter')
+    await inbox.getByText(overflowSubject, { exact: true }).waitFor({ timeout: 5000 })
+    assert(
+      (await rows.count()) === firstPageSize + 1 && (await loadMore.count()) === 0,
+      'Load more reaches the new thread exactly once and exhausts the inbox',
+      'page two did not append exactly one thread and exhaust pagination'
+    )
+
+    // Put this delivery on page one so its appearance proves the second
+    // reset has finished before we check that it did not rewind the cursor.
+    const newestSubject = 'Delivered after pagination'
+    await page.evaluate((subject) => {
+      window.__deliverMail({ subject, prepend: true })
+      window.__pushSync({ kind: 'reset' })
+    }, newestSubject)
+    await inbox.getByText(newestSubject, { exact: true }).waitFor({ timeout: 5000 })
+    assert(
+      (await rows.count()) === firstPageSize + 2 &&
+        (await inbox.getByText(overflowSubject, { exact: true }).count()) === 1 &&
+        (await loadMore.count()) === 0,
+      'another reset keeps the loaded tail and does not rewind completed pagination',
+      'a second reset lost the loaded tail or exposed a stale continuation'
+    )
     await snapshot(page, 'refresh')
+
+    const afterTail = Array.from({ length: 31 }, (_, i) => `Delivered behind the loaded tail ${i + 1}`)
+    await page.evaluate((subjects) => {
+      for (const subject of subjects) window.__deliverMail({ subject })
+      window.__pushSync({ kind: 'reset' })
+    }, afterTail)
+    await inbox.getByText(afterTail[0], { exact: true }).waitFor({ timeout: 5000 }).catch(() => {
+      throw new Error('ASSERT: a reset missed mail arriving beyond the first page of an exhausted Inbox')
+    })
+    assert(
+      (await inbox.getByText(overflowSubject, { exact: true }).count()) === 1,
+      'the reset keeps the previously loaded second page',
+      'the reset lost or duplicated the loaded tail'
+    )
+    await activateLoadMore(page, inbox)
+    await inbox.getByText(afterTail.at(-1), { exact: true }).waitFor({ timeout: 5000 })
+    assert(
+      (await rows.count()) === firstPageSize + 2 + afterTail.length &&
+        (await loadMore.count()) === 0 &&
+        (await Promise.all(afterTail.map((subject) => inbox.getByText(subject, { exact: true }).count())))
+          .every((count) => count === 1),
+      'the reset restores a continuation and reaches every delivery once across three pages',
+      'the reset hid or duplicated deliveries beyond the exhausted cursor'
+    )
+    await snapshot(page, 'refresh-exhausted-pagination')
+
+    await page.evaluate(() => {
+      ;(window.__packagedFixtureApi ?? window.api).syncMail = () =>
+        new Promise((resolve) => {
+          window.__releaseRefresh = () => resolve({ kind: 'reset' })
+        })
+    })
+    const rail = page.getByRole('navigation', { name: 'Mail folders' })
+    for (const [name, folder, subject] of [
+      ['Drafts', 'drafts', 'Draft: Q4 planning notes'],
+      ['Receipts', 'label', 'Receipts for March travel']
+    ]) {
+      if (name === 'Receipts') {
+        await rail.getByRole('button', { name: 'Inbox', exact: true }).click()
+        await inbox.getByText('Launch checklist', { exact: true }).waitFor({ timeout: 5000 })
+        const labels = rail.getByRole('button', { name: 'Labels', exact: true })
+        if (await labels.count()) await labels.click()
+      }
+      await refresh.click()
+      await page.waitForFunction(() => Boolean(window.__releaseRefresh))
+      await rail.getByRole('button', { name, exact: true }).click()
+      const destination = page.getByRole('complementary', { name, exact: true })
+      await destination.getByText(subject, { exact: true }).waitFor({ timeout: 5000 })
+      const destinationRows = destination.getByRole('listitem')
+      const before = await destinationRows.count()
+      const marker = `Delivered to ${name} during refresh`
+      await page.evaluate(async ({ folder, marker, name }) => {
+        if (folder === 'drafts') {
+          await (window.__packagedFixtureApi ?? window.api).saveDraft({ to: '', body: '', subject: marker })
+        } else {
+          const label = (await (window.__packagedFixtureApi ?? window.api).listLabels()).find((label) => label.name === name)
+          const { delta } = window.__deliverMail({ subject: marker })
+          await (window.__packagedFixtureApi ?? window.api).modifyLabels({
+            kind: 'thread',
+            id: delta.threads[0].id,
+            addLabelIds: [label.id],
+            removeLabelIds: ['INBOX']
+          })
+        }
+        window.__releaseRefresh()
+        window.__releaseRefresh = null
+      }, { folder, marker, name })
+      await destination.getByText(marker, { exact: true }).waitFor({ timeout: 5000 })
+      assert(
+        (await destinationRows.count()) === before + 1 &&
+          (await destination.getByText(subject, { exact: true }).count()) === 1 &&
+          (await destination.getByText('Launch checklist', { exact: true }).count()) === 0,
+        `a sweep started in Inbox refreshes ${name} after switching views`,
+        `the delayed sweep listed the wrong view after switching to ${name}`
+      )
+      await snapshot(page, `refresh-switch-${folder}`)
+    }
+  } else if (FEATURE === 'pagination') {
+    const inbox = page.getByRole('complementary', { name: 'Inbox', exact: true })
+    const rows = inbox.getByRole('listitem')
+    const loadMore = inbox.getByRole('button', { name: 'Load more', exact: true })
+    await inbox.getByText('Launch checklist', { exact: true }).waitFor({ timeout: 5000 })
+    const firstPageSize = 30
+    const deliveries = 64
+    const initialRows = await rows.count()
+    await page.evaluate((count) => {
+      for (let i = 1; i <= count; i++) window.__deliverMail({ subject: `Paging thread ${i}` })
+      window.__pushSync({ kind: 'reset' })
+    }, deliveries)
+    await loadMore.waitFor({ timeout: 5000 })
+
+    // Capture page two before the resets, but keep the response in flight.
+    await page.evaluate(() => {
+      const listFolder = (window.__packagedFixtureApi ?? window.api).listFolder
+      window.__paginationRequests = []
+      ;(window.__packagedFixtureApi ?? window.api).listFolder = async (options) => {
+        window.__paginationRequests.push(options)
+        const result = await listFolder(options)
+        if (window.__paginationRequests.length === 1) {
+          await new Promise((resolve) => { window.__releasePage = resolve })
+        }
+        return result
+      }
+    })
+    await activateLoadMore(page, inbox)
+    await page.waitForFunction(() => Boolean(window.__releasePage))
+    const arrival = 'Delivered during Load more'
+    await page.evaluate((subject) => {
+      window.__deliverMail({ subject, prepend: true })
+      window.__pushSync({ kind: 'reset' })
+      window.__pushSync({ kind: 'reset' })
+    }, arrival)
+    assert(
+      (await inbox.getByText('Loading more...', { exact: true }).count()) === 1,
+      'the second page is still in flight when the resets arrive',
+      'the second page settled before the overlapping resets'
+    )
+    await page.evaluate(() => window.__releasePage())
+    await inbox.getByText(arrival, { exact: true }).waitFor({ timeout: 5000 })
+    assert(
+      (await rows.count()) === firstPageSize * 2 + 1 &&
+        (await page.evaluate(() => window.__paginationRequests.length)) === 2,
+      'overlapping resets fold once after page two without losing either result',
+      'overlapping resets did not coalesce or page two was lost'
+    )
+    await snapshot(page, 'pagination-overlap')
+
+    const content = page.getByRole('region', { name: 'Email content' })
+    for (const [number, action] of [[31, 'archive'], [32, 'delete']]) {
+      const subject = `Paging thread ${number}`
+      const row = inbox.getByRole('button').filter({
+        has: page.getByText(subject, { exact: true })
+      })
+      // Avoid scrolling the list or triggering its pagination sentinel.
+      await row.evaluate((button) => button.focus({ preventScroll: true }))
+      await page.keyboard.press('Enter')
+      await content.getByRole('heading', { name: subject, exact: true }).waitFor({ timeout: 5000 })
+      await content.getByRole('button', { name: action, exact: true }).click()
+      await row.waitFor({ state: 'detached', timeout: 5000 })
+    }
+    await activateLoadMore(page, inbox)
+    await inbox.getByText(`Paging thread ${deliveries}`, { exact: true }).waitFor({ timeout: 5000 })
+    for (let i = 1; i <= deliveries; i++) {
+      const count = await inbox.getByText(`Paging thread ${i}`, { exact: true }).count()
+      if (count !== (i === 31 || i === 32 ? 0 : 1)) {
+        throw new Error(`ASSERT: wrong occurrence count for Paging thread ${i}: ${count}`)
+      }
+    }
+    assert(
+      (await rows.count()) === initialRows + deliveries - 1 && (await loadMore.count()) === 0,
+      'a third page reaches every surviving thread exactly once after archive and delete',
+      'archive or delete left missing, duplicated or extra pages'
+    )
+    const replay = await page.evaluate(() => window.__paginationRequests.slice(2))
+    assert(
+      replay.length === 3 &&
+        replay[0].pageToken === undefined &&
+        replay[1].pageToken === '30' &&
+        replay[2].pageToken === '60' &&
+        replay.every((request) => request.skipRowIds?.length === firstPageSize * 2 - 1),
+      'replay starts at page one and skips metadata for all still-visible rows',
+      'the continuation was not rebuilt or already-visible rows would be fetched again'
+    )
+    await snapshot(page, 'pagination')
+
+    await page.getByRole('button', { name: 'Drafts', exact: true }).click()
+    const drafts = page.getByRole('complementary', { name: 'Drafts', exact: true })
+    await drafts.getByText('Draft: Q4 planning notes', { exact: true }).waitFor({ timeout: 5000 })
+    const draftFill = firstPageSize - (await drafts.getByRole('listitem').count()) - 1
+    await page.evaluate(async ({ count, pageSize }) => {
+      const save = (subject, threadId) =>
+        (window.__packagedFixtureApi ?? window.api).saveDraft({ to: 'reader@example.com', body: '', subject, threadId })
+      for (let i = 1; i <= count; i++) await save(`Pagination draft ${i}`)
+      for (let i = 1; i <= 3; i++) await save(`Same-thread draft ${i}`, 'thread-launch')
+      for (let i = 1; i <= pageSize; i++) await save(`Later draft ${i}`)
+      window.__pushSync({ kind: 'reset' })
+    }, { count: draftFill, pageSize: firstPageSize })
+    await drafts.getByText('Same-thread draft 1', { exact: true }).waitFor({ timeout: 5000 })
+    await activateLoadMore(page, drafts)
+    await drafts.getByText(`Later draft ${firstPageSize - 2}`, { exact: true }).waitFor({
+      timeout: 5000
+    })
+    assert(
+      (await drafts.getByRole('listitem').count()) === firstPageSize * 2 &&
+        (await drafts.getByText(`Later draft ${firstPageSize}`, { exact: true }).count()) === 0,
+      'two of three draft pages are loaded before delete and send',
+      'the draft mutations would not exercise continuation recovery'
+    )
+    for (let i = 1; i <= 3; i++) {
+      assert(
+        (await drafts.getByText(`Same-thread draft ${i}`, { exact: true }).count()) === 1,
+        `draft ${i} is listed separately from others in the same conversation`,
+        `pagination lost or duplicated draft ${i} in a shared conversation`
+      )
+    }
+    await snapshot(page, 'pagination-drafts')
+    const sentDraft = drafts.getByText('Same-thread draft 2', { exact: true })
+    await sentDraft.click()
+    await content.getByRole('heading', { name: 'Draft', exact: true }).waitFor({ timeout: 5000 })
+    const sentDraftId = await page.evaluate(() =>
+      window.__draftSaves.find((entry) => entry.subject === 'Same-thread draft 2').draftId
+    )
+    await content.getByRole('button', { name: 'Send', exact: true }).click()
+    await content.getByText('Message sent.', { exact: true }).waitFor({ timeout: 5000 })
+    assert(
+      (await sentDraft.count()) === 1,
+      'the sent draft is still in the list during the confirmation',
+      'the test did not reach the send confirmation window'
+    )
+    await activateLoadMore(page, drafts)
+    const laterSubjects = Array.from({ length: firstPageSize }, (_, i) => `Later draft ${i + 1}`)
+    await drafts.getByText(laterSubjects.at(-1), { exact: true }).waitFor({ timeout: 5000 })
+    const laterCounts = await Promise.all(
+      laterSubjects.map((subject) => drafts.getByText(subject, { exact: true }).count())
+    )
+    assert(
+      laterCounts.every((count) => count === 1),
+      'Load more finds each later draft once during the send confirmation',
+      'sending a draft skipped or duplicated a surviving row'
+    )
+    await sentDraft.waitFor({ state: 'detached', timeout: 5000 })
+    assert(
+      (await page.evaluate(() => window.__sent[0]?.draftId)) === sentDraftId &&
+        (await drafts.getByText('Same-thread draft 1', { exact: true }).count()) === 1 &&
+        (await drafts.getByText('Same-thread draft 3', { exact: true }).count()) === 1,
+      'the editor sends and prunes only the selected draft',
+      'sending one draft used the wrong ID or removed a sibling'
+    )
+    await snapshot(page, 'pagination-draft-send')
+
+    await drafts.getByText('Same-thread draft 3', { exact: true }).click()
+    await content.getByRole('heading', { name: 'Draft', exact: true }).waitFor({ timeout: 5000 })
+    const draftId = await page.evaluate(() =>
+      window.__draftSaves.find((entry) => entry.subject === 'Same-thread draft 3').draftId
+    )
+    const confirmation = page.waitForEvent('dialog').then((dialog) => dialog.accept())
+    await content.getByRole('button', { name: 'delete draft', exact: true }).click()
+    await confirmation
+    await page.waitForFunction(() => window.__draftDiscards.length === 1)
+    assert(
+      (await page.evaluate(() => window.__draftDiscards[0].draftId)) === draftId,
+      'the editor deletes the draft opened from page two',
+      'the editor deleted a different draft in the same conversation'
+    )
+    await drafts
+      .getByText('Same-thread draft 3', { exact: true })
+      .waitFor({ state: 'detached', timeout: 5000 })
+    assert(
+      (await drafts.getByText('Same-thread draft 1', { exact: true }).count()) === 1 &&
+        (await drafts.getByRole('listitem').count()) === firstPageSize * 2,
+      'deleting the selected draft leaves all surviving drafts listed',
+      'deleting one draft changed other rows'
+    )
+    await snapshot(page, 'pagination-draft-discard')
+    await page.evaluate(() => {
+      const api = window.__packagedFixtureApi ?? window.api
+      const list = api.listFolder
+      window.__pageAfterArchive = []
+      api.listFolder = async (options) => {
+        const result = await list(options)
+        if (options.folder === 'inbox' && options.pageToken && window.__pageAfterArchive.length === 0) {
+          window.__pageAfterArchive = result.threads.map(({ subject }) => subject)
+          await new Promise((resolve) => { window.__releaseArchivePage = resolve })
+          throw new Error('Invalid page token')
+        }
+        return result
+      }
+    })
+    await page.getByRole('button', { name: 'Inbox', exact: true }).click()
+    const archivedWhilePaging = inbox.getByText('Launch checklist', { exact: true })
+    await archivedWhilePaging.waitFor({ timeout: 5000 })
+    const pageControl = loadMore.or(inbox.getByText('Loading more...', { exact: true }))
+    if (await pageControl.evaluate((el) => el.tagName === 'BUTTON', undefined, { timeout: 5000 })) {
+      await activateLoadMore(page, inbox)
+    }
+    await page.waitForFunction(() => Boolean(window.__releaseArchivePage))
+    const shiftedRow = await page.evaluate(async () => {
+      const api = window.__packagedFixtureApi ?? window.api
+      const { threads } = await api.listFolder({ folder: 'inbox', maxResults: 30 })
+      const launch = threads.find(({ id }) => id === 'thread-launch')
+      await api.modifyLabels({ kind: 'thread', id: launch.id, removeLabelIds: ['INBOX'] })
+      window.__pushSync({
+        kind: 'delta', historyId: 'remote-archive',
+        threads: [{ ...launch, labelIds: [] }], deletedThreadIds: []
+      })
+      const page = await api.listFolder({ folder: 'inbox', maxResults: 30, pageToken: '30' })
+      return page.threads.at(-1).subject
+    })
+    await archivedWhilePaging.waitFor({ state: 'detached', timeout: 5000 })
+    assert(
+      !(await page.evaluate((subject) => window.__pageAfterArchive.includes(subject), shiftedRow)),
+      'the archive shifts a surviving thread into the held page',
+      'the held response would not miss the shifted thread'
+    )
+    await page.evaluate(() => window.__releaseArchivePage())
+    await inbox.getByText(shiftedRow, { exact: true }).waitFor({ timeout: 5000 }).catch(() => {
+      throw new Error('ASSERT: the archive interrupted Load more without retrying the shifted page')
+    })
+    assert(
+      (await rows.count()) === firstPageSize * 2,
+      'a remote archive during Load more still completes page two without another request from the user',
+      'the retry left a gap or duplicate rows across the archive boundary'
+    )
+    await snapshot(page, 'pagination-archive-during-load')
+    await page.getByRole('button', { name: 'Drafts', exact: true }).click()
+    await switchDuringPagination(page)
   } else if (FEATURE === 'signature') {
     // The per-compose signature across all three surfaces: the stored text
     // is born from the first toggle in a fresh compose, the block rides

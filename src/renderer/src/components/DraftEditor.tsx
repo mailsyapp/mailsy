@@ -12,28 +12,27 @@ import { useDraftAutosave } from './useDraftAutosave'
 import { ComposerBody, type ComposerBodyHandle } from './ComposerBody'
 import { useComposerAttachments } from './useComposerAttachments'
 import { plainTextToHtml } from '../lib/emailHtml'
-
 type DraftEditorProps = {
   row: ThreadSummary
   detail: EmailDetailData | null
   detailLoading: boolean
-  onSent: (id: string) => void
+  sessionSignal: AbortSignal
+  onSent: () => void
   onDraftDiscard: () => void
   discardError: string | null
 }
-
 function DraftForm({
   detail,
   draftId,
-  messageId,
+  sessionSignal,
   onSent,
   onDraftDiscard,
   discardError
 }: {
   detail: EmailDetailData
   draftId?: string
-  messageId: string
-  onSent: (id: string) => void
+  sessionSignal: AbortSignal
+  onSent: () => void
   onDraftDiscard: () => void
   discardError: string | null
 }): React.JSX.Element {
@@ -51,6 +50,7 @@ function DraftForm({
   const [sendError, setSendError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [sent, setSent] = useState(false)
+  const [edited, setEdited] = useState(false)
   const attach = useComposerAttachments(
     detail.attachments.length ? { messageId: detail.id, refs: detail.attachments } : undefined,
     bodyRef
@@ -66,21 +66,27 @@ function DraftForm({
       references: detail.references || undefined
     }
   })
-  const autosave = useDraftAutosave(request, draftId, draftId !== undefined && attach.ready)
-
+  const autosave = useDraftAutosave(
+    request,
+    draftId ? { draftId, messageId: detail.id } : undefined,
+    draftId !== undefined && attach.ready,
+    sessionSignal,
+    edited || attach.edited
+  )
   async function handleSend(event: React.FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault()
     if (sending || sent || !hasRecipient(recipients)) return
-
     setSending(true)
     setSendError(null)
     setNotice(null)
     try {
       await autosave.flushPending()
+      if (sessionSignal.aborted) return
       autosave.suspend()
       try {
-        if (draftId) {
-          await window.api.sendDraft({ draftId, ...request })
+        const target = autosave.currentDraft()
+        if (target) {
+          await window.api.sendDraft({ ...request, ...target })
         } else {
           await window.api.sendEmail(
             composeRequest({ recipients, subject, body, attachments: attach.attachments })
@@ -93,9 +99,10 @@ function DraftForm({
       } finally {
         autosave.resume()
       }
+      if (sessionSignal.aborted) return
       autosave.stop()
       setSent(true)
-      onSent(messageId)
+      onSent()
     } catch (error) {
       setSendError(errorMessage(error))
     } finally {
@@ -114,19 +121,31 @@ function DraftForm({
         to={recipients.to}
         cc={recipients.cc}
         bcc={recipients.bcc}
-        onChange={(patch) => setRecipients({ ...recipients, ...patch })}
+        onChange={(patch) => {
+          setEdited(true)
+          setRecipients({ ...recipients, ...patch })
+        }}
       />
 
       <label className="composerField">
         <span>Subject</span>
-        <input value={subject} onChange={(event) => setSubject(event.target.value)} />
+        <input
+          value={subject}
+          onChange={(event) => {
+            setEdited(true)
+            setSubject(event.target.value)
+          }}
+        />
       </label>
 
       <ComposerBody
         ref={bodyRef}
         attach={attach}
         initialHtml={initialHtml}
-        onBodyChange={setBody}
+        onBodyChange={(value, source) => {
+          if (source === 'edit') setEdited(true)
+          setBody(value)
+        }}
       />
 
       {sendError && <p role="alert">{sendError}</p>}
@@ -140,6 +159,7 @@ function DraftForm({
         <button type="button" onClick={onDraftDiscard} disabled={sending || sent}>
           delete draft
         </button>
+
         <button type="submit" disabled={sending || sent || !hasRecipient(recipients)}>
           {sending ? 'Sending...' : sent ? 'Sent' : 'Send'}
         </button>
@@ -148,11 +168,11 @@ function DraftForm({
     </form>
   )
 }
-
 export function DraftEditor({
   row,
   detail,
   detailLoading,
+  sessionSignal,
   onSent,
   onDraftDiscard,
   discardError
@@ -170,7 +190,7 @@ export function DraftEditor({
       key={detail.id}
       detail={detail}
       draftId={row.draftId}
-      messageId={row.id}
+      sessionSignal={sessionSignal}
       onSent={onSent}
       onDraftDiscard={onDraftDiscard}
       discardError={discardError}

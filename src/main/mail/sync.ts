@@ -1,5 +1,5 @@
 import { BrowserWindow } from 'electron'
-import { getGmailClient, isSignedIn, onSessionEnded } from '../auth'
+import { getGmailClient, getMailSession, isSignedIn, onSessionEnded } from '../auth'
 import type { GmailClient } from '../auth'
 import { type SyncReason, type SyncResult, type ThreadSynced } from '../../shared/sync'
 import type { gmail_v1 } from 'googleapis'
@@ -10,50 +10,50 @@ import {
   withQuotaRetry
 } from './resilience'
 import { threadToSummary } from './message'
-
 let cursor: string | null = null
 let pendingSeed: string | null = null
-
 function isLaterId(a: string, b: string): boolean {
   return a.length > b.length || (a.length === b.length && a > b)
 }
-
-export function noteHistoryId(id: string | number | undefined | null): void {
-  if (cursor !== null || id == null || id === '') return
+export function noteHistoryId(id: string | number | undefined | null, session: symbol): void {
+  if (getMailSession() !== session || cursor !== null || id == null || id === '') return
   const next = String(id)
   if (pendingSeed === null || isLaterId(next, pendingSeed)) pendingSeed = next
 }
-
 onSessionEnded(() => {
   cursor = null
   pendingSeed = null
   errorStreak = 0
+  inFlight = null
+  scheduleNextSweep()
 })
-
 function isDraftChurn(labelIds: string[] | null | undefined): boolean {
   return labelIds !== null && labelIds !== undefined && labelIds.join() === 'DRAFT'
 }
-
 async function sweepChangedThreads(
-  gmail: GmailClient
-): Promise<{ changed: string[]; readThrough: string | null }> {
-  const start = cursor
-  if (start === null) return { changed: [], readThrough: null }
-
+  gmail: GmailClient,
+  start: string,
+  session: symbol
+): Promise<{
+  changed: string[]
+  readThrough: string | null
+}> {
   const changed = new Set<string>()
   const note = (threadId: string | null | undefined): void => {
     if (threadId) changed.add(threadId)
   }
   let readThrough: string | null = null
   for (let pageToken: string | undefined; ;) {
-    const page = await withQuotaRetry(() =>
-      gmail.users.history.list({
-        userId: 'me',
-        startHistoryId: start,
-        maxResults: 500,
-        historyTypes: ['messageAdded', 'messageDeleted', 'labelAdded', 'labelRemoved'],
-        ...(pageToken ? { pageToken } : {})
-      })
+    const page = await withQuotaRetry(
+      () =>
+        gmail.users.history.list({
+          userId: 'me',
+          startHistoryId: start,
+          maxResults: 500,
+          historyTypes: ['messageAdded', 'messageDeleted', 'labelAdded', 'labelRemoved'],
+          ...(pageToken ? { pageToken } : {})
+        }),
+      session
     )
     for (const record of page.data.history ?? []) {
       for (const entry of record.messagesAdded ?? []) {
@@ -76,21 +76,26 @@ async function sweepChangedThreads(
     if (!pageToken) return { changed: [...changed], readThrough }
   }
 }
-
 async function readChangedThreads(
   gmail: GmailClient,
-  threadIds: string[]
-): Promise<{ threads: ThreadSynced[]; deletedThreadIds: string[] }> {
+  threadIds: string[],
+  session: symbol
+): Promise<{
+  threads: ThreadSynced[]
+  deletedThreadIds: string[]
+}> {
   const deletedThreadIds: string[] = []
   const rows = await mapWithConcurrency(threadIds, DETAIL_CONCURRENCY, async (id) => {
     try {
-      const thread = await withQuotaRetry(() =>
-        gmail.users.threads.get({
-          userId: 'me',
-          id,
-          format: 'metadata',
-          metadataHeaders: ['From', 'Subject', 'Date']
-        })
+      const thread = await withQuotaRetry(
+        () =>
+          gmail.users.threads.get({
+            userId: 'me',
+            id,
+            format: 'metadata',
+            metadataHeaders: ['From', 'Subject', 'Date']
+          }),
+        session
       )
       return toSyncedRow(thread.data)
     } catch (e) {
@@ -104,7 +109,6 @@ async function readChangedThreads(
     deletedThreadIds
   }
 }
-
 function toSyncedRow(thread: gmail_v1.Schema$Thread): ThreadSynced {
   const labelIds = new Set<string>()
   for (const message of thread.messages ?? []) {
@@ -112,8 +116,7 @@ function toSyncedRow(thread: gmail_v1.Schema$Thread): ThreadSynced {
   }
   return { ...threadToSummary(thread), labelIds: [...labelIds] }
 }
-
-async function runSync(): Promise<SyncResult> {
+async function runSync(session: symbol): Promise<SyncResult> {
   const gmail = getGmailClient()
   const start = cursor
   if (start === null) {
@@ -121,41 +124,38 @@ async function runSync(): Promise<SyncResult> {
     pendingSeed = null
     return { kind: 'reset' }
   }
-
   let changed: string[]
   let readThrough: string | null = null
   try {
-    const sweep = await sweepChangedThreads(gmail)
+    const sweep = await sweepChangedThreads(gmail, start, session)
     changed = sweep.changed
     readThrough = sweep.readThrough
   } catch (e) {
+    if (getMailSession() !== session) throw e
     if (isNotFoundError(e)) {
       cursor = null
       return { kind: 'reset' }
     }
     throw e
   }
+  if (getMailSession() !== session) return { kind: 'reset' }
   if (changed.length === 0) {
     commitReadThrough(readThrough)
     return { kind: 'delta', historyId: cursor ?? start, threads: [], deletedThreadIds: [] }
   }
-
-  const { threads, deletedThreadIds } = await readChangedThreads(gmail, changed)
+  const { threads, deletedThreadIds } = await readChangedThreads(gmail, changed, session)
+  if (getMailSession() !== session) return { kind: 'reset' }
   commitReadThrough(readThrough)
   return { kind: 'delta', historyId: cursor ?? start, threads, deletedThreadIds }
 }
-
 function commitReadThrough(id: string | null): void {
   if (id === null) return
   if (cursor === null || isLaterId(id, cursor)) cursor = id
 }
-
 let errorStreak = 0
-
-const SWEEP_SETTLED_MS = 30_000
-const SWEEP_HIDDEN_MS = 120_000
-const SWEEP_FAILED_MAX_MS = 10 * 60_000
-
+const SWEEP_SETTLED_MS = 30000
+const SWEEP_HIDDEN_MS = 120000
+const SWEEP_FAILED_MAX_MS = 10 * 60000
 function nextSweepDelay(): number {
   const windows = BrowserWindow.getAllWindows().filter((window) => !window.isDestroyed())
   if (!windows.some((window) => window.isVisible())) return SWEEP_HIDDEN_MS
@@ -164,9 +164,7 @@ function nextSweepDelay(): number {
   }
   return SWEEP_SETTLED_MS
 }
-
 let sweepTimer: NodeJS.Timeout | null = null
-
 function scheduleNextSweep(): void {
   if (sweepTimer) clearTimeout(sweepTimer)
   sweepTimer = setTimeout(() => {
@@ -174,37 +172,44 @@ function scheduleNextSweep(): void {
   }, nextSweepDelay())
   sweepTimer.unref?.()
 }
-
 export function armSyncClock(): void {
   scheduleNextSweep()
 }
-
 function pushResult(result: SyncResult): void {
   for (const window of BrowserWindow.getAllWindows()) {
     if (!window.isDestroyed()) window.webContents.send('gmail:sync-result', result)
   }
 }
-
 let inFlight: Promise<SyncResult> | null = null
-
 export function syncMail(reason: SyncReason): Promise<SyncResult> {
-  if (!isSignedIn()) return Promise.resolve({ kind: 'reset' })
-
+  if (!isSignedIn()) {
+    if (reason === 'clock') scheduleNextSweep()
+    return Promise.resolve({ kind: 'reset' })
+  }
   if (inFlight) return inFlight
-
+  const session = getMailSession()
   inFlight = (async () => {
     try {
-      const result = await runSync()
+      const result = await runSync(session)
+      if (getMailSession() !== session) return { kind: 'reset' }
       errorStreak = 0
       return result
     } catch (e) {
-      errorStreak++
+      if (getMailSession() === session) errorStreak++
       throw e
     } finally {
-      inFlight = null
-      scheduleNextSweep()
+      if (getMailSession() === session) {
+        inFlight = null
+        scheduleNextSweep()
+      }
     }
   })()
-  if (reason !== 'button') void inFlight.then(pushResult).catch(() => {})
+  if (reason !== 'button') {
+    void inFlight
+      .then((result) => {
+        if (getMailSession() === session) pushResult(result)
+      })
+      .catch(() => {})
+  }
   return inFlight
 }

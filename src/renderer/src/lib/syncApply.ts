@@ -1,7 +1,9 @@
 import { FOLDER_LABEL_ID } from '../../../shared/sync'
 import type { MailSyncDelta } from '../../../shared/sync'
 import type { MailFolder, ThreadSummary } from '../../../shared/types'
-
+export function listRowKey(row: Pick<ThreadSummary, 'id' | 'draftId'>): string {
+  return row.draftId ? `draft:${row.draftId}` : `thread:${row.id}`
+}
 export function rowsEqual(a: ThreadSummary, b: ThreadSummary): boolean {
   return (
     a.id === b.id &&
@@ -16,32 +18,28 @@ export function rowsEqual(a: ThreadSummary, b: ThreadSummary): boolean {
     a.messageIds.join('\n') === b.messageIds.join('\n')
   )
 }
-
 export function mergeIncoming(
   prev: ThreadSummary[],
   incoming: ThreadSummary[],
   keepAllDropped: boolean,
-  selectedId: string | null
+  selectedKey: string | null
 ): ThreadSummary[] {
   if (prev.length === incoming.length && prev.every((row, i) => rowsEqual(row, incoming[i]))) {
     return prev
   }
-  const incomingIds = new Set(incoming.map((row) => row.id))
-  const dropped = prev.filter((row) => !incomingIds.has(row.id))
-  const tail = keepAllDropped ? dropped : dropped.filter((row) => row.id === selectedId)
+  const incomingKeys = new Set(incoming.map(listRowKey))
+  const dropped = prev.filter((row) => !incomingKeys.has(listRowKey(row)))
+  const tail = keepAllDropped ? dropped : dropped.filter((row) => listRowKey(row) === selectedKey)
   return [...incoming, ...tail]
 }
-
 export function viewLabelOf(folder: MailFolder, userLabelId: string | null): string | null {
   if (userLabelId) return userLabelId
   return FOLDER_LABEL_ID[folder] ?? null
 }
-
 export interface DeltaView {
   labelId: string
   isSearchActive: boolean
 }
-
 export function applyMailDelta(
   rows: ThreadSummary[],
   delta: MailSyncDelta,

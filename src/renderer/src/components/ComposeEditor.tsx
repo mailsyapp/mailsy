@@ -10,12 +10,11 @@ import {
 import { useDraftAutosave } from './useDraftAutosave'
 import { ComposerBody, type ComposerBodyHandle } from './ComposerBody'
 import { useComposerAttachments } from './useComposerAttachments'
-
 type ComposeEditorProps = {
   onClose: () => void
+  sessionSignal: AbortSignal
 }
-
-export function ComposeEditor({ onClose }: ComposeEditorProps): React.JSX.Element {
+export function ComposeEditor({ onClose, sessionSignal }: ComposeEditorProps): React.JSX.Element {
   const [recipients, setRecipients] = useState<RecipientState>({ to: '', cc: '', bcc: '' })
   const [subject, setSubject] = useState('')
   const [body, setBody] = useState<ComposeBody>({ html: '', text: '' })
@@ -25,29 +24,28 @@ export function ComposeEditor({ onClose }: ComposeEditorProps): React.JSX.Elemen
   const [sent, setSent] = useState(false)
   const attach = useComposerAttachments(undefined, bodyRef)
   const request = composeRequest({ recipients, subject, body, attachments: attach.attachments })
-  const autosave = useDraftAutosave(request, undefined, true)
-
+  const autosave = useDraftAutosave(request, undefined, true, sessionSignal)
   async function handleCancel(): Promise<void> {
     await autosave.flushPending()
-    const draftId = autosave.currentDraftId()
+    if (sessionSignal.aborted) return
+    const draftId = autosave.currentDraft()?.draftId
     autosave.stop()
     onClose()
     if (draftId) void window.api.discardDraft(draftId)
   }
-
   async function handleSend(event: React.FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault()
     if (sending || sent || !hasRecipient(recipients)) return
-
     setSending(true)
     setSendError(null)
     try {
       await autosave.flushPending()
-      const draftId = autosave.currentDraftId()
+      if (sessionSignal.aborted) return
+      const target = autosave.currentDraft()
       autosave.suspend()
       try {
-        if (draftId) {
-          await window.api.sendDraft({ draftId, ...request })
+        if (target) {
+          await window.api.sendDraft({ ...request, ...target })
         } else {
           await window.api.sendEmail(request)
         }
@@ -62,7 +60,6 @@ export function ComposeEditor({ onClose }: ComposeEditorProps): React.JSX.Elemen
       setSending(false)
     }
   }
-
   return (
     <form
       className={`composer composer-fill${attach.dropping ? ' composer-dragging' : ''}`}

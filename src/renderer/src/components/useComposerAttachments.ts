@@ -11,12 +11,12 @@ import {
   type SendEmailRequest
 } from '../../../shared/types'
 import { dragsFiles, fileToAttachment, looksLikeImageFile } from '../lib/attachmentFile'
-
 export interface ComposerAttachments {
   attachments: ComposeAttachment[]
   field: Pick<SendEmailRequest, 'attachments'>
   error: string | null
   ready: boolean
+  edited: boolean
   picking: boolean
   dropping: boolean
   drop: DragHandlers
@@ -25,19 +25,16 @@ export interface ComposerAttachments {
   remove: (index: number) => void
   clear: () => void
 }
-
 export interface DragHandlers {
   onDragEnter: (event: React.DragEvent) => void
   onDragOver: (event: React.DragEvent) => void
   onDragLeave: (event: React.DragEvent) => void
   onDrop: (event: React.DragEvent) => void
 }
-
 export type AttachmentPrefill = {
   messageId: string
   refs: MessageAttachmentRef[]
 }
-
 export function useComposerAttachments(
   prefill?: AttachmentPrefill,
   bodyEditorRef?: RefObject<{
@@ -48,9 +45,9 @@ export function useComposerAttachments(
   const [error, setError] = useState<string | null>(null)
   const [picking, setPicking] = useState(false)
   const [ready, setReady] = useState(!prefill || prefill.refs.length === 0)
+  const [edited, setEdited] = useState(false)
   const [dropping, setDropping] = useState(false)
   const dropDepth = useRef(0)
-
   useOnMount((isMounted) => {
     if (!prefill || prefill.refs.length === 0) return
     Promise.all(
@@ -70,7 +67,6 @@ export function useComposerAttachments(
       setReady(true)
     })
   })
-
   const push = useCallback(
     (incoming: ComposeAttachment[]): void => {
       if (incoming.length === 0) return
@@ -82,10 +78,10 @@ export function useComposerAttachments(
         return
       }
       setAttachments((prev) => [...prev, ...incoming])
+      setEdited(true)
     },
     [attachments]
   )
-
   const pick = useCallback(async (): Promise<void> => {
     if (picking) return
     setPicking(true)
@@ -98,7 +94,6 @@ export function useComposerAttachments(
       setPicking(false)
     }
   }, [picking, push])
-
   const addFiles = useCallback(
     async (files: File[]): Promise<void> => {
       if (files.length === 0) return
@@ -112,7 +107,6 @@ export function useComposerAttachments(
     },
     [push, ready]
   )
-
   const drop = useMemo<DragHandlers>(
     () => ({
       onDragEnter: (event) => {
@@ -146,23 +140,21 @@ export function useComposerAttachments(
     }),
     [addFiles, bodyEditorRef]
   )
-
   const remove = useCallback((index: number) => {
     setAttachments((prev) => prev.filter((_, i) => i !== index))
+    setEdited(true)
   }, [])
-
   const clear = useCallback(() => {
     setAttachments([])
     setError(null)
   }, [])
-
   const field: Pick<SendEmailRequest, 'attachments'> = attachments.length > 0 ? { attachments } : {}
-
   return {
     attachments,
     field,
     error,
     ready,
+    edited,
     picking,
     dropping,
     drop,

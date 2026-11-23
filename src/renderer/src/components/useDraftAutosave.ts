@@ -1,58 +1,55 @@
-import { useCallback, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 import { useLatest } from '../hooks/useLatest'
-import { useOnUnmount } from '../hooks/useOnUnmount'
 import { useReaction } from '../hooks/useReaction'
+import { useOnUnmount } from '../hooks/useOnUnmount'
 import { useTimers } from '../hooks/useTimers'
 import { errorMessage } from '../lib/format'
-import type { SendEmailRequest } from '../../../shared/types'
-
+import type { DraftVersion, SendDraftRequest, SendEmailRequest } from '../../../shared/types'
 type AutosaveFields = SendEmailRequest
-
 const AUTOSAVE_DEBOUNCE_MS = 1200
-const AUTOSAVE_TIMER = 'autosave'
-
 export interface DraftAutosave {
   flushPending: () => Promise<void>
   suspend: () => void
   resume: () => void
   stop: () => void
-  currentDraftId: () => string | undefined
+  currentDraft: () => Pick<SendDraftRequest, 'draftId' | 'expectedMessageId'> | undefined
   status: 'idle' | 'saving' | 'saved'
   error: string | null
 }
-
 export function useDraftAutosave(
   fields: AutosaveFields,
-  initialDraftId: string | undefined,
-  enabled: boolean
+  initialDraft: DraftVersion | undefined,
+  enabled: boolean,
+  sessionSignal: AbortSignal,
+  hasEdits = true
 ): DraftAutosave {
   const [status, setStatus] = useState<DraftAutosave['status']>('idle')
   const [error, setError] = useState<string | null>(null)
-
   const fieldsRef = useLatest(fields)
-  const draftIdRef = useRef(initialDraftId)
+  const draftRef = useRef(initialDraft)
   const lastSavedRef = useRef(JSON.stringify(fields))
-  const enabledRef = useLatest(enabled)
+  const enabledRef = useLatest(enabled && hasEdits)
   const retiredRef = useRef(false)
   const suspendedRef = useRef(false)
   const pendingSaveRef = useRef<Promise<void> | null>(null)
   const timers = useTimers()
   const fieldsJson = JSON.stringify(fields)
-
-  const save = useCallback((): Promise<void> => {
+  function save(copyOnConflict = false): Promise<void> {
     const prior = pendingSaveRef.current ?? Promise.resolve()
     const run = prior
       .then(() => {
-        if (retiredRef.current || suspendedRef.current) return
+        if (sessionSignal.aborted || retiredRef.current || suspendedRef.current) return
         const written = JSON.stringify(fieldsRef.current)
         if (written === lastSavedRef.current) return
+        const target = draftRef.current
         return window.api
           .saveDraft({
             ...fieldsRef.current,
-            ...(draftIdRef.current ? { draftId: draftIdRef.current } : {})
+            ...(target ? { draftId: target.draftId, expectedMessageId: target.messageId } : {}),
+            ...(copyOnConflict ? { copyOnConflict } : {})
           })
-          .then((draftId) => {
-            draftIdRef.current = draftId
+          .then((draft) => {
+            draftRef.current = draft
             lastSavedRef.current = written
             setStatus('saved')
             setError(null)
@@ -68,41 +65,48 @@ export function useDraftAutosave(
     pendingSaveRef.current = run
     setStatus('saving')
     return run
-  }, [fieldsRef])
-
-  useReaction([fieldsJson, enabled], () => {
-    timers.cancel(AUTOSAVE_TIMER)
+  }
+  useReaction([fieldsJson, enabled, hasEdits], () => {
+    timers.cancel('autosave')
+    if (!hasEdits) {
+      lastSavedRef.current = fieldsJson
+      return
+    }
     if (!enabled || retiredRef.current) return
-    timers.start(AUTOSAVE_TIMER, AUTOSAVE_DEBOUNCE_MS, () => {
-      if (fieldsJson === lastSavedRef.current) return
+    const scheduledJson = fieldsJson
+    timers.start('autosave', AUTOSAVE_DEBOUNCE_MS, () => {
+      if (scheduledJson === lastSavedRef.current) return
       void save()
     })
   })
-
   useOnUnmount(() => {
-    timers.cancel(AUTOSAVE_TIMER)
-    if (!enabledRef.current || retiredRef.current) return
+    timers.cancel('autosave')
+    if (sessionSignal.aborted || !enabledRef.current || retiredRef.current) return
     if (JSON.stringify(fieldsRef.current) === lastSavedRef.current) return
-    void save()
+    void save(true)
   })
-
   return {
     flushPending: async (): Promise<void> => {
-      timers.cancel(AUTOSAVE_TIMER)
+      timers.cancel('autosave')
       await pendingSaveRef.current
     },
     stop: (): void => {
       retiredRef.current = true
-      timers.cancel(AUTOSAVE_TIMER)
+      timers.cancel('autosave')
     },
     suspend: (): void => {
-      timers.cancel(AUTOSAVE_TIMER)
+      timers.cancel('autosave')
       suspendedRef.current = true
     },
     resume: (): void => {
       suspendedRef.current = false
     },
-    currentDraftId: (): string | undefined => (retiredRef.current ? undefined : draftIdRef.current),
+    currentDraft: () => {
+      const draft = draftRef.current
+      return !retiredRef.current && draft
+        ? { draftId: draft.draftId, expectedMessageId: draft.messageId }
+        : undefined
+    },
     status,
     error
   }

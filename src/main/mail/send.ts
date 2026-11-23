@@ -1,8 +1,9 @@
-import { getAccountEmail, getGmailClient } from '../auth'
+import { getAccountEmail, getGmailClient, getMailSession } from '../auth'
 import {
   attachmentsLimitError,
   ATTACHMENTS_TOTAL_LIMIT_BYTES,
   decodedAttachmentBytes,
+  type DraftVersion,
   type SaveDraftRequest,
   type SendDraftRequest,
   type SendEmailRequest
@@ -11,7 +12,15 @@ import { hasRecipient } from '../../shared/types'
 import { isNotFoundError, rethrowDeadGrant, withQuotaRetry } from './resilience'
 import { buildRawMessage } from './mime'
 import type { gmail_v1 } from 'googleapis'
-
+let discardSession: symbol | undefined
+let localDiscards = new Map<string, Promise<void>>()
+function discardsFor(session: symbol): Map<string, Promise<void>> {
+  if (discardSession !== session) {
+    discardSession = session
+    localDiscards = new Map()
+  }
+  return localDiscards
+}
 function assertMessageFields(request: SendEmailRequest, requireRecipient: boolean): void {
   if (
     !request ||
@@ -34,7 +43,6 @@ function assertMessageFields(request: SendEmailRequest, requireRecipient: boolea
     throw new Error(attachmentsLimitError(totalBytes))
   }
 }
-
 function attachmentsShaped(request: SendEmailRequest): boolean {
   if (request.attachments === undefined) return true
   if (!Array.isArray(request.attachments)) return false
@@ -48,7 +56,6 @@ function attachmentsShaped(request: SendEmailRequest): boolean {
       attachment.data.length > 0
   )
 }
-
 function attachmentsBytes(request: SendEmailRequest): number {
   if (!request.attachments) return 0
   return request.attachments.reduce(
@@ -56,15 +63,12 @@ function attachmentsBytes(request: SendEmailRequest): number {
     0
   )
 }
-
 export async function sendEmail(request: SendEmailRequest): Promise<void> {
   assertMessageFields(request, true)
-
   try {
     const gmail = getGmailClient()
     const from = await getAccountEmail()
     const raw = await buildRawMessage(from, request)
-
     await gmail.users.messages.send({
       userId: 'me',
       requestBody: {
@@ -77,94 +81,127 @@ export async function sendEmail(request: SendEmailRequest): Promise<void> {
     throw e
   }
 }
-
 export async function sendDraft(request: SendDraftRequest): Promise<void> {
   assertMessageFields(request, true)
   if (typeof request.draftId !== 'string' || !request.draftId.trim()) {
     throw new Error('Draft ID is required')
   }
-
+  assertExpectedMessageId(request.expectedMessageId)
   try {
+    const session = getMailSession()
     const gmail = getGmailClient()
     const from = await getAccountEmail()
-
     const raw = await buildRawMessage(from, request)
-    await writeDraft(gmail, request.draftId, raw, request.threadId)
-    await withQuotaRetry(() =>
-      gmail.users.drafts.send({
+    const { draftId, expectedMessageId, threadId } = request
+    await withQuotaRetry(async () => {
+      if (!(await isCurrentDraftVersion(gmail, draftId, expectedMessageId, session))) {
+        throw draftConflict()
+      }
+      return gmail.users.drafts.send({
         userId: 'me',
-        requestBody: { id: request.draftId }
+        requestBody: { id: draftId, message: { raw, ...(threadId ? { threadId } : {}) } }
       })
-    )
+    }, session)
   } catch (e) {
     rethrowDeadGrant(e)
     throw e
   }
 }
-
-async function writeDraft(
+function assertExpectedMessageId(id: unknown): void {
+  if (id !== undefined && (typeof id !== 'string' || !id.trim())) {
+    throw new Error('Invalid draft message ID')
+  }
+}
+function draftConflict(): Error {
+  return new Error('Draft changed in Gmail. Leaving keeps your unsaved edits as a separate draft.')
+}
+async function isCurrentDraftVersion(
   gmail: gmail_v1.Gmail,
   draftId: string,
-  raw: string,
-  threadId?: string
-): Promise<void> {
-  await withQuotaRetry(() =>
-    gmail.users.drafts.update({
-      userId: 'me',
-      id: draftId,
-      requestBody: {
-        message: {
-          raw,
-          ...(threadId ? { threadId } : {})
-        }
-      }
-    })
-  )
+  expectedMessageId: string | undefined,
+  session: symbol
+): Promise<boolean> {
+  if (expectedMessageId === undefined) return true
+  const current = await gmail.users.drafts.get({ userId: 'me', id: draftId, format: 'minimal' })
+  if (getMailSession() !== session) throw new Error('Mail account changed')
+  return current.data.message?.id === expectedMessageId
 }
-
-export async function saveDraft(request: SaveDraftRequest): Promise<string> {
+export async function saveDraft(request: SaveDraftRequest): Promise<DraftVersion> {
   assertMessageFields(request, false)
   if (request.draftId !== undefined && typeof request.draftId !== 'string') {
     throw new Error('Invalid draft request')
   }
-
+  assertExpectedMessageId(request.expectedMessageId)
   try {
+    const session = getMailSession()
     const gmail = getGmailClient()
     const from = await getAccountEmail()
     const raw = await buildRawMessage(from, request)
-
-    if (request.draftId) {
-      await writeDraft(gmail, request.draftId, raw, request.threadId)
-      return request.draftId
-    }
-    const created = await withQuotaRetry(() =>
-      gmail.users.drafts.create({
-        userId: 'me',
-        requestBody: {
-          message: {
-            raw,
-            ...(request.threadId ? { threadId: request.threadId } : {})
+    const { draftId, expectedMessageId, threadId, copyOnConflict } = request
+    const requestBody = { message: { raw, ...(threadId ? { threadId } : {}) } }
+    const saved = await withQuotaRetry(async () => {
+      if (draftId) {
+        try {
+          if (await isCurrentDraftVersion(gmail, draftId, expectedMessageId, session)) {
+            return await gmail.users.drafts.update({ userId: 'me', id: draftId, requestBody })
           }
+          if (copyOnConflict !== true) throw draftConflict()
+        } catch (e) {
+          if (copyOnConflict !== true || !isNotFoundError(e)) throw e
         }
-      })
-    )
-    if (!created.data.id) throw new Error('Gmail returned no draft ID')
-    return created.data.id
+        if (getMailSession() !== session) throw new Error('Mail account changed')
+        const discard = discardsFor(session).get(draftId)
+        if (discard) {
+          const discarded = await discard.then(
+            () => true,
+            () => false
+          )
+          if (discarded) throw new Error('Draft was discarded')
+          if (getMailSession() !== session) throw new Error('Mail account changed')
+        }
+        return gmail.users.drafts.create({ userId: 'me', requestBody: { message: { raw } } })
+      }
+      return gmail.users.drafts.create({ userId: 'me', requestBody })
+    }, session)
+    if (!saved.data.id || !saved.data.message?.id)
+      throw new Error('Gmail returned no draft version')
+    return { draftId: saved.data.id, messageId: saved.data.message.id }
   } catch (e) {
     rethrowDeadGrant(e)
     throw e
   }
 }
-
 export async function discardDraft(draftId: string): Promise<void> {
   if (typeof draftId !== 'string' || !draftId.trim()) throw new Error('Draft ID is required')
-
+  const session = getMailSession()
+  const discards = discardsFor(session)
+  const existing = discards.get(draftId)
+  if (existing) return existing
+  const gmail = getGmailClient()
+  const discard = withQuotaRetry(
+    () => gmail.users.drafts.delete({ userId: 'me', id: draftId }),
+    session
+  ).then(
+    () => undefined,
+    (e: unknown) => {
+      if (isNotFoundError(e)) return
+      discards.delete(draftId)
+      throw e
+    }
+  )
+  discards.set(draftId, discard)
+  return discard
+}
+export async function draftExists(draftId: string): Promise<boolean> {
+  if (typeof draftId !== 'string' || !draftId.trim()) throw new Error('Draft ID is required')
+  const gmail = getGmailClient()
   try {
-    const gmail = getGmailClient()
-    await withQuotaRetry(() => gmail.users.drafts.delete({ userId: 'me', id: draftId }))
+    await withQuotaRetry(() =>
+      gmail.users.drafts.get({ userId: 'me', id: draftId, format: 'minimal' })
+    )
+    return true
   } catch (e) {
-    rethrowDeadGrant(e)
-    if (isNotFoundError(e)) return
+    if (isNotFoundError(e)) return false
     throw e
   }
 }
