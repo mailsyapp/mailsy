@@ -47,6 +47,7 @@ export async function launchPackaged({
         'gmail:send': 'sendEmail',
         'gmail:send-draft': 'sendDraft',
         'gmail:save-draft': 'saveDraft',
+        'gmail:draft-exists': 'draftExists',
         'gmail:discard-draft': 'discardDraft',
         'attachments:pick': 'pickAttachments',
         'gmail:get-attachment': 'getAttachment',
@@ -60,16 +61,34 @@ export async function launchPackaged({
         'gmail:snooze-tick': 'snoozeTick'
       }
       const counts = {}
+      const unexpectedNativeChannels = []
       globalThis.__packagedVerification = {
         packaged: app.isPackaged,
         appPath: app.getAppPath(),
         userData: app.getPath('userData'),
         electron: process.versions.electron,
-        counts
+        counts,
+        unexpectedNativeChannels
+      }
+      const nativeHandlers = ipcMain._invokeHandlers
+      if (!(nativeHandlers instanceof Map))
+        throw new Error('Cannot guard packaged Gmail IPC handlers')
+      const registerHandler = ipcMain.handle.bind(ipcMain)
+      const rejectNativeGmail = (channel) => () => {
+        unexpectedNativeChannels.push(channel)
+        throw new Error(`Unexpected native Gmail IPC in fixture mode: ${channel}`)
+      }
+      ipcMain.handle = (channel, listener) => registerHandler(
+        channel, channel.startsWith('gmail:') ? rejectNativeGmail(channel) : listener
+      )
+      for (const channel of [...nativeHandlers.keys()]) {
+        if (!channel.startsWith('gmail:')) continue
+        ipcMain.removeHandler(channel)
+        registerHandler(channel, rejectNativeGmail(channel))
       }
       for (const [channel, method] of Object.entries(channels)) {
         ipcMain.removeHandler(channel)
-        ipcMain.handle(channel, (event, ...args) => {
+        registerHandler(channel, (event, ...args) => {
           if (event.sender !== window.webContents) throw new Error('Unexpected IPC sender')
           counts[channel] = (counts[channel] ?? 0) + 1
           return event.sender.executeJavaScript(
@@ -91,7 +110,10 @@ export async function launchPackaged({
     if (clock) await page.clock.install()
     const fixture = await readFile(mockPath, 'utf8')
     await browser.context().addInitScript({ content: `(() => {
-      const fixtureWindow = { __signInClicked: false, __signOutClicked: false, __pickCalls: 0 }
+      const fixtureWindow = new Proxy(
+        { __signInClicked: false, __signOutClicked: false, __pickCalls: 0 },
+        { get: (target, key) => key in target ? target[key] : window[key] }
+      )
       ;(function(window) { ${fixture}\n })(fixtureWindow)
       if (${JSON.stringify(signedOut)}) {
         fixtureWindow.api.isSignedIn = async () => false
