@@ -22,10 +22,10 @@ Preconditions:
 - **Hidden default view.** Run `node scripts/drive.mjs --feature labels --run-id "$RUN_ID" --port "$VERIFY_MAILSY_PORT"`. Neither a `Receipts` chip nor a `New label` affordance renders in the rail.
 - **Remove.** Open `Receipts for March travel` from the Inbox; the detail `Labels` menu shows `Receipts` checked; unchecking records a thread modify with `removeLabelIds: ['label-receipts']` in `window.__mods[0]`.
 - **Persistence.** An Inbox round trip re-derives the menu from the boundary's label state: the box is unchecked, and re-checking records the add in `__mods[1]`.
+- **Browse regression.** Reveal Labels, open Receipts, and assert the matching thread has no empty-state footer (`labels-populated`). Remove its label through the detail menu; the now-empty list shows the empty state and no thread (`labels-empty`).
 
 ## Gotchas
 
 - The detail pane stays mounted across a same-thread folder refetch, so the Labels menu can stay expanded from the removal; the journey only clicks `Labels` when the `Apply labels` group is closed, and a blind toggle can turn the reopen into a close.
 - Checkbox state flips asynchronously after the boundary write resolves, so the journey reads checks through `waitForChecked`, not an instant `isChecked`.
-- The rail chip browse, slash-name create, and confirm delete are not scripted until the expanded sidebar exposes the rail labels surface; the driver must not weaken the default-view absence assertions to drive them.
-- The map's earlier chip-driven steps moved out with the user's sidebar change that hid the labels section; the mock's `createUserLabel` parent-chain behavior is unaffected.
+- The journey reveals the collapsed rail's Labels surface before browsing Receipts; default-view absence assertions still apply before that reveal. Slash-name create and confirm delete are not scripted in this journey.

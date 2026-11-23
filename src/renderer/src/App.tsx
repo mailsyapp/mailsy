@@ -550,7 +550,8 @@ function App(): React.JSX.Element {
     target: sentinelRef,
     root: sidebarRef,
     rootMargin: '400px',
-    armKey: nextPageToken === null ? null : `${viewKey}\n${committedQuery}\n${nextPageToken ?? ''}`,
+    armKey:
+      typeof nextPageToken === 'string' ? `${viewKey}\n${committedQuery}\n${nextPageToken}` : null,
     onIntersect: loadMore
   })
 
@@ -727,8 +728,8 @@ function App(): React.JSX.Element {
               )}
             </>
           ) : (
-            displayedThreads.length > 0 &&
-            !searching && (
+            !searching &&
+            (isSearchActive ? displayedThreads.length > 0 : displayedThreads.length === 0) && (
               <p className="snippet">
                 {isSearchActive ? 'End of results' : FOLDER_CONFIG[activeFolder].empty}
               </p>

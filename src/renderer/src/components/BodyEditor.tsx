@@ -25,10 +25,12 @@ function readContent(editor: HTMLDivElement): { html: string; text: string } {
   return { html: /^(\s|<br\/?>)*$/i.test(html) ? '' : html, text }
 }
 
-function isVisuallyEmpty(editor: HTMLDivElement): boolean {
+function isVisuallyEmpty(editor: HTMLElement): boolean {
   for (const node of editor.childNodes) {
     if (node.nodeType === Node.TEXT_NODE && node.textContent?.trim() === '') continue
     if (node.nodeName === 'BR') continue
+    if ((node.nodeName === 'DIV' || node.nodeName === 'P') && isVisuallyEmpty(node as HTMLElement))
+      continue
     return false
   }
   return true
@@ -227,6 +229,46 @@ function removeSignatureBlocks(editor: HTMLDivElement): void {
   for (const existing of Array.from(editor.querySelectorAll(SIGNATURE_OWNED_SELECTOR))) {
     existing.remove()
   }
+  if (isVisuallyEmpty(editor)) editor.replaceChildren()
+}
+
+function signatureBodyParagraph(editor: HTMLDivElement): HTMLElement {
+  const quoteSelector = 'blockquote, .gmail_quote, .gmail_quote_container'
+  const excluded = `${quoteSelector}, ${SIGNATURE_BLOCK_SELECTOR}`
+  const quote =
+    Array.from(editor.children).find(
+      (child) => child.matches(quoteSelector) || child.querySelector(quoteSelector)
+    ) ?? null
+  let preceding = quote ? quote.previousSibling : editor.lastChild
+  const inlineRun: Node[] = []
+  while (
+    preceding &&
+    (preceding.nodeType === Node.TEXT_NODE ||
+      (preceding instanceof HTMLElement &&
+        !preceding.matches(excluded) &&
+        !preceding.querySelector(excluded) &&
+        !isBlockElement(preceding)))
+  ) {
+    inlineRun.unshift(preceding)
+    preceding = preceding.previousSibling
+  }
+  if (inlineRun.length > 0) {
+    const paragraph = document.createElement('div')
+    editor.insertBefore(paragraph, inlineRun[0])
+    paragraph.append(...inlineRun)
+    return paragraph
+  }
+  if (
+    preceding instanceof HTMLElement &&
+    (preceding.tagName === 'DIV' || preceding.tagName === 'P') &&
+    !preceding.matches(excluded) &&
+    !preceding.querySelector(excluded)
+  )
+    return preceding
+  const paragraph = document.createElement('div')
+  paragraph.appendChild(document.createElement('br'))
+  editor.insertBefore(paragraph, quote)
+  return paragraph
 }
 
 function insertSignatureBlockInto(editor: HTMLDivElement, html: string, focusCaret: boolean): void {
@@ -234,12 +276,41 @@ function insertSignatureBlockInto(editor: HTMLDivElement, html: string, focusCar
   const block = document.createElement('div')
   block.className = SIGNATURE_BLOCK_CLASS
   block.innerHTML = (isVisuallyEmpty(editor) ? '' : '<br>') + html
+  const paragraph = signatureBodyParagraph(editor)
   editor.appendChild(block)
   if (!focusCaret) return
-  const index = Array.prototype.indexOf.call(editor.childNodes, block)
   const selection = window.getSelection()
-  if (selection) placeCaret(editor, selection, editor, Math.max(index, 0))
-  else editor.focus()
+  if (!selection) {
+    editor.focus()
+    return
+  }
+  let container = paragraph
+  let offset = container.childNodes.length
+  while (true) {
+    while (
+      offset > 0 &&
+      container.childNodes[offset - 1].nodeType === Node.TEXT_NODE &&
+      container.childNodes[offset - 1].textContent === ''
+    )
+      offset--
+    const last = container.childNodes[offset - 1]
+    if (
+      !(last instanceof HTMLElement) ||
+      last.tagName === 'BR' ||
+      last.tagName === 'IMG' ||
+      isBlockElement(last)
+    )
+      break
+    container = last
+    offset = container.childNodes.length
+  }
+  const last = container.childNodes[offset - 1]
+  if (last?.nodeName === 'BR') {
+    if (offset > 1 && last.previousSibling?.nodeName !== 'BR')
+      container.insertBefore(document.createElement('br'), container.childNodes[offset] ?? null)
+    else offset--
+  }
+  placeCaret(editor, selection, container, offset)
 }
 
 export const BodyEditor = forwardRef<BodyEditorHandle, BodyEditorProps>(function BodyEditor(

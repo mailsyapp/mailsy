@@ -10,6 +10,7 @@ import { constants } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { mkdirSync, writeFileSync } from 'node:fs'
+import { launchPackaged } from './packaged.mjs'
 
 const require2 = createRequire(new URL('../drive/', import.meta.url))
 const { chromium } = require2('playwright')
@@ -26,8 +27,9 @@ const FEATURE = arg('feature')
 const RUN_ID = arg('run-id')
 const PORT = arg('port')
 const SIGNED_OUT = process.argv.includes('--signed-out')
-if (!FEATURE || !RUN_ID || !PORT) {
-  console.error('usage: drive.mjs --feature <id> --run-id <id> --port <n> [--signed-out]')
+const EXECUTABLE = arg('executable')
+if (!FEATURE || !RUN_ID || (!PORT && !EXECUTABLE)) {
+  console.error('usage: drive.mjs --feature <id> --run-id <id> (--port <n> | --executable <packaged-binary>) [--signed-out]')
   process.exit(2)
 }
 // RUN_ID names the artifacts dir under the skill; refuse any value that
@@ -45,7 +47,8 @@ try {
 
 const ART = resolve(SKILL_DIR, 'artifacts', RUN_ID)
 mkdirSync(ART, { recursive: true })
-const logLines = [`command: drive.mjs --feature ${FEATURE} --run-id ${RUN_ID} --port ${PORT}${SIGNED_OUT ? ' --signed-out' : ''}`, `entry: http://127.0.0.1:${PORT}/`]
+let entry = EXECUTABLE ? resolve(EXECUTABLE) : `http://127.0.0.1:${PORT}/`
+const logLines = [`command: drive.mjs --feature ${FEATURE} --run-id ${RUN_ID} ${EXECUTABLE ? `--executable ${entry}` : `--port ${PORT}`}${SIGNED_OUT ? ' --signed-out' : ''}`, `entry: ${entry}`]
 const log = (m) => { logLines.push(m); console.log(m) }
 function assert(cond, okMsg, failMsg) {
   if (!cond) throw new Error(`ASSERT: ${failMsg}`)
@@ -119,27 +122,41 @@ async function bodyTextOf(editor) {
 
 async function snapshot(page, name) {
   const snap = await page.locator('body').ariaSnapshot()
-  writeFileSync(resolve(ART, `${name}.aria.txt`), `feature: ${FEATURE}\nentry: http://127.0.0.1:${PORT}/\n${snap}\n`)
+  writeFileSync(resolve(ART, `${name}.aria.txt`), `feature: ${FEATURE}\nentry: ${entry}\n${snap}\n`)
   await page.screenshot({ path: resolve(ART, `${name}.png`) })
   log(`evidence: ${name}.aria.txt + ${name}.png`)
 }
 
 let browser
+let exitCode = 0
 try {
-  browser = await chromium.launch()
-  const context = await browser.newContext()
-  await context.addInitScript({ path: MOCK })
-  if (SIGNED_OUT) {
-    await context.addInitScript(() => {
-      window.api.isSignedIn = async () => false
-      window.api.signIn = async () => { window.__signInClicked = true }
+  let page
+  if (EXECUTABLE) {
+    const packaged = await launchPackaged({
+      executablePath: resolve(EXECUTABLE), artifactDir: ART, mockPath: MOCK,
+      signedOut: SIGNED_OUT, clock: FEATURE === 'snooze-emulation' || FEATURE === 'background-work'
     })
+    browser = packaged.browser
+    page = packaged.page
+    entry = packaged.entry
+    log(`packaged: ${JSON.stringify(packaged.identity)}`)
+    log(`entry: ${entry}`)
+  } else {
+    browser = await chromium.launch()
+    const context = await browser.newContext()
+    await context.addInitScript({ path: MOCK })
+    if (SIGNED_OUT) {
+      await context.addInitScript(() => {
+        window.api.isSignedIn = async () => false
+        window.api.signIn = async () => { window.__signInClicked = true }
+      })
+    }
+    page = await context.newPage()
+    // Fast-forwarding journeys need fake timers installed before the app's
+    // intervals exist; other features run on real time, unchanged.
+    if (FEATURE === 'snooze-emulation' || FEATURE === 'background-work') await page.clock.install()
+    await page.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: 'domcontentloaded' })
   }
-  const page = await context.newPage()
-  // Fast-forwarding journeys need fake timers installed before the app's
-  // intervals exist; other features run on real time, unchanged.
-  if (FEATURE === 'snooze-emulation' || FEATURE === 'background-work') await page.clock.install()
-  await page.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: 'domcontentloaded' })
 
   if (FEATURE === 'sign-in') {
     const btn = page.getByRole('button', { name: 'Sign in with Google' })
@@ -208,6 +225,17 @@ try {
     await page.getByText('Launch checklist', { exact: true }).waitFor({ state: 'detached', timeout: 10000 })
     await page.getByText('Q3 budget draft').first().waitFor({ timeout: 10000 })
     assert(true, 'search "budget" surfaces the budget draft and filters the rest', 'filtering did not happen')
+    await page.getByText('End of results', { exact: true }).waitFor({ timeout: 10000 })
+    await box.fill('from:nobody@example.invalid')
+    await box.press('Enter')
+    await page.getByRole('status').filter({ hasText: 'No results for' }).waitFor({ timeout: 10000 })
+    assert(
+      (await page.getByText('End of results', { exact: true }).count()) === 0 &&
+        (await page.locator('.emails > li').count()) === 0,
+      'a zero-result search has no End of results footer or mail rows',
+      'a zero-result search retained the results footer or mail rows'
+    )
+    await snapshot(page, 'search-empty')
     await page.getByRole('button', { name: 'Clear search' }).click()
     await page.getByText('Launch checklist').first().waitFor({ timeout: 10000 })
     assert(true, 'clear restores the full inbox', 'inbox not restored after clear')
@@ -2098,6 +2126,28 @@ try {
       'label-apply modifyLabels side effect not recorded'
     )
     await snapshot(page, 'labels')
+    await rail.getByRole('button', { name: 'Labels', exact: true }).click()
+    await rail.getByRole('button', { name: 'Receipts', exact: true }).click()
+    const labelList = page.getByRole('complementary', { name: 'Receipts', exact: true })
+    await labelList.getByText('Receipts for March travel', { exact: true }).first().waitFor()
+    assert(
+      (await labelList.getByText('No mail with this label', { exact: true }).count()) === 0,
+      'a populated label has no empty-state footer',
+      'a populated label also shows the empty state'
+    )
+    await snapshot(page, 'labels-populated')
+    await labelList.getByText('Receipts for March travel', { exact: true }).first().click()
+    if ((await content.getByRole('group', { name: 'Apply labels' }).count()) === 0) {
+      await content.getByRole('button', { name: 'Labels', exact: true }).click()
+    }
+    await content.getByRole('checkbox', { name: 'Receipts', exact: true }).click()
+    await labelList.getByText('No mail with this label', { exact: true }).waitFor()
+    assert(
+      (await labelList.getByText('Receipts for March travel', { exact: true }).count()) === 0,
+      'removing the last labeled thread shows only the empty state',
+      'the empty label retained a thread'
+    )
+    await snapshot(page, 'labels-empty')
   } else if (FEATURE === 'refresh') {
     // The live refresh channel: the Refresh button must acknowledge a
     // click instantly, dedupe in-flight clicks, and surface failures;
@@ -2235,7 +2285,9 @@ try {
       'the signature block did not appear in the body'
     )
     // Typing above the signature leaves the block alone at the end.
-    await typeAtStart(content.locator('.body-editor'), 'Hello from Mailsy.\n')
+    await content.locator('.body-editor').click()
+    await content.locator('.body-editor').press('Control+Home')
+    await content.locator('.body-editor').pressSequentially('Hello from Mailsy.')
     const freshBody = await bodyTextOf(content.locator('.body-editor'))
     assert(
       freshBody.includes('Hello from Mailsy.') && freshBody.includes('Analytical Engine Dept.'),
@@ -2243,6 +2295,15 @@ try {
       'typing disturbed the signature block'
     )
     await snapshot(page, 'signature-compose')
+    await toggle.click()
+    assert(
+      (await bodyTextOf(content.locator('.body-editor'))).includes('Hello from Mailsy.') &&
+        !(await bodyTextOf(content.locator('.body-editor'))).includes('Analytical Engine Dept.'),
+      'Ctrl+Home body text survives signature removal',
+      'signature removal deleted the body text or retained the signature'
+    )
+    await snapshot(page, 'signature-removed')
+    await toggle.click()
     await content.locator('.composerField input').first().fill('ada@example.com')
     await content.locator('.composerField input').nth(1).fill('Signature check')
     await content.getByRole('button', { name: 'Send', exact: true }).click()
@@ -2274,6 +2335,296 @@ try {
       'the auto-insert left the body empty'
     )
     // The autosave round trip: the block rides the draft payload...
+    const autoBody = content.getByRole('textbox', { name: 'Message', exact: true })
+    const firstSignatureHtml = await autoBody.innerHTML()
+    const signatureOffset = () => autoBody.evaluate((editor) =>
+      editor.querySelector('.mailsy-signature').getBoundingClientRect().top -
+        editor.getBoundingClientRect().top
+    )
+    const firstSignatureOffset = await signatureOffset()
+    const savesBeforeRemoval = await page.evaluate(() => (window.__draftSaves ?? []).length)
+    await toggle.click()
+    assert(
+      (await autoBody.innerHTML()) === '' &&
+        (await autoBody.getAttribute('data-empty')) !== null &&
+        (await autoBody.evaluate((editor) => getComputedStyle(editor, '::before').content)) ===
+          '"Type your message..."',
+      'removing an untouched signature restores the empty body and placeholder',
+      'removing an untouched signature left body markup or hid the placeholder'
+    )
+    await page.waitForTimeout(2500)
+    assert(
+      (await page.evaluate(() => (window.__draftSaves ?? []).length)) === savesBeforeRemoval,
+      'an untouched signature toggled off saves no draft after 2500ms',
+      'an empty draft was autosaved after signature removal'
+    )
+    await snapshot(page, 'signature-empty')
+    await toggle.click()
+    assert(
+      (await autoBody.innerHTML()) === firstSignatureHtml &&
+        Math.abs((await signatureOffset()) - firstSignatureOffset) < 0.5,
+      'off/on restores the original signature structure and position',
+      'off/on added signature spacing or changed its structure'
+    )
+    await snapshot(page, 'signature-reinserted')
+    await autoBody.pressSequentially('Normal typing stays.')
+    await toggle.click()
+    assert(
+      (await bodyTextOf(autoBody)).includes('Normal typing stays.') &&
+        !(await bodyTextOf(autoBody)).includes('Analytical Engine Dept.'),
+      'normal typing survives signature removal',
+      'signature removal deleted normally typed text or kept the signature'
+    )
+    await autoBody.evaluate((editor) => {
+      editor.replaceChildren(document.createTextNode('A continuous'))
+      editor.dispatchEvent(new InputEvent('input', { bubbles: true }))
+    })
+    assert(
+      await autoBody.evaluate((editor) =>
+        editor.childNodes.length === 1 && editor.firstChild.nodeType === Node.TEXT_NODE
+      ),
+      'the sentence starts as a bare top-level text node',
+      'the bare-text caret regression precondition was not met'
+    )
+    await toggle.click()
+    await autoBody.pressSequentially(' sentence.')
+    assert(
+      await autoBody.evaluate((editor) =>
+        editor.childNodes.length === 2 &&
+        editor.firstChild.nodeName === 'DIV' &&
+        editor.firstChild.textContent === 'A continuous sentence.' &&
+        !editor.firstChild.querySelector('div, p, br') &&
+        editor.lastChild.matches('.mailsy-signature')
+      ),
+      'continuing bare body text after signature insertion adds no DIV or BR to the sentence',
+      'signature insertion split the body sentence across lines or typed inside the signature'
+    )
+    await snapshot(page, 'signature-bare-text')
+    await toggle.click()
+    await autoBody.evaluate((editor) => {
+      const inline = document.createElement('strong')
+      inline.textContent = 'Inline sentence'
+      editor.replaceChildren(inline)
+      editor.dispatchEvent(new InputEvent('input', { bubbles: true }))
+    })
+    assert(
+      await autoBody.evaluate((editor) =>
+        editor.childNodes.length === 1 &&
+        editor.firstChild.nodeType === Node.ELEMENT_NODE &&
+        getComputedStyle(editor.firstChild).display === 'inline'
+      ),
+      'the inline sentence is a top-level formatted element',
+      'the inline-element caret regression precondition was not met'
+    )
+    await toggle.click()
+    await autoBody.pressSequentially(' continues.')
+    assert(
+      await autoBody.evaluate((editor) => {
+        const body = editor.cloneNode(true)
+        body.querySelector('.mailsy-signature').remove()
+        return body.textContent === 'Inline sentence continues.' &&
+          body.children.length === 1 && body.firstElementChild.tagName === 'DIV' &&
+          !body.firstElementChild.querySelector('div, p, br')
+      }),
+      'continuing inline body content after signature insertion adds no line break',
+      'signature insertion split inline body content across lines or entered the signature'
+    )
+    await snapshot(page, 'signature-inline-text')
+    await toggle.click()
+    const assertWhitespaceParity = async (body, signatureToggle, surface) => {
+      const wasPressed = (await signatureToggle.getAttribute('aria-pressed')) === 'true'
+      if (wasPressed) await signatureToggle.click()
+      const originalHtml = await body.innerHTML()
+      const quoteHtml = await body.locator('.gmail_quote_container').evaluateAll(
+        (quotes) => quotes.map((quote) => quote.outerHTML)
+      )
+      for (const { html, text, visibleText, evidence } of [
+        { html: '<b>Label:</b> ', text: 'Label: ', visibleText: 'Label: ', evidence: 'label-space' },
+        { html: 'Line<br>  ', text: 'Line  ', visibleText: 'Line\n  ', evidence: 'br-indent' }
+      ]) {
+        await body.evaluate((editor, html) => {
+          const quoteSelector = 'blockquote, .gmail_quote, .gmail_quote_container'
+          const quotes = Array.from(editor.children).filter(
+            (node) => node.matches(quoteSelector) || node.querySelector(quoteSelector)
+          )
+          const template = document.createElement('template')
+          template.innerHTML = html
+          editor.replaceChildren(...template.content.childNodes, ...quotes)
+          editor.dispatchEvent(new InputEvent('input', { bubbles: true }))
+        }, html)
+        await signatureToggle.click()
+        await body.pressSequentially('Plain continuation.')
+        for (const signed of [true, false]) {
+          if (!signed) await signatureToggle.click()
+          assert(
+            (await body.locator('.mailsy-signature').count()) === (signed ? 1 : 0),
+            `${surface}: ${evidence} signature block ${signed ? 'exists when on' : 'is gone after removal'}`,
+            `${surface}: ${evidence} signature block did not match the toggle state`
+          )
+          assert(
+            await body.evaluate((editor, { text, visibleText, quoteHtml }) => {
+              const ownBody = editor.firstElementChild
+              const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT)
+              let continuation = walker.nextNode()
+              while (continuation && !continuation.textContent.includes('Plain continuation.'))
+                continuation = walker.nextNode()
+              return ownBody.textContent === `${text}Plain continuation.` &&
+                ownBody.innerText.trimEnd() === `${visibleText}Plain continuation.` &&
+                JSON.stringify(Array.from(editor.querySelectorAll('.gmail_quote_container'),
+                  (quote) => quote.outerHTML)) === JSON.stringify(quoteHtml) &&
+                continuation && !continuation.parentElement.closest('b, strong, .mailsy-signature') &&
+                Number(getComputedStyle(continuation.parentElement).fontWeight) < 600
+            }, { text, visibleText, quoteHtml }),
+            evidence === 'label-space'
+              ? `${surface}: bold label + space stays spaced and unbold (${signed ? 'signature on' : 'signature removed'})`
+              : `${surface}: BR + spaces preserves indentation (${signed ? 'signature on' : 'signature removed'})`,
+            `${surface}: signature insertion skipped meaningful whitespace, inherited bold, or changed the quote`
+          )
+        }
+        await snapshot(page, `signature-${surface}-${evidence}`)
+      }
+      await body.evaluate((editor, html) => {
+        editor.innerHTML = html
+        editor.dispatchEvent(new InputEvent('input', { bubbles: true }))
+      }, originalHtml)
+      if (wasPressed) await signatureToggle.click()
+    }
+    await assertWhitespaceParity(autoBody, toggle, 'compose')
+    for (const enters of [1, 2]) {
+      await autoBody.evaluate((editor) => {
+        editor.replaceChildren(document.createTextNode('Line start'))
+        editor.dispatchEvent(new InputEvent('input', { bubbles: true }))
+      })
+      await autoBody.press('Control+End')
+      for (let i = 0; i < enters; i++) await autoBody.press('Enter')
+      await toggle.click()
+      await autoBody.pressSequentially('Line continuation.')
+      await toggle.click()
+      const text = (await bodyTextOf(autoBody)).trimEnd()
+      assert(
+        text === `Line start${'\n'.repeat(enters)}Line continuation.`,
+        `${enters} Enter(s) before signature insertion preserves typed text on the new line`,
+        `${enters} Enter(s) misplaced or deleted text after signature removal: ${JSON.stringify(text)}`
+      )
+      await snapshot(page, `signature-enter-${enters}`)
+    }
+    for (const breaks of [1, 2]) {
+      await autoBody.evaluate((editor, count) => {
+        const inline = document.createElement('strong')
+        inline.append(document.createTextNode('Inline line'))
+        for (let i = 0; i < count; i++) inline.append(document.createElement('br'))
+        editor.replaceChildren(inline)
+        editor.dispatchEvent(new InputEvent('input', { bubbles: true }))
+      }, breaks)
+      await toggle.click()
+      await autoBody.pressSequentially('Inline continuation.')
+      await toggle.click()
+      const text = (await bodyTextOf(autoBody)).trimEnd()
+      assert(
+        text === 'Inline line\nInline continuation.',
+        `inline content ending in ${breaks} BR(s) keeps continuation outside the removed signature`,
+        `inline trailing BR(s) misplaced or deleted continuation: ${JSON.stringify(text)}`
+      )
+      await snapshot(page, `signature-inline-break-${breaks}`)
+    }
+    await autoBody.fill('')
+    const pasteSignatureImage = () => autoBody.evaluate((editor) => {
+      const bytes = Uint8Array.from(
+        atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='),
+        (character) => character.charCodeAt(0)
+      )
+      const clipboardData = new DataTransfer()
+      clipboardData.items.add(new File([bytes], 'signature-image.png', { type: 'image/png' }))
+      editor.dispatchEvent(new ClipboardEvent('paste', { clipboardData, bubbles: true }))
+    })
+    await pasteSignatureImage()
+    await autoBody.locator(':scope > img').waitFor({ timeout: 10000 })
+    await toggle.click()
+    await autoBody.pressSequentially('Typing after the image.')
+    assert(
+      await autoBody.evaluate((editor) => {
+        const image = editor.querySelector('img')
+        const signature = editor.querySelector('.mailsy-signature')
+        const paragraph = Array.from(editor.children).find((node) =>
+          node.textContent.includes('Typing after the image.')
+        )
+        const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT)
+        let continuation = walker.nextNode()
+        while (continuation && !continuation.textContent.includes('Typing after the image.'))
+          continuation = walker.nextNode()
+        return paragraph && continuation && !paragraph.contains(signature) &&
+          !signature.contains(paragraph) &&
+          Boolean(image.compareDocumentPosition(continuation) & Node.DOCUMENT_POSITION_FOLLOWING) &&
+          Boolean(paragraph.compareDocumentPosition(signature) & Node.DOCUMENT_POSITION_FOLLOWING)
+      }),
+      'signature insertion types after a trailing inline image and before the signature',
+      'signature insertion typed before the inline image or inside the signature'
+    )
+    await snapshot(page, 'signature-image-caret')
+    await toggle.click()
+    assert(
+      (await bodyTextOf(autoBody)).includes('Typing after the image.') &&
+        (await autoBody.locator('img').count()) === 1,
+      'typing after a trailing image survives signature removal',
+      'signature removal deleted text typed after the trailing image'
+    )
+    for (const { existingTail, wrapImage, evidence } of [
+      { existingTail: '', evidence: 'empty-tail' },
+      { existingTail: 'Existing tail.', evidence: 'sentence' },
+      { existingTail: '', wrapImage: true, evidence: 'wrapped-whitespace' }
+    ]) {
+      await autoBody.evaluate((editor) => {
+        editor.replaceChildren(document.createTextNode('Before image.'))
+        editor.dispatchEvent(new InputEvent('input', { bubbles: true }))
+      })
+      await autoBody.press('Control+End')
+      await pasteSignatureImage()
+      await autoBody.locator(':scope > img').waitFor({ timeout: 10000 })
+      assert(
+        await autoBody.evaluate((editor) => {
+          const tail = editor.querySelector('img').nextSibling
+          return tail?.nodeType === Node.TEXT_NODE && tail.textContent === ''
+        }),
+        'pasting after bare text leaves the native empty trailing text node',
+        'the empty-node image regression precondition was not met'
+      )
+      if (wrapImage) await autoBody.evaluate((editor) => {
+        const image = editor.querySelector('img')
+        const inline = document.createElement('span')
+        image.replaceWith(inline)
+        inline.append(image, document.createTextNode(' \t '))
+        editor.append(document.createTextNode(' \t '))
+        editor.dispatchEvent(new InputEvent('input', { bubbles: true }))
+      })
+      if (existingTail) await autoBody.pressSequentially(existingTail)
+      await toggle.click()
+      await autoBody.pressSequentially('Continued after toggling.')
+      await toggle.click()
+      assert(
+        await autoBody.evaluate((editor, { tail, wrapImage }) => {
+          const body = editor.firstElementChild
+          const image = body.querySelector('img')
+          const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT)
+          let continuation = walker.nextNode()
+          while (continuation && !continuation.textContent.includes('Continued after toggling.'))
+            continuation = walker.nextNode()
+          return editor.childNodes.length === 1 && body.tagName === 'DIV' &&
+            !body.querySelector('div, p, br, .mailsy-signature') &&
+            body.querySelectorAll('img').length === 1 &&
+            body.textContent === `Before image.${wrapImage ? ' \t  \t ' : ''}${tail}Continued after toggling.` &&
+            editor.innerText.trimEnd() === body.textContent.trimEnd() && continuation &&
+            Boolean(image.compareDocumentPosition(continuation) & Node.DOCUMENT_POSITION_FOLLOWING)
+        }, { tail: existingTail, wrapImage }),
+        wrapImage
+          ? 'image-containing inline content preserves trailing whitespace before subsequent typing'
+          : existingTail
+          ? 'text/image/text stays on one line and survives signature toggling'
+          : 'text plus pasted image keeps subsequent typing in the body after signature removal',
+        'signature toggling split the image sentence or deleted the continuation'
+      )
+      await snapshot(page, `signature-image-${evidence}`)
+    }
+    await toggle.click()
     const savesBefore = await page.evaluate(() => (window.__draftSaves ?? []).length)
     await content.locator('.composerField input').first().fill('brook@example.com')
     await content.locator('.composerField input').nth(1).fill('Draft with signature')
@@ -2321,6 +2672,23 @@ try {
       'the stored text survives the per-message removal',
       'per-message removal wiped the stored signature'
     )
+    await toggle.click()
+    await content.locator('.body-editor').pressSequentially(' Continuing the reopened draft.')
+    assert(
+      await content.locator('.body-editor').evaluate((editor) => {
+        const signature = editor.querySelector('.mailsy-signature')
+        const body = Array.from(editor.childNodes).find((node) =>
+          node.textContent.includes('Continuing the reopened draft.')
+        )
+        return body && body !== signature && !signature.contains(body) &&
+          Boolean(body.compareDocumentPosition(signature) & Node.DOCUMENT_POSITION_FOLLOWING)
+      }),
+      'reopened draft off/on typing stays in the body before the signature',
+      'reopened draft typing after reinsertion entered the signature or left the body'
+    )
+    await snapshot(page, 'signature-draft-caret')
+    await toggle.click()
+    await assertWhitespaceParity(content.getByRole('textbox', { name: 'Message', exact: true }), toggle, 'reopened-draft')
     await content.getByRole('button', { name: 'Send', exact: true }).click()
     await content.getByText('Message sent.').waitFor({ timeout: 10000 })
     const draftSent = await page.evaluate(() => window.__sent)
@@ -2347,6 +2715,7 @@ try {
       'the reply composer starts without the block',
       'the reply opened with a signature it was never asked to add'
     )
+    const originalQuote = await page.locator('.body-editor .gmail_quote_container').innerHTML()
     await replyToggle.click()
     assert(
       (await replyToggle.getAttribute('aria-pressed')) === 'true' &&
@@ -2354,7 +2723,23 @@ try {
       'the reply surface appends the signature',
       'the reply toggle did not insert'
     )
-    await typeAtStart(page.locator('.body-editor'), 'Replying with my signature.\n\n')
+    await page.locator('.body-editor').pressSequentially('Replying with my signature.')
+    assert(
+      (await page.locator('.body-editor .gmail_quote_container').innerHTML()) === originalQuote &&
+        !(await page.locator('.body-editor .mailsy-signature').textContent()).includes('Replying with my signature.') &&
+        await page.locator('.body-editor').evaluate((editor) => {
+          const ownBody = Array.from(editor.children).find((node) =>
+            node.textContent.includes('Replying with my signature.')
+          )
+          return Boolean(ownBody &&
+            (ownBody.compareDocumentPosition(editor.querySelector('.gmail_quote_container')) &
+              Node.DOCUMENT_POSITION_FOLLOWING))
+        }),
+      'reply typing after signature insertion stays above and outside the unchanged quote',
+      'reply typing entered the quote or signature, or landed below the quote'
+    )
+    await snapshot(page, 'signature-reply-caret')
+    await assertWhitespaceParity(page.getByRole('textbox', { name: 'Message', exact: true }), replyToggle, 'reply')
     await page.getByRole('button', { name: 'Send', exact: true }).click()
     await page.getByRole('status').getByText('Message sent.').waitFor({ timeout: 10000 })
     const replySent = await page.evaluate(() => window.__sent)
@@ -2369,6 +2754,20 @@ try {
       'the reply lost the quote or the signature'
     )
     await snapshot(page, 'signature')
+    await page.getByRole('button', { name: 'forward', exact: true }).click()
+    await page.getByRole('heading', { name: 'Compose email' }).waitFor({ timeout: 10000 })
+    const forwardQuote = await page.locator('.body-editor .gmail_quote_container').innerHTML()
+    await page.getByRole('button', { name: 'Signature', exact: true }).click()
+    await page.locator('.body-editor').pressSequentially('Forwarding outside the quote.')
+    assert(
+      (await page.locator('.body-editor .gmail_quote_container').innerHTML()) === forwardQuote &&
+        !(await page.locator('.body-editor .mailsy-signature').textContent()).includes('Forwarding outside the quote.') &&
+        (await bodyTextOf(page.locator('.body-editor'))).includes('Forwarding outside the quote.'),
+      'forward typing after signature insertion leaves the quote and signature unchanged',
+      'forward typing entered the quote or signature'
+    )
+    await snapshot(page, 'signature-forward-caret')
+    await assertWhitespaceParity(page.getByRole('textbox', { name: 'Message', exact: true }), replyToggle, 'forward')
   } else if (FEATURE === 'background-work') {
     const inbox = page.getByRole('complementary', { name: 'Inbox' })
     await inbox.waitFor({ timeout: 10000 })
@@ -2377,8 +2776,9 @@ try {
 
     await page.evaluate(() => {
       window.__queries = []
-      const listFolder = window.api.listFolder
-      window.api.listFolder = (options = {}) => {
+      const api = window.__packagedFixtureApi ?? window.api
+      const listFolder = api.listFolder
+      api.listFolder = (options = {}) => {
         if (options.q) window.__queries.push(options.q)
         return listFolder(options)
       }
@@ -2500,13 +2900,25 @@ try {
   } else {
     throw new Error(`unknown feature: ${FEATURE}`)
   }
-  log(`RESULT pass feature=${FEATURE}`)
 } catch (e) {
   log(`RESULT fail feature=${FEATURE} reason=${e instanceof Error ? e.message : String(e)}`)
+  exitCode = e instanceof Error && e.message.startsWith('ASSERT') ? 1 : 2
+} finally {
+  if (EXECUTABLE && browser) {
+    try {
+      const proof = await browser.evaluate(() => globalThis.__packagedVerification)
+      writeFileSync(resolve(ART, 'packaged.json'), JSON.stringify({ ...proof, entry }, null, 2))
+      log(`packaged IPC: ${JSON.stringify(proof.counts)}`)
+    } catch (error) {
+      log(`infra: could not record final packaged IPC: ${error instanceof Error ? error.message : String(error)}`)
+      if (exitCode === 0) {
+        exitCode = 2
+        log(`RESULT fail feature=${FEATURE} reason=final packaged IPC evidence unavailable`)
+      }
+    }
+  }
+  if (exitCode === 0) log(`RESULT pass feature=${FEATURE}`)
   writeFileSync(resolve(ART, `${FEATURE}.log`), logLines.join('\n') + '\n')
   await browser?.close()
-  process.exit(e instanceof Error && e.message.startsWith('ASSERT') ? 1 : 2)
 }
-writeFileSync(resolve(ART, `${FEATURE}.log`), logLines.join('\n') + '\n')
-await browser?.close()
-process.exit(0)
+process.exit(exitCode)
