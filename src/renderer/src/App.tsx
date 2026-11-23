@@ -319,13 +319,27 @@ function App(): React.JSX.Element {
     invalidatePageCursor()
     removeListRow(listRowKey({ id: threadId }))
   }
+
+  function updateThreadLists(
+    update: (rows: ThreadSummary[], query: string, view: string) => ThreadSummary[],
+    invalidateQuery?: string
+  ): void {
+    setThreads((prev) => update(prev, committedQuery, viewKey))
+    for (const [view, pages] of searchPageCacheRef.current) {
+      for (const [query, page] of pages) {
+        if (query.trim().toLowerCase() === invalidateQuery) pages.delete(query)
+        else pages.set(query, { ...page, threads: update(page.threads, query, view) })
+      }
+    }
+  }
+
   function handleThreadReadChanged(threadId: string, unread: boolean): void {
     function updateRead(row: ThreadSummary): ThreadSummary {
       if (row.id !== threadId) return row
       const next = unread ? row.messageIds.length : 0
       return row.unreadCount === next ? row : { ...row, unreadCount: next }
     }
-    setThreads((prev) => prev.map(updateRead))
+    updateThreadLists((rows) => rows.map(updateRead))
     setOpened((prev) => {
       if (!prev) return prev
       const row = updateRead(prev.row)
@@ -361,20 +375,32 @@ function App(): React.JSX.Element {
     write.then(() => handleThreadRemoved(row.id)).catch((e: unknown) => recordError(e))
   }
   function handleThreadStarChanged(threadId: string, starred: boolean): void {
-    if (activeFolder === 'starred' && !starred) invalidatePageCursor()
+    if (
+      !starred &&
+      (activeFolder === 'starred' || committedQuery.trim().toLowerCase() === 'is:starred')
+    )
+      invalidatePageCursor()
     function updateStar(row: ThreadSummary): ThreadSummary {
       return row.id === threadId && row.starred !== starred ? { ...row, starred } : row
     }
-    setThreads((prev) =>
-      activeFolder === 'starred' && !starred
-        ? prev.filter((e) => e.id !== threadId)
-        : prev.map(updateStar)
+    updateThreadLists(
+      (rows, query, view) =>
+        !starred && (view === 'starred' || query.trim().toLowerCase() === 'is:starred')
+          ? rows.filter((e) => e.id !== threadId)
+          : rows.map((e) => (e.id === threadId && e.starred !== starred ? { ...e, starred } : e)),
+      'is:starred'
     )
     setOpened((prev) => {
       if (!prev) return prev
       const row = updateStar(prev.row)
       return row === prev.row ? prev : { ...prev, row }
     })
+    if (
+      !starred &&
+      (viewKey === 'starred' || committedQuery.trim().toLowerCase() === 'is:starred') &&
+      selectionRef.current === listRowKey({ id: threadId })
+    )
+      closeEmail()
   }
   function handleRowStarToggle(row: ThreadSummary): void {
     window.api

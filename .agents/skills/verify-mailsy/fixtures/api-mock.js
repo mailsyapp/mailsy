@@ -562,6 +562,7 @@
         const inInbox = (m.labelIds ?? []).includes('INBOX')
         if (tok === 'in:inbox') return inInbox
         if (tok === '-in:inbox') return !inInbox
+        if (tok === 'is:starred') return (m.labelIds ?? []).includes('STARRED')
         if (tok === 'is:unread') return (m.labelIds ?? []).includes('UNREAD')
         return hay.includes(tok)
       })
