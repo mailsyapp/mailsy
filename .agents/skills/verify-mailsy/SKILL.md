@@ -135,7 +135,8 @@ RUN_ID=packaged-targeted .agents/skills/verify-mailsy/scripts/run-all.sh \
   --features draft-attachments-safe,drafts,search-state,snooze-wake
 ```
 
-Omit `--features` to run every feature; unknown or empty IDs are rejected.
+Omit `--features` to run every feature. IDs can be separated by commas or
+whitespace; empty lists, unknown IDs and duplicate IDs are rejected.
 The runner prints pass/fail totals and applies `--signed-out` only to the
 sign-in journey. Transcripts and preflight live in `artifacts/<run-id>/`; each journey's screenshots,
 profile and final IPC counts live in `artifacts/<run-id>-<feature>/`.

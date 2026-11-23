@@ -21,18 +21,25 @@ while [ "$#" -gt 0 ]; do
 done
 features=()
 if [ -n "$FEATURES" ]; then
-  if [[ "$FEATURES" == *, ]]; then
-    echo "empty feature ID" >&2
-    exit 2
-  fi
-  IFS=',' read -r -a features <<< "$FEATURES"
-  for feature in "${features[@]}"; do
+  while IFS= read -r feature; do
+    [ -n "$feature" ] || continue
     if [[ ! "$feature" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]] ||
       [ ! -f "$SKILL_DIR/features/$feature.md" ]; then
       echo "unknown feature: $feature" >&2
       exit 2
     fi
-  done
+    for selected in "${features[@]}"; do
+      if [ "$feature" = "$selected" ]; then
+        echo "duplicate feature: $feature" >&2
+        exit 2
+      fi
+    done
+    features+=("$feature")
+  done < <(printf '%s\n' "$FEATURES" | tr ',[:space:]' '\n')
+  if [ "${#features[@]}" -eq 0 ]; then
+    echo "empty feature list" >&2
+    exit 2
+  fi
 else
   for file in "$SKILL_DIR"/features/*.md; do
     feature="$(basename "$file" .md)"
