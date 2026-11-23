@@ -157,11 +157,19 @@ export interface SaveDraftRequest extends SendEmailRequest {
   draftId?: string
   expectedMessageId?: string
   copyOnConflict?: boolean
+  retainAttachments?: { messageId: string; refs: MessageAttachmentRef[] }
 }
 export interface DraftVersion {
   draftId: string
   messageId: string
 }
+
+export type SaveDraftResult = {
+  draftId: string
+  previousMessageId?: string
+  retainedAttachments: { previousAttachmentId: string; ref: MessageAttachmentRef }[]
+} & ({ messageId: string; refsStale?: false } | { messageId?: string; refsStale: true })
+
 export interface ModifyLabelsRequest {
   kind: 'message' | 'thread'
   id: string

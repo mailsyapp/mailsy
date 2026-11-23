@@ -311,7 +311,7 @@ try {
   if (EXECUTABLE) {
     const packaged = await launchPackaged({
       executablePath: resolve(EXECUTABLE), artifactDir: ART, mockPath: MOCK,
-      signedOut: SIGNED_OUT, clock: FEATURE === 'snooze-emulation' || FEATURE === 'background-work' || FEATURE === 'delete-draft'
+      signedOut: SIGNED_OUT, clock: FEATURE === 'snooze-emulation' || FEATURE === 'background-work' || FEATURE === 'delete-draft' || FEATURE === 'draft-attachments-safe'
     })
     browser = packaged.browser
     page = packaged.page
@@ -331,7 +331,7 @@ try {
     page = await context.newPage()
     // Fast-forwarding journeys need fake timers installed before the app's
     // intervals exist; other features run on real time, unchanged.
-    if (FEATURE === 'snooze-emulation' || FEATURE === 'background-work' || FEATURE === 'delete-draft') await page.clock.install()
+    if (FEATURE === 'snooze-emulation' || FEATURE === 'background-work' || FEATURE === 'delete-draft' || FEATURE === 'draft-attachments-safe') await page.clock.install()
     await page.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: 'domcontentloaded' })
   }
 
@@ -704,6 +704,468 @@ try {
       'fresh send was misshapen as a reply or draft'
     )
     await snapshot(page, 'compose-new')
+  } else if (FEATURE === 'draft-attachments-safe') {
+    const content = page.getByRole('region', { name: 'Email content' })
+    const send = content.getByRole('button', { name: 'Send', exact: true })
+    const pick = content.getByRole('button', { name: 'Attach files', exact: true })
+    await page.getByText('Launch checklist', { exact: true }).first().waitFor()
+    await page.clock.pauseAt(await page.evaluate(() => Date.now() + 60_000))
+
+    for (const scenario of [
+      'loading',
+      'rotate',
+      'rotate-queued',
+      'edit',
+      'remove',
+      'retry',
+      'save-error',
+      'limit',
+      'limit-draft',
+      'limit-reply',
+      'limit-forward'
+    ]) {
+      if (arg('attachment-case') && arg('attachment-case') !== scenario) continue
+      if (scenario !== 'loading') {
+        await page.reload()
+        await page.getByText('Launch checklist', { exact: true }).first().waitFor()
+      }
+      if (!scenario.startsWith('limit')) {
+        await page.evaluate(
+          (mode) => {
+            const getAttachment = (window.__packagedFixtureApi ?? window.api).getAttachment
+            const pickAttachments = (window.__packagedFixtureApi ?? window.api).pickAttachments
+            window.__readStoredAttachment = getAttachment
+            window.__attachmentMode = mode
+            window.__attachmentReads = 0
+            window.__attachmentPicks = 0
+            ;(window.__packagedFixtureApi ?? window.api).getAttachment = async (...args) => {
+              window.__attachmentReads++
+              if (window.__attachmentMode === 'fail')
+                throw new Error('Fixture attachment unavailable')
+              const data = await getAttachment(...args)
+              if (window.__attachmentMode === 'hold') {
+                return new Promise((resolve) => {
+                  window.__releaseAttachment = () => resolve(data)
+                })
+              }
+              return data
+            }
+            ;(window.__packagedFixtureApi ?? window.api).pickAttachments = async () => {
+              window.__attachmentPicks++
+              return pickAttachments()
+            }
+          },
+          scenario === 'loading' ? 'hold' : 'fail'
+        )
+        await page
+          .getByRole('navigation', { name: 'Mail folders' })
+          .getByRole('button', { name: 'Drafts', exact: true })
+          .click()
+        await page
+          .getByRole('complementary', { name: 'Drafts' })
+          .getByRole('button', {
+            name: scenario.startsWith('rotate')
+              ? /^Draft: rotating originals/
+              : /^Draft: Q4 attachments/
+          })
+          .click()
+        await content.getByLabel('Subject', { exact: true }).waitFor()
+      }
+      if (scenario === 'loading') {
+        await page.waitForFunction(() => typeof window.__releaseAttachment === 'function')
+        await content.getByLabel('Subject', { exact: true }).fill('Held attachment draft')
+        await page.clock.fastForward(1800)
+        await snapshot(page, 'draft-attachments-loading')
+        assert(
+          (await send.isDisabled()) &&
+            (await page.evaluate(() =>
+              window.__draftSaves.some(
+                (save) =>
+                  save.subject === 'Held attachment draft' &&
+                  save.retainAttachments?.refs[0]?.filename === 'q4.xlsx'
+              )
+            )),
+          'autosave while loading carries retained originals and keeps Send blocked',
+          'autosave while loading did not retain originals'
+        )
+        assert(
+          await page.evaluate(async () => {
+            const stored = await (window.__packagedFixtureApi ?? window.api).getMessage(window.__draftSaves.at(-1).messageId)
+            const ref = stored.attachments[0]
+            return (
+              stored.subject === 'Held attachment draft' &&
+              stored.attachments.length === 1 &&
+              ref.filename === 'q4.xlsx' &&
+              (await window.__readStoredAttachment(stored.id, ref.attachmentId)) ===
+                'UTQgcGxhbm5pbmcgZGF0YQ=='
+            )
+          }),
+          'the save made during loading preserves stored original bytes',
+          'the save made during loading stripped original bytes'
+        )
+        assert(
+          await pick.isDisabled(),
+          'picking is disabled until originals load',
+          'picking is enabled during prefill'
+        )
+        await pick.evaluate((button) => button.click())
+        await content.locator('form.composer').evaluate((form) => form.requestSubmit())
+        assert(
+          (await page.evaluate(() => window.__attachmentPicks)) === 0 &&
+            (await page.evaluate(() => window.__sent.length)) === 0,
+          'blocked controls cannot pick or send before prefill settles',
+          'a blocked pick or submit reached the boundary'
+        )
+        await content.locator('form.composer').evaluate((form) => {
+          const dataTransfer = new DataTransfer()
+          dataTransfer.items.add(new File(['held drop'], 'held.txt', { type: 'text/plain' }))
+          form.dispatchEvent(
+            new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer })
+          )
+        })
+        await content.getByRole('alert').filter({ hasText: 'still loading' }).waitFor()
+        await page.evaluate(() => window.__releaseAttachment())
+        await content.getByRole('button', { name: 'Remove q4.xlsx', exact: true }).waitFor()
+        await pick.click()
+        await content
+          .getByRole('button', { name: 'Remove fixture-file.pdf', exact: true })
+          .waitFor()
+        await send.click()
+        await content.getByText('Message sent.', { exact: true }).waitFor()
+        assert(
+          await page.evaluate(() => {
+            const files = window.__sent[0]?.attachments ?? []
+            return (
+              window.__attachmentPicks === 1 &&
+              files.length === 2 &&
+              files.some(
+                (file) => file.filename === 'q4.xlsx' && file.data === 'UTQgcGxhbm5pbmcgZGF0YQ=='
+              ) &&
+              files.some(
+                (file) => file.filename === 'fixture-file.pdf' && file.data === 'Zml4dHVyZQ=='
+              )
+            )
+          }),
+          'picking after loading sends both the original and the picked bytes',
+          'loading or picking lost attachment bytes'
+        )
+      } else if (scenario === 'rotate') {
+        await content.getByRole('button', { name: 'Retry first.bin', exact: true }).waitFor()
+        await content.getByLabel('Subject', { exact: true }).fill('Rotated once')
+        await page.clock.fastForward(1800)
+        await page.waitForFunction(() => window.__draftSaves.length === 1)
+        await page.clock.fastForward(3600)
+        assert(
+          await page.evaluate(() => window.__draftSaves.length === 1),
+          'adopting replacement refs does not create an autosave loop',
+          'identity-only changes caused extra saves'
+        )
+        assert(
+          await page.evaluate(async () => {
+            try {
+              await window.__readStoredAttachment('msg-rotating', 'rotate-a')
+              return false
+            } catch {
+              return true
+            }
+          }),
+          'saving retires the old message and attachment ids',
+          'the fixture kept old attachment ids alive'
+        )
+        await page.evaluate(() => {
+          window.__attachmentMode = 'ok'
+        })
+        await content.getByRole('button', { name: 'Retry first.bin', exact: true }).click()
+        assert(
+          (await content.getByRole('button', { name: 'Remove first.bin', exact: true }).count()) ===
+            1 &&
+            (await content
+              .getByRole('button', { name: 'Retry first.bin', exact: true })
+              .count()) === 0,
+          'Retry succeeds using the replacement message and attachment ids',
+          'Retry after saved message replacement did not load the original'
+        )
+        await content.getByLabel('Subject', { exact: true }).fill('Rotated twice')
+        await page.clock.fastForward(1800)
+        await page.waitForFunction(() => window.__draftSaves.length >= 2)
+        assert(
+          await page.evaluate(() => {
+            const [first, second] = window.__draftSaves
+            return (
+              second.subject === 'Rotated twice' &&
+              second.retainAttachments.messageId === first.messageId &&
+              second.retainAttachments.refs.length === 1 &&
+              second.retainAttachments.refs[0].filename === 'second.bin'
+            )
+          }),
+          'the next autosave retains the remaining original using refreshed refs',
+          'the next autosave used stale original refs'
+        )
+        await content.getByRole('button', { name: 'Retry second.bin', exact: true }).click()
+        await page.waitForFunction(
+          () => !document.querySelector('button[aria-label="Retry second.bin"]')
+        )
+        await send.click()
+        await content.getByText('Message sent.', { exact: true }).waitFor()
+        assert(
+          await page.evaluate(
+            () =>
+              window.__sent[0]?.attachments?.length === 2 &&
+              window.__sent[0].attachments.some(
+                (file) => file.filename === 'first.bin' && file.data === 'Zmlyc3Q='
+              ) &&
+              window.__sent[0].attachments.some(
+                (file) => file.filename === 'second.bin' && file.data === 'c2Vjb25k'
+              )
+          ),
+          'both originals still send after successive message replacements',
+          'a replacement lost original bytes'
+        )
+        await snapshot(page, 'draft-attachments-rotated')
+      } else if (scenario === 'rotate-queued') {
+        await content.getByRole('button', { name: 'Retry first.bin', exact: true }).waitFor()
+        await page.evaluate(() => {
+          const saveDraft = (window.__packagedFixtureApi ?? window.api).saveDraft
+          let first = true
+          ;(window.__packagedFixtureApi ?? window.api).saveDraft = async (request) => {
+            const result = await saveDraft(request)
+            if (first) {
+              first = false
+              await new Promise((resolve) => {
+                window.__releaseSavedDraft = resolve
+              })
+            }
+            return result
+          }
+        })
+        await content.getByLabel('Subject', { exact: true }).fill('First queued edit')
+        await page.clock.fastForward(1800)
+        await page.waitForFunction(() => typeof window.__releaseSavedDraft === 'function')
+        await content.getByRole('button', { name: 'Remove first.bin', exact: true }).click()
+        await content.getByLabel('Subject', { exact: true }).fill('Dismissed queued edit')
+        await page
+          .getByRole('navigation', { name: 'Mail folders' })
+          .getByRole('button', { name: 'Inbox', exact: true })
+          .click()
+        await page.evaluate(() => window.__releaseSavedDraft())
+        await page.waitForFunction(() => window.__draftSaves.length === 2)
+        assert(
+          await page.evaluate(async () => {
+            const [first, second] = window.__draftSaves
+            const stored = await (window.__packagedFixtureApi ?? window.api).getMessage(second.messageId)
+            return (
+              second.subject === 'Dismissed queued edit' &&
+              second.retainAttachments.messageId === first.messageId &&
+              stored.attachments.length === 1 &&
+              stored.attachments[0].filename === 'second.bin'
+            )
+          }),
+          'a queued unmount save rebases ids without resurrecting a removed original',
+          'a queued save lost edits or restored removed originals'
+        )
+        await snapshot(page, 'draft-attachments-rotated-queued')
+      } else if (scenario === 'edit') {
+        await content.getByRole('alert').filter({ hasText: 'Could not load: q4.xlsx' }).waitFor()
+        await content.getByLabel('Subject', { exact: true }).fill('Edits survive failed originals')
+        await page
+          .getByRole('navigation', { name: 'Mail folders' })
+          .getByRole('button', { name: 'Inbox', exact: true })
+          .click()
+        await page.clock.fastForward(1800)
+        assert(
+          await page.evaluate(() =>
+            window.__draftSaves.some(
+              (save) =>
+                save.subject === 'Edits survive failed originals' &&
+                save.retainAttachments?.refs.length === 1
+            )
+          ),
+          'leaving a failed-load draft flushes edits with retained originals',
+          'leaving a failed-load draft lost the edit or original refs'
+        )
+        await page.evaluate(() => {
+          window.__attachmentMode = 'ok'
+        })
+        await page
+          .getByRole('navigation', { name: 'Mail folders' })
+          .getByRole('button', { name: 'Drafts', exact: true })
+          .click()
+        await page
+          .getByRole('complementary', { name: 'Drafts' })
+          .getByRole('button', { name: /^Edits survive failed originals/ })
+          .click()
+        await content.getByRole('button', { name: 'Remove q4.xlsx', exact: true }).waitFor()
+        assert(
+          (await content.getByLabel('Subject', { exact: true }).inputValue()) ===
+            'Edits survive failed originals',
+          'reopening keeps the edited subject and original attachment',
+          'reopening lost the edit or attachment'
+        )
+        await snapshot(page, 'draft-attachments-edits-reopened')
+      } else if (scenario === 'remove') {
+        await content.getByRole('alert').filter({ hasText: 'Could not load: q4.xlsx' }).waitFor()
+        assert(
+          await send.isDisabled(),
+          'a failed original blocks Send',
+          'a failed original allowed Send'
+        )
+        await snapshot(page, 'draft-attachments-failed')
+        await content.getByRole('button', { name: 'Remove q4.xlsx', exact: true }).click()
+        await page.clock.fastForward(1800)
+        assert(
+          await page.evaluate(() =>
+            window.__draftSaves.some(
+              (save) => !save.attachments?.length && !save.retainAttachments?.refs.length
+            )
+          ),
+          'removing every failed original saves without any other edit',
+          'removing every failed original did not trigger a save'
+        )
+        await page
+          .getByRole('navigation', { name: 'Mail folders' })
+          .getByRole('button', { name: 'Inbox', exact: true })
+          .click()
+        await page
+          .getByRole('navigation', { name: 'Mail folders' })
+          .getByRole('button', { name: 'Drafts', exact: true })
+          .click()
+        await page
+          .getByRole('complementary', { name: 'Drafts' })
+          .getByRole('button', { name: /^Draft: Q4 attachments/ })
+          .click()
+        await content.getByLabel('Subject', { exact: true }).waitFor()
+        assert(
+          (await content.locator('.attachmentChip').count()) === 0 && (await send.isEnabled()),
+          'reopening does not resurrect explicitly removed originals',
+          'the removed original returned on reopen'
+        )
+        await send.click()
+        await content.getByText('Message sent.', { exact: true }).waitFor()
+        assert(
+          await page.evaluate(
+            () => window.__sent.length === 1 && !window.__sent[0].attachments?.length
+          ),
+          'explicit Remove permits sending an empty attachment set',
+          'the removed original remained in the sent request'
+        )
+      } else if (scenario === 'retry') {
+        await content.getByRole('alert').filter({ hasText: 'Could not load: q4.xlsx' }).waitFor()
+        await content.getByLabel('Subject', { exact: true }).fill('Retry the original')
+        const readsBeforeRetry = await page.evaluate(() => window.__attachmentReads)
+        await content.getByRole('button', { name: 'Retry q4.xlsx', exact: true }).click()
+        await page.waitForFunction((before) => window.__attachmentReads > before, readsBeforeRetry)
+        await page.clock.fastForward(1)
+        assert(
+          await send.isDisabled(),
+          'an unsuccessful Retry leaves the original protected',
+          'an unsuccessful Retry unblocked sending'
+        )
+        await page.evaluate(() => {
+          window.__attachmentMode = 'ok'
+        })
+        await content.getByRole('button', { name: 'Retry q4.xlsx', exact: true }).click()
+        await content
+          .getByRole('button', { name: 'Retry q4.xlsx', exact: true })
+          .waitFor({ state: 'detached' })
+        await page.clock.fastForward(1800)
+        await page.waitForFunction(() =>
+          window.__draftSaves.some((save) => save.attachments?.length === 1)
+        )
+        await send.click()
+        await content.getByText('Message sent.', { exact: true }).waitFor()
+        assert(
+          (await page.evaluate(
+            () => window.__sent[0]?.attachments?.[0]?.data === 'UTQgcGxhbm5pbmcgZGF0YQ=='
+          )) && (await content.getByRole('alert').count()) === 0,
+          'successful Retry restores the original bytes and clears its error',
+          'Retry lost the original bytes or retained its error'
+        )
+        await snapshot(page, 'draft-attachments-retried')
+      } else if (scenario === 'save-error') {
+        await content.getByRole('alert').filter({ hasText: 'Could not load: q4.xlsx' }).waitFor()
+        await page.evaluate(() => {
+          window.__retainAttachmentError = 'Stored original unavailable'
+        })
+        await content.getByLabel('Subject', { exact: true }).fill('Cannot save without originals')
+        await page.clock.fastForward(1800)
+        await content
+          .getByRole('alert')
+          .filter({ hasText: 'Draft not saved: Stored original unavailable' })
+          .waitFor()
+        assert(
+          await page.evaluate(async () => {
+            const stored = await (window.__packagedFixtureApi ?? window.api).getMessage('msg-draft-q4')
+            return (
+              window.__draftSaves.length === 0 &&
+              stored.subject === 'Draft: Q4 attachments' &&
+              stored.attachments.length === 1
+            )
+          }),
+          'a retained fetch failure leaves the saved draft untouched',
+          'a failed save stripped or changed the stored draft'
+        )
+        await snapshot(page, 'draft-attachments-save-error')
+      } else {
+        if (scenario === 'limit') {
+          await page.getByRole('button', { name: 'Compose', exact: true }).click()
+        } else if (scenario === 'limit-draft') {
+          await page
+            .getByRole('navigation', { name: 'Mail folders' })
+            .getByRole('button', { name: 'Drafts', exact: true })
+            .click()
+          await page
+            .getByRole('complementary', { name: 'Drafts' })
+            .getByRole('button', { name: /^Draft: Q4 planning notes/ })
+            .click()
+        } else {
+          await page
+            .getByRole('complementary', { name: 'Inbox' })
+            .getByRole('button', { name: /^Launch checklist/ })
+            .click()
+          await content
+            .getByRole('button', {
+              name: scenario === 'limit-reply' ? 'reply' : 'forward',
+              exact: true
+            })
+            .click()
+        }
+        await content.getByLabel('To', { exact: true }).fill('test@example.com')
+        await content.locator('form.composer').evaluate((form) => {
+          for (let i = 0; i < 2; i++) {
+            const dataTransfer = new DataTransfer()
+            dataTransfer.items.add(
+              new File([new Uint8Array(12 * 1024 * 1024)], `large-${i}.bin`, {
+                type: 'application/octet-stream'
+              })
+            )
+            form.dispatchEvent(
+              new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer })
+            )
+          }
+        })
+        await content
+          .getByRole('alert')
+          .filter({ hasText: 'Attachments are too large to send (24 MB)' })
+          .waitFor()
+        assert(
+          (await content.locator('.attachmentChip').count()) === 1,
+          `${scenario}: concurrent 12 MiB drops reject the addition that exceeds 20 MiB`,
+          `${scenario}: concurrent drops bypassed the cumulative attachment limit`
+        )
+        await snapshot(page, `draft-attachments-${scenario}`)
+        await send.click()
+        await content.getByText('Message sent.', { exact: true }).waitFor()
+        assert(
+          await page.evaluate(
+            () =>
+              window.__sent[0]?.attachments?.length === 1 &&
+              window.__sent[0].attachments[0].size === 12 * 1024 * 1024
+          ),
+          `${scenario}: the accepted file still sends after the over-limit addition is rejected`,
+          `${scenario}: rejecting an over-limit addition lost the accepted file`
+        )
+      }
+    }
   } else if (FEATURE === 'attachments') {
     // Compose flow: two entrances into the same set. A drag drops in first
     // (a real DragEvent carrying a constructed File — the same handler a
@@ -1151,7 +1613,7 @@ try {
     await page.getByRole('button', { name: 'Drafts', exact: true }).click()
     await drafts.getByText(deletedDraftEdit, { exact: true }).waitFor({ timeout: 5000 })
     log('pass: pending local edits survive remote deletion as a separate draft')
-  } else if (FEATURE === 'delete-draft') {
+  } else if (FEATURE === 'delete-draft' || FEATURE === 'draft-attachments-safe') {
     // Row surface: the confirm gates the delete. Dismiss it first —
     // deleting a draft is irreversible, so refusing must be a full no-op.
     await page.getByRole('button', { name: 'Drafts' }).click()

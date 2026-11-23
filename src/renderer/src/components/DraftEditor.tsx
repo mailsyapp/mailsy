@@ -67,15 +67,16 @@ function DraftForm({
     }
   })
   const autosave = useDraftAutosave(
-    request,
+    { ...request, ...attach.retained },
     draftId ? { draftId, messageId: detail.id } : undefined,
-    draftId !== undefined && attach.ready,
+    draftId !== undefined,
     sessionSignal,
-    edited || attach.edited
+    edited || attach.edited,
+    attach.adoptSaved
   )
   async function handleSend(event: React.FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault()
-    if (sending || sent || !hasRecipient(recipients)) return
+    if (sending || sent || !attach.ready || !hasRecipient(recipients)) return
     setSending(true)
     setSendError(null)
     setNotice(null)
@@ -150,7 +151,12 @@ function DraftForm({
 
       {sendError && <p role="alert">{sendError}</p>}
       {notice && <p role="status">{notice}</p>}
-      {autosave.error && <p role="alert">Draft not saved: {autosave.error}</p>}
+      {autosave.error && (
+        <p role="alert">
+          {autosave.refsStale ? 'Attachment refresh required: ' : 'Draft not saved: '}
+          {autosave.error}
+        </p>
+      )}
       {autosave.status === 'saving' && <p role="status">Saving draft...</p>}
       {autosave.status === 'saved' && <p role="status">Draft saved.</p>}
       {discardError && <p role="alert">Delete failed: {discardError}</p>}
@@ -160,7 +166,10 @@ function DraftForm({
           delete draft
         </button>
 
-        <button type="submit" disabled={sending || sent || !hasRecipient(recipients)}>
+        <button
+          type="submit"
+          disabled={sending || sent || !attach.ready || !hasRecipient(recipients)}
+        >
           {sending ? 'Sending...' : sent ? 'Sent' : 'Send'}
         </button>
       </div>

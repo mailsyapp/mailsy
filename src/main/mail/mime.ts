@@ -49,7 +49,13 @@ export interface MessageBodies {
   attachments: MessageAttachmentRef[]
 }
 
-export function collectBodies(part: gmail_v1.Schema$MessagePart, out: MessageBodies): void {
+export const INLINE_ATTACHMENT_PREFIX = 'mailsy-part:'
+
+export function collectBodies(
+  part: gmail_v1.Schema$MessagePart,
+  out: MessageBodies,
+  path = '0'
+): void {
   const mime = part.mimeType ?? ''
   if (mime === 'text/plain' && !out.text) out.text = decodeBody(part.body?.data)
   if (mime === 'text/html' && !out.html) out.html = decodeBody(part.body?.data)
@@ -63,14 +69,14 @@ export function collectBodies(part: gmail_v1.Schema$MessagePart, out: MessageBod
       data: part.body?.data,
       attachmentId: part.body?.attachmentId
     })
-  } else if (part.filename && part.body?.attachmentId) {
+  } else if (part.filename && (part.body?.attachmentId || typeof part.body?.data === 'string')) {
     out.attachments.push({
       filename: part.filename,
-      size: part.body.size ?? 0,
-      attachmentId: part.body.attachmentId
+      size: part.body?.size ?? 0,
+      attachmentId: part.body?.attachmentId || `${INLINE_ATTACHMENT_PREFIX}${path}`
     })
   }
-  for (const p of part.parts ?? []) collectBodies(p, out)
+  for (const [index, p] of (part.parts ?? []).entries()) collectBodies(p, out, `${path}.${index}`)
 }
 
 type RawMessageFields = Pick<

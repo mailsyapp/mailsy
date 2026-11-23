@@ -23,6 +23,10 @@ const fixture = (globalThis.draftVersionFixture = {
 
 const hooks = registerHooks({
   resolve(specifier, context, next) {
+    if (specifier === './messages') return {
+      url: `data:text/javascript,${encodeURIComponent('export const fetchAttachment = async () => { throw new Error("Unexpected attachment fetch") }')}`,
+      shortCircuit: true
+    }
     if (specifier === '../auth') {
       const mock = `
         const f = globalThis.draftVersionFixture
@@ -49,6 +53,11 @@ const hooks = registerHooks({
 const { discardDraft, saveDraft, sendDraft } = await import('../../../../src/main/mail/send.ts')
 hooks.deregister()
 
+async function saveVersion(request) {
+  const { draftId, messageId } = await saveDraft(request)
+  return { draftId, messageId }
+}
+
 const request = {
   draftId: 'draft-1',
   to: 'reader@example.com',
@@ -60,7 +69,7 @@ const request = {
 test('save advances the message version; send uses the new version and replacement MIME', async () => {
   fixture.calls.length = 0
   fixture.messageId = 'msg-1'
-  assert.deepEqual(await saveDraft({ ...request, expectedMessageId: 'msg-1' }), {
+  assert.deepEqual(await saveVersion({ ...request, expectedMessageId: 'msg-1' }), {
     draftId: 'draft-1',
     messageId: 'msg-2'
   })
@@ -85,7 +94,7 @@ test('unmount recovery creates a separate draft only on a version conflict', asy
   fixture.calls.length = 0
   fixture.messageId = 'msg-remote'
   const edited = { ...request, expectedMessageId: 'msg-1', copyOnConflict: true }
-  assert.deepEqual(await saveDraft(edited), { draftId: 'draft-local-copy', messageId: 'msg-copy' })
+  assert.deepEqual(await saveVersion(edited), { draftId: 'draft-local-copy', messageId: 'msg-copy' })
   assert.equal(fixture.messageId, 'msg-remote')
   assert.deepEqual(fixture.calls.map(([verb]) => verb), ['create'])
   assert.equal(fixture.calls[0][1].requestBody.message.threadId, undefined)
@@ -122,7 +131,7 @@ test('unmount recovery keeps pending edits without restoring the deleted draft',
     await assert.rejects(saveDraft(edited), missing)
     await assert.rejects(sendDraft(edited), missing)
     assert.deepEqual(fixture.calls, [])
-    assert.deepEqual(await saveDraft({ ...edited, copyOnConflict: true }), {
+    assert.deepEqual(await saveVersion({ ...edited, copyOnConflict: true }), {
       draftId: 'draft-local-copy',
       messageId: 'msg-copy'
     })
@@ -142,7 +151,7 @@ test('unmount recovery handles deletion between the version check and update', a
   }
   const edited = { ...request, expectedMessageId: 'msg-1', copyOnConflict: true }
   try {
-    assert.deepEqual(await saveDraft(edited), {
+    assert.deepEqual(await saveVersion(edited), {
       draftId: 'draft-local-copy',
       messageId: 'msg-copy'
     })

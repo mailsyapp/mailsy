@@ -3,14 +3,15 @@ import {
   attachmentsLimitError,
   ATTACHMENTS_TOTAL_LIMIT_BYTES,
   decodedAttachmentBytes,
-  type DraftVersion,
   type SaveDraftRequest,
+  type SaveDraftResult,
   type SendDraftRequest,
   type SendEmailRequest
 } from '../../shared/types'
 import { hasRecipient } from '../../shared/types'
 import { isNotFoundError, rethrowDeadGrant, withQuotaRetry } from './resilience'
-import { buildRawMessage } from './mime'
+import { buildRawMessage, collectBodies, type MessageBodies } from './mime'
+import { fetchAttachment } from './messages'
 import type { gmail_v1 } from 'googleapis'
 let discardSession: symbol | undefined
 let localDiscards = new Map<string, Promise<void>>()
@@ -53,7 +54,11 @@ function attachmentsShaped(request: SendEmailRequest): boolean {
       typeof attachment.filename === 'string' &&
       typeof attachment.size === 'number' &&
       typeof attachment.data === 'string' &&
-      attachment.data.length > 0
+      (attachment.data.length > 0 || attachment.size === 0) &&
+      /^[A-Za-z0-9+/]*={0,2}$/.test(attachment.data) &&
+      (attachment.data.includes('=')
+        ? attachment.data.length % 4 === 0
+        : attachment.data.length % 4 !== 1)
   )
 }
 function attachmentsBytes(request: SendEmailRequest): number {
@@ -126,17 +131,50 @@ async function isCurrentDraftVersion(
   if (getMailSession() !== session) throw new Error('Mail account changed')
   return current.data.message?.id === expectedMessageId
 }
-export async function saveDraft(request: SaveDraftRequest): Promise<DraftVersion> {
+export async function saveDraft(request: SaveDraftRequest): Promise<SaveDraftResult> {
   assertMessageFields(request, false)
   if (request.draftId !== undefined && typeof request.draftId !== 'string') {
     throw new Error('Invalid draft request')
   }
   assertExpectedMessageId(request.expectedMessageId)
+  const retain = request.retainAttachments
+  if (
+    retain !== undefined &&
+    (!retain ||
+      typeof retain !== 'object' ||
+      typeof retain.messageId !== 'string' ||
+      !retain.messageId.trim() ||
+      !Array.isArray(retain.refs) ||
+      !retain.refs.every(
+        (ref) =>
+          ref &&
+          typeof ref === 'object' &&
+          typeof ref.filename === 'string' &&
+          typeof ref.size === 'number' &&
+          Number.isFinite(ref.size) &&
+          ref.size >= 0 &&
+          typeof ref.attachmentId === 'string' &&
+          !!ref.attachmentId.trim()
+      ))
+  )
+    throw new Error('Invalid draft request')
   try {
     const session = getMailSession()
     const gmail = getGmailClient()
     const from = await getAccountEmail()
-    const raw = await buildRawMessage(from, request)
+    const retained = retain
+      ? await Promise.all(
+          retain.refs.map(async (ref) => ({
+            filename: ref.filename,
+            size: ref.size,
+            data: await fetchAttachment(retain.messageId, ref.attachmentId)
+          }))
+        )
+      : []
+    if (getMailSession() !== session) throw new Error('Mail account changed')
+    const fields = { ...request, attachments: [...(request.attachments ?? []), ...retained] }
+    assertMessageFields(fields, false)
+    const raw = await buildRawMessage(from, fields)
     const { draftId, expectedMessageId, threadId, copyOnConflict } = request
     const requestBody = { message: { raw, ...(threadId ? { threadId } : {}) } }
     const saved = await withQuotaRetry(async () => {
@@ -165,7 +203,42 @@ export async function saveDraft(request: SaveDraftRequest): Promise<DraftVersion
     }, session)
     if (!saved.data.id || !saved.data.message?.id)
       throw new Error('Gmail returned no draft version')
-    return { draftId: saved.data.id, messageId: saved.data.message.id }
+    const committedId = saved.data.id
+    try {
+      const readback = await withQuotaRetry(
+        () =>
+          gmail.users.drafts.get({
+            userId: 'me',
+            id: committedId,
+            format: 'full'
+          }),
+        session
+      )
+      if (!readback.data.message?.id || !readback.data.message.payload)
+        throw new Error('Gmail returned no saved message')
+      const bodies: MessageBodies = { text: '', html: '', inlineImages: [], attachments: [] }
+      collectBodies(readback.data.message.payload, bodies)
+      const retainedAttachments = (retain?.refs ?? []).map((ref, index) => {
+        const next = bodies.attachments[(request.attachments?.length ?? 0) + index]
+        if (!next || next.filename !== ref.filename)
+          throw new Error('Gmail returned no retained attachment')
+        return { previousAttachmentId: ref.attachmentId, ref: next }
+      })
+      return {
+        draftId: committedId,
+        messageId: readback.data.message.id,
+        previousMessageId: retain?.messageId,
+        retainedAttachments
+      }
+    } catch {
+      return {
+        draftId: committedId,
+        messageId: saved.data.message.id,
+        previousMessageId: retain?.messageId,
+        retainedAttachments: [],
+        refsStale: true
+      }
+    }
   } catch (e) {
     rethrowDeadGrant(e)
     throw e

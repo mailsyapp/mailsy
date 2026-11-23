@@ -4,9 +4,15 @@ import { useReaction } from '../hooks/useReaction'
 import { useOnUnmount } from '../hooks/useOnUnmount'
 import { useTimers } from '../hooks/useTimers'
 import { errorMessage } from '../lib/format'
-import type { DraftVersion, SendDraftRequest, SendEmailRequest } from '../../../shared/types'
-type AutosaveFields = SendEmailRequest
+import type {
+  DraftVersion,
+  SaveDraftRequest,
+  SaveDraftResult,
+  SendDraftRequest
+} from '../../../shared/types'
+type AutosaveFields = Omit<SaveDraftRequest, 'draftId' | 'expectedMessageId' | 'copyOnConflict'>
 const AUTOSAVE_DEBOUNCE_MS = 1200
+const STALE_REFS_ERROR = 'Reload this draft before saving further unresolved attachments.'
 export interface DraftAutosave {
   flushPending: () => Promise<void>
   suspend: () => void
@@ -15,18 +21,23 @@ export interface DraftAutosave {
   currentDraft: () => Pick<SendDraftRequest, 'draftId' | 'expectedMessageId'> | undefined
   status: 'idle' | 'saving' | 'saved'
   error: string | null
+  refsStale: boolean
 }
 export function useDraftAutosave(
   fields: AutosaveFields,
   initialDraft: DraftVersion | undefined,
   enabled: boolean,
   sessionSignal: AbortSignal,
-  hasEdits = true
+  hasEdits = true,
+  onSaved?: (result: SaveDraftResult) => void
 ): DraftAutosave {
   const [status, setStatus] = useState<DraftAutosave['status']>('idle')
   const [error, setError] = useState<string | null>(null)
   const fieldsRef = useLatest(fields)
-  const draftRef = useRef(initialDraft)
+  const draftRef = useRef<Pick<SaveDraftResult, 'draftId' | 'messageId'> | undefined>(initialDraft)
+  const staleRefsRef = useRef(false)
+  const [refsStale, setRefsStale] = useState(false)
+  const onSavedRef = useLatest(onSaved)
   const lastSavedRef = useRef(JSON.stringify(fields))
   const enabledRef = useLatest(enabled && hasEdits)
   const retiredRef = useRef(false)
@@ -39,8 +50,11 @@ export function useDraftAutosave(
     const run = prior
       .then(() => {
         if (sessionSignal.aborted || retiredRef.current || suspendedRef.current) return
-        const written = JSON.stringify(fieldsRef.current)
+        const writtenFields = fieldsRef.current
+        const written = JSON.stringify(writtenFields)
         if (written === lastSavedRef.current) return
+        if (staleRefsRef.current && writtenFields.retainAttachments?.refs.length)
+          throw new Error(STALE_REFS_ERROR)
         const target = draftRef.current
         return window.api
           .saveDraft({
@@ -50,7 +64,37 @@ export function useDraftAutosave(
           })
           .then((draft) => {
             draftRef.current = draft
-            lastSavedRef.current = written
+            staleRefsRef.current = !!draft.refsStale
+            setRefsStale(!!draft.refsStale)
+            if (draft.refsStale) {
+              lastSavedRef.current = written
+              if (writtenFields.retainAttachments?.refs.length) throw new Error(STALE_REFS_ERROR)
+              setStatus('saved')
+              setError(null)
+              return
+            }
+            const rebase = (value: AutosaveFields): AutosaveFields => {
+              if (
+                !value.retainAttachments ||
+                value.retainAttachments.messageId !== writtenFields.retainAttachments?.messageId
+              )
+                return value
+              return {
+                ...value,
+                retainAttachments: {
+                  messageId: draft.messageId,
+                  refs: value.retainAttachments.refs.map(
+                    (ref) =>
+                      draft.retainedAttachments.find(
+                        (entry) => entry.previousAttachmentId === ref.attachmentId
+                      )?.ref ?? ref
+                  )
+                }
+              }
+            }
+            fieldsRef.current = rebase(fieldsRef.current)
+            lastSavedRef.current = JSON.stringify(rebase(writtenFields))
+            onSavedRef.current?.(draft)
             setStatus('saved')
             setError(null)
           })
@@ -108,6 +152,7 @@ export function useDraftAutosave(
         : undefined
     },
     status,
-    error
+    error,
+    refsStale
   }
 }

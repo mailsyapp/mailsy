@@ -17,12 +17,38 @@ export function AttachmentChips({ attach }: { attach: ComposerAttachments }): Re
           </button>
         </span>
       ))}
+      {attach.failed.map((ref) => (
+        <span key={ref.attachmentId} className="attachmentChip">
+          {ref.filename}
+          <button
+            type="button"
+            aria-label={`Retry ${ref.filename}`}
+            disabled={attach.loading}
+            onClick={() => void attach.retry(ref.attachmentId)}
+          >
+            Retry
+          </button>
+          <button
+            type="button"
+            aria-label={`Remove ${ref.filename}`}
+            disabled={attach.loading}
+            onClick={() => attach.removeFailed(ref.attachmentId)}
+          >
+            Remove
+          </button>
+        </span>
+      ))}
+      {attach.loading && <p role="status">Loading attachments...</p>}
       {attach.error && (
         <p className="attachmentBar-error" role="alert">
           {attach.error}
         </p>
       )}
-      <button type="button" onClick={() => void attach.pick()} disabled={attach.picking}>
+      <button
+        type="button"
+        onClick={() => void attach.pick()}
+        disabled={attach.picking || !attach.ready}
+      >
         {attach.picking ? 'Picking...' : 'Attach files'}
       </button>
     </div>

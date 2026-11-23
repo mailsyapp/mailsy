@@ -113,6 +113,8 @@
     ['msg-receipts-1~att-receipts-img', TINY_PNG]
   ])
   const FIXTURE_PICK = [{ filename: 'fixture-file.pdf', size: 7, data: 'Zml4dHVyZQ==' }]
+  attachmentStore.set('msg-rotating~rotate-a', 'Zmlyc3Q=')
+  attachmentStore.set('msg-rotating~rotate-b', 'c2Vjb25k')
 
   // Reply-all fixture: one message carrying multi-recipient To plus Cc, so
   // the To line after reply all covers author + To + Cc with me dropped.
@@ -161,6 +163,17 @@
     attachments: [{ filename: 'q4.xlsx', size: 16, attachmentId: 'att-q4' }]
   })
 
+  seed.push({
+    ...seed.find((message) => message.id === 'msg-draft-q4'),
+    id: 'msg-rotating',
+    threadId: 'thread-rotating',
+    draftId: 'draft-rotating',
+    subject: 'Draft: rotating originals',
+    attachments: [
+      { filename: 'first.bin', size: 5, attachmentId: 'rotate-a' },
+      { filename: 'second.bin', size: 6, attachmentId: 'rotate-b' }
+    ]
+  })
   // Spam fixture: one message carrying only the SPAM label, so the Spam
   // view lists it while every other folder including All Mail excludes it.
   // Not UNREAD, so opening it never adds a stray auto-read modify call.
@@ -761,6 +774,16 @@
       if (conflict && draftDiscards.some((entry) => entry.draftId === request.draftId)) {
         throw new Error('Draft was discarded')
       }
+      const retain = request.retainAttachments
+      const retained = await Promise.all(
+        (retain?.refs ?? []).map(async (ref) => {
+          if (window.__retainAttachmentError) throw new Error(window.__retainAttachmentError)
+          const key = `${retain.messageId}~${ref.attachmentId}`
+          if (!attachmentStore.has(key)) throw new Error(`mock: no attachment ${key}`)
+          return { filename: ref.filename, size: ref.size, data: attachmentStore.get(key) }
+        })
+      )
+      const attachments = [...(request.attachments ?? []), ...retained]
       let draftId
       if (target && !conflict) {
         draftId = target.draftId
@@ -812,25 +835,37 @@
       // follow the request file set exactly: the inbox content store drops
       // stale entries and registers the current bytes per new ref.
       const stored = seed.find((m) => m.draftId === draftId)
-      stored.attachments = (request.attachments ?? []).map(
-        ({ filename, size }, i) => ({
-          filename,
-          size,
-          attachmentId: `att-${draftId}-${i}`
-        })
-      )
+      const oldMessageId = stored.id
+      const version = draftSaves.length + 1
+      byId.delete(oldMessageId)
+      stored.id = `msg-${draftId}-save-${version}`
+      byId.set(stored.id, stored)
+      stored.attachments = attachments.map(({ filename, size }, i) => ({
+        filename,
+        size,
+        attachmentId: `att-${draftId}-${version}-${i}`
+      }))
       const msgId = stored.id
       const keep = new Set(
         stored.attachments.map((a) => `${msgId}~${a.attachmentId}`)
       )
       for (const key of [...attachmentStore.keys()]) {
-        if (key.startsWith(`${msgId}~`) && !keep.has(key)) attachmentStore.delete(key)
+        if ((key.startsWith(`${oldMessageId}~`) || key.startsWith(`${msgId}~`)) && !keep.has(key))
+          attachmentStore.delete(key)
       }
-      ;(request.attachments ?? []).forEach((a, i) => {
-        attachmentStore.set(`${msgId}~att-${draftId}-${i}`, a.data)
+      attachments.forEach((a, i) => {
+        attachmentStore.set(`${msgId}~${stored.attachments[i].attachmentId}`, a.data)
       })
-      draftSaves.push({ ...request, draftId })
-      return { draftId, messageId: msgId }
+      draftSaves.push({ ...request, draftId, messageId: msgId })
+      return {
+        draftId,
+        messageId: msgId,
+        previousMessageId: retain?.messageId,
+        retainedAttachments: (retain?.refs ?? []).map((ref, index) => ({
+          previousAttachmentId: ref.attachmentId,
+          ref: stored.attachments[(request.attachments?.length ?? 0) + index]
+        }))
+      }
     },
     // Mirrors drafts.delete from the explicit Cancel path. A vanished draft
     // is already gone, so the boundary settles it as success; the mock
