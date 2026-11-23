@@ -4,6 +4,7 @@ import { toEmailDetail } from './message'
 import { base64UrlToBuffer, INLINE_ATTACHMENT_PREFIX } from './mime'
 import { noteHistoryId } from './sync'
 import { DETAIL_CONCURRENCY, mapWithConcurrency, withQuotaRetry } from './resilience'
+import { getSnoozeUntil } from './snooze'
 export async function fetchMessage(id: string, draftId?: string): Promise<EmailDetail> {
   const gmail = getGmailClient()
   if (draftId !== undefined) {
@@ -64,5 +65,11 @@ export async function fetchThread(threadId: string): Promise<EmailThread> {
   for (const msg of thread.data.messages ?? []) {
     for (const labelId of msg.labelIds ?? []) labelIds.add(labelId)
   }
-  return { id: thread.data.id ?? threadId, messages, labelIds: [...labelIds], userEmail }
+  return {
+    id: thread.data.id ?? threadId,
+    messages,
+    labelIds: [...labelIds],
+    userEmail,
+    snoozeUntil: getSnoozeUntil(threadId)
+  }
 }

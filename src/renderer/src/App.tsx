@@ -71,6 +71,7 @@ function App(): React.JSX.Element {
     id: string
     threadId: string
   } | null>(null)
+  const selectedSnoozedByMailsyRef = useRef(false)
   const sentinelRef = useRef<HTMLDivElement | null>(null)
   const sidebarRef = useRef<HTMLElement | null>(null)
   const requestIdRef = useRef(0)
@@ -142,6 +143,7 @@ function App(): React.JSX.Element {
     selectionRef.current = null
     selectedDraftRef.current = null
     setOpened(null)
+    selectedSnoozedByMailsyRef.current = false
     setDraftDetail(null)
     setDraftDetailLoading(false)
     setComposing(false)
@@ -199,6 +201,7 @@ function App(): React.JSX.Element {
     const rowKey = listRowKey(row)
     selectionRef.current = rowKey
     setOpened({ row, query: committedQuery })
+    selectedSnoozedByMailsyRef.current = row.snoozedByMailsy === true
     setError(null)
     const draftsFolder = activeFolder === 'drafts'
     const draftHere = draftsFolder || (activeFolder === 'all' && row.hasDraft === true)
@@ -609,6 +612,31 @@ function App(): React.JSX.Element {
           depth++
         }
       }
+      const selected = selectionRef.current
+      const selectedRow = listedThreadsRef.current.find((row) => listRowKey(row) === selected)
+      let dropSelected = false
+      let lookupError: unknown
+      if (
+        activeFolder === 'snoozed' &&
+        selectedRow &&
+        !page.threads.some((row) => listRowKey(row) === selected) &&
+        !tail.has(selected!)
+      ) {
+        const locallySnoozed = selectedSnoozedByMailsyRef.current
+        try {
+          const thread = await window.api.getThread(selectedRow.id)
+          dropSelected =
+            locallySnoozed &&
+            thread.snoozeUntil !== undefined &&
+            (thread.snoozeUntil === null || thread.snoozeUntil <= Date.now())
+        } catch (e) {
+          dropSelected =
+            (e as { code?: unknown })?.code === 404 || /404|not\s*found/i.test(errorMessage(e))
+          if (!dropSelected) lookupError = e
+        }
+      }
+      if (!ownsResult()) return
+      if (dropSelected && selectionRef.current === selected) closeEmail()
       if (reconcileSearch) {
         const incoming = new Map(page.threads.map((row) => [listRowKey(row), row]))
         for (const [key, row] of tail) incoming.set(key, row)
@@ -632,7 +660,8 @@ function App(): React.JSX.Element {
       } else {
         setThreads((prev) => {
           if (mode === 'load') return page.threads
-          const merged = mergeIncoming(prev, page.threads, quiet, selectionRef.current)
+          const remaining = dropSelected ? prev.filter((row) => listRowKey(row) !== selected) : prev
+          const merged = mergeIncoming(remaining, page.threads, quiet, selectionRef.current)
           if (tail.size === 0) return merged
           const seen = new Set(merged.map(listRowKey))
           return [...merged, ...[...tail].filter(([key]) => !seen.has(key)).map(([, row]) => row)]
@@ -640,6 +669,7 @@ function App(): React.JSX.Element {
       }
       if (!quiet || loadedPagesRef.current <= 1 || recheckDepth > 1) setPageToken(token, depth)
       storeFirstPage(page, committedQuery)
+      if (lookupError && (!quiet || isDeadGrantError(lookupError))) recordError(lookupError)
     }
     void foldPages()
       .catch((e: unknown) => {

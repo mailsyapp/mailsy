@@ -104,11 +104,14 @@ const compiled = await build({
       setup(builder): void {
         builder.onResolve({ filter: /\/auth$/ }, () => ({ path: 'auth', namespace: 'fixture' }))
         builder.onResolve({ filter: /\/sync$/ }, () => ({ path: 'sync', namespace: 'fixture' }))
+        builder.onResolve({ filter: /\/snooze$/ }, () => ({ path: 'snooze', namespace: 'fixture' }))
         builder.onLoad({ filter: /.*/, namespace: 'fixture' }, ({ path }) => ({
           contents:
             path === 'auth'
               ? 'export const isSignedIn = () => true; export const getMailSession = () => Symbol.for("retained-harness"); export const getGmailClient = () => globalThis.__draftRetainHarness.gmail; export const getAccountEmail = async () => "me@example.com"; export const invalidateStoredGrant = () => {}'
-              : 'export const noteHistoryId = () => {}'
+              : path === 'snooze'
+                ? 'export const getSnoozeUntil = () => null'
+                : 'export const noteHistoryId = () => {}'
         }))
       }
     }

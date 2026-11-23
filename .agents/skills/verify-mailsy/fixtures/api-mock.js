@@ -695,6 +695,7 @@
         id: threadId,
         messages,
         labelIds,
+        snoozeUntil: snoozeSchedule.get(threadId) ?? null,
         // Mirrors the account email the real boundary now carries on thread
         // fetches; the exclusion set for the reply-all derivation.
         userEmail: 'me@example.com'

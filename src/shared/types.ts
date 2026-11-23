@@ -32,6 +32,7 @@ export interface EmailDetail extends EmailSummary {
 export interface EmailThread {
   id: string
   messages: EmailDetail[]
+  snoozeUntil?: number | null
   labelIds: string[]
   userEmail: string
 }
