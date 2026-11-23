@@ -1,13 +1,14 @@
-import { forwardRef, useCallback, useImperativeHandle, useRef, useState } from 'react'
 import { useReaction } from '../hooks/useReaction'
-import type { EmailDetail as EmailDetailData, ThreadSummary } from '../../../shared/types'
-import { hasRecipient, type SendEmailRequest } from '../../../shared/types'
-import { errorMessage } from '../lib/format'
+import { forwardRef, useCallback, useImperativeHandle, useRef, useState } from 'react'
+import type {
+  EmailDetail as EmailDetailData,
+  SendEmailRequest,
+  ThreadSummary
+} from '../../../shared/types'
 import { quoteHtmlFor } from '../lib/emailHtml'
 import { replyAllRecipients } from '../lib/recipients'
-import { RecipientFields } from './RecipientFields'
-import { ComposerBody, type ComposerBodyHandle } from './ComposerBody'
-import { useComposerAttachments } from './useComposerAttachments'
+import { ThreadReplyForm } from './ThreadReplyForm'
+import type { AttachmentPrefill } from './useComposerAttachments'
 
 export interface ThreadReplyComposerHandle {
   reply(): void
@@ -30,12 +31,8 @@ export const ThreadReplyComposer = forwardRef<ThreadReplyComposerHandle, ThreadR
     const pendingReplyRef = useRef<{ target: EmailDetailData; prefilledTo: string } | null>(null)
     const [quotedContent, setQuotedContent] = useState<{ html: string } | null>(null)
     const [composerSeq, setComposerSeq] = useState(0)
-    const bodyRef = useRef<ComposerBodyHandle | null>(null)
-    const [sending, setSending] = useState(false)
-    const [sendError, setSendError] = useState<string | null>(null)
+    const [attachmentPrefill, setAttachmentPrefill] = useState<AttachmentPrefill>()
     const [sent, setSent] = useState(false)
-    const attach = useComposerAttachments(undefined, bodyRef)
-    const { clear: clearAttachments } = attach
 
     useReaction([userEmail], () => {
       const pending = pendingReplyRef.current
@@ -50,9 +47,8 @@ export const ThreadReplyComposer = forwardRef<ThreadReplyComposerHandle, ThreadR
 
     const openReplyComposer = useCallback(
       (target: EmailDetailData, toLine: string, ccLine = ''): void => {
-        setSendError(null)
         setSent(false)
-        clearAttachments()
+        setAttachmentPrefill(undefined)
         const originalText = target.bodyText || target.snippet || thread.snippet
 
         setQuotedContent({ html: quoteHtmlFor(target, originalText, false) })
@@ -67,14 +63,15 @@ export const ThreadReplyComposer = forwardRef<ThreadReplyComposerHandle, ThreadR
           references: [target.references, target.messageId].filter(Boolean).join(' ') || undefined
         })
       },
-      [clearAttachments, thread.snippet]
+      [thread.snippet]
     )
 
     const openForwardComposer = useCallback(
       (target: EmailDetailData): void => {
-        setSendError(null)
         setSent(false)
-        clearAttachments()
+        setAttachmentPrefill(
+          target.attachments.length ? { messageId: target.id, refs: target.attachments } : undefined
+        )
         const originalText = target.bodyText || target.snippet || thread.snippet
 
         setQuotedContent({ html: quoteHtmlFor(target, originalText, true) })
@@ -88,7 +85,7 @@ export const ThreadReplyComposer = forwardRef<ThreadReplyComposerHandle, ThreadR
           references: [target.references, target.messageId].filter(Boolean).join(' ') || undefined
         })
       },
-      [clearAttachments, thread.snippet]
+      [thread.snippet]
     )
 
     useImperativeHandle(
@@ -118,81 +115,26 @@ export const ThreadReplyComposer = forwardRef<ThreadReplyComposerHandle, ThreadR
       [thread, latestMessage, userEmail, openReplyComposer, openForwardComposer]
     )
 
-    async function handleSend(event: React.FormEvent<HTMLFormElement>): Promise<void> {
-      event.preventDefault()
-      if (!draft || sending || !hasRecipient(draft)) return
-
-      setSending(true)
-      setSendError(null)
-      setSent(false)
-      try {
-        await window.api.sendEmail({ ...draft, ...attach.field })
-        setDraft(null)
-        setQuotedContent(null)
-        setSent(true)
-        onSent(latestMessage?.threadId ?? thread.id)
-      } catch (error) {
-        setSendError(errorMessage(error))
-      } finally {
-        setSending(false)
-      }
-    }
-
     return (
       <>
         {draft && (
-          <form
-            className={`composer${attach.dropping ? ' composer-dragging' : ''}`}
-            onSubmit={handleSend}
-            {...attach.drop}
-          >
-            <h2 id="composer-title">Compose email</h2>
-
-            <RecipientFields
-              to={draft.to}
-              cc={draft.cc ?? ''}
-              bcc={draft.bcc ?? ''}
-              onChange={(patch) => setDraft({ ...draft, ...patch })}
-            />
-
-            <label className="composerField">
-              <span>Subject</span>
-              <input
-                value={draft.subject}
-                onChange={(event) => setDraft({ ...draft, subject: event.target.value })}
-              />
-            </label>
-
-            <ComposerBody
-              ref={bodyRef}
-              attach={attach}
-              remountKey={composerSeq}
-              initialHtml={quotedContent?.html ?? ''}
-              onBodyChange={(content) =>
-                setDraft((prev) =>
-                  prev ? { ...prev, body: content.text, bodyHtml: content.html || undefined } : prev
-                )
-              }
-            />
-
-            {sendError && <p role="alert">{sendError}</p>}
-
-            <div className="composerActions">
-              <button
-                type="button"
-                onClick={() => {
-                  setDraft(null)
-                  setQuotedContent(null)
-                  attach.clear()
-                }}
-              >
-                Cancel
-              </button>
-              <button type="submit" disabled={sending || !hasRecipient(draft)}>
-                {sending ? 'Sending...' : 'Send'}
-              </button>
-            </div>
-          </form>
+          <ThreadReplyForm
+            key={composerSeq}
+            draft={draft}
+            prefill={attachmentPrefill}
+            initialHtml={quotedContent?.html ?? ''}
+            onChange={(patch) => setDraft((prev) => (prev ? { ...prev, ...patch } : prev))}
+            onCancel={() => {
+              setDraft(null)
+              setQuotedContent(null)
+            }}
+            onSent={() => {
+              setDraft(null)
+              setQuotedContent(null)
+              setSent(true)
+              onSent(latestMessage?.threadId ?? thread.id)
+            }}
+          />
         )}
         {sent && <p role="status">Message sent.</p>}
       </>
