@@ -28,7 +28,7 @@ if [ -n "$FEATURES" ]; then
       echo "unknown feature: $feature" >&2
       exit 2
     fi
-    for selected in "${features[@]}"; do
+    for selected in ${features[@]+"${features[@]}"}; do
       if [ "$feature" = "$selected" ]; then
         echo "duplicate feature: $feature" >&2
         exit 2
@@ -60,7 +60,7 @@ fi
 
 failed=()
 passed=0
-for feature in "${features[@]}"; do
+for feature in ${features[@]+"${features[@]}"}; do
   flags=()
   [ "$feature" = "sign-in" ] && flags+=(--signed-out)
   feature_run_id="$RUN_ID"
@@ -71,7 +71,7 @@ for feature in "${features[@]}"; do
     flags+=(--port "$VERIFY_MAILSY_PORT")
   fi
   if timeout 180 node "$HERE/drive.mjs" --feature "$feature" --run-id "$feature_run_id" \
-    "${flags[@]}" >"$ART/$feature.stdout" 2>&1; then
+    ${flags[@]+"${flags[@]}"} >"$ART/$feature.stdout" 2>&1; then
     echo "pass $feature"
     passed=$((passed + 1))
   else
