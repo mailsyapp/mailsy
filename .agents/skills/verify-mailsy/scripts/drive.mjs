@@ -5002,6 +5002,261 @@ try {
     await snapshot(page, 'background-work')
     return 'background-work'
   })
+  journeys.set('rich-text', async () => {
+    // Gmail-style formatting on all three composer surfaces through the one
+    // shared toolbar: every command is driven from the rendered buttons or
+    // its keyboard shortcut, and the resulting html is read back from the
+    // editor, the recorded autosave, and the recorded send.
+    const inbox = page.getByRole('complementary', { name: 'Inbox' })
+    await inbox.waitFor({ timeout: 10000 })
+    const content = page.getByRole('region', { name: 'Email content' })
+    const LINK = 'https://mailsy.example/'
+    const richShape = (html, tag) => page.evaluate(([source, mark, href]) => {
+      const doc = new DOMParser().parseFromString(`<div id="root">${source}</div>`, 'text/html')
+      const root = doc.getElementById('root')
+      const own = (selector) => Array.from(root.querySelectorAll(selector))
+        .filter((node) => !node.closest('.gmail_quote_container'))
+      const texts = (selector) => own(selector).map((node) => node.textContent.trim())
+      const listItems = (tagName) => own(tagName).map((list) =>
+        Array.from(list.querySelectorAll('li')).map((item) => item.textContent.trim()).join('|'))
+      const walker = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT)
+      let cleared = null
+      while (walker.nextNode()) {
+        if (walker.currentNode.textContent.includes(`Clear ${mark}`)) cleared = walker.currentNode
+      }
+      return {
+        bold: texts('b, strong').includes(`Bold ${mark}`),
+        italic: texts('i, em').includes(`Italic ${mark}`),
+        underline: texts('u').includes(`Under ${mark}`),
+        link: own('a[href]').some((a) => a.getAttribute('href') === href && a.textContent === `Mailsy ${mark}`),
+        bullets: listItems('ul').includes(`First ${mark}|Second ${mark}`),
+        numbers: listItems('ol').includes(`Step one ${mark}|Step two ${mark}`),
+        quote: texts('blockquote').includes(`Quoted ${mark}`),
+        cleared: cleared !== null && !cleared.parentElement.closest('b, strong, i, em, u, a')
+      }
+    }, [html, tag, LINK])
+    const assertShape = async (html, tag, where) => {
+      const shape = await richShape(html, tag)
+      assert(
+        Object.values(shape).every(Boolean),
+        `${where} carries every ${tag} format (${Object.keys(shape).join(', ')})`,
+        `${where} lost ${tag} formatting: ${JSON.stringify(shape)}`
+      )
+    }
+    const selectBack = async (count) => {
+      for (let i = 0; i < count; i += 1) await page.keyboard.press('Shift+ArrowLeft')
+    }
+    async function formatRun(scope, tag, { keyboardLink = false, rejectUnsafeLink = false, atEnd = false } = {}) {
+      const editor = scope.getByRole('textbox', { name: 'Message', exact: true })
+      const toolbar = scope.getByRole('toolbar', { name: 'Formatting options' })
+      const tool = (name) => toolbar.getByRole('button', { name, exact: true })
+      await editor.focus()
+      await editor.evaluate((el, atStart) => {
+        const range = document.createRange()
+        range.selectNodeContents(el)
+        range.collapse(atStart)
+        window.getSelection().removeAllRanges()
+        window.getSelection().addRange(range)
+      }, !atEnd)
+      if (atEnd) {
+        await editor.locator('blockquote').last().click()
+        await page.keyboard.press('ControlOrMeta+End')
+        await waitForPressed(tool('Quote'), 'true', `${tag}: the caret at the end sits in the stored quote`, `${tag}: the end caret left the stored quote`)
+        await page.keyboard.press('Enter')
+        await tool('Quote').click()
+        await waitForPressed(tool('Quote'), 'false', `${tag}: Quote lifts the new line out of the stored quote`, `${tag}: the new line stayed quoted`)
+      }
+      await tool('Bold').click()
+      await waitForPressed(tool('Bold'), 'true', `${tag}: Bold turns on at the caret`, `${tag}: Bold did not press`)
+      await page.keyboard.type(`Bold ${tag}`)
+      await tool('Bold').click()
+      await waitForPressed(tool('Bold'), 'false', `${tag}: Bold turns off again`, `${tag}: Bold stuck on`)
+      await page.keyboard.type(' ')
+      await page.keyboard.press('ControlOrMeta+i')
+      await waitForPressed(tool('Italic'), 'true', `${tag}: Ctrl+I turns italic on`, `${tag}: Ctrl+I ignored`)
+      await page.keyboard.type(`Italic ${tag}`)
+      await page.keyboard.press('ControlOrMeta+i')
+      await page.keyboard.type(' ')
+      await tool('Underline').click()
+      await waitForPressed(tool('Underline'), 'true', `${tag}: Underline turns on`, `${tag}: Underline did not press`)
+      await page.keyboard.type(`Under ${tag}`)
+      await tool('Underline').click()
+      await page.keyboard.type(' ')
+      const label = `Mailsy ${tag}`
+      await page.keyboard.type(label)
+      await selectBack(label.length)
+      if (keyboardLink) await page.keyboard.press('ControlOrMeta+k')
+      else await tool('Insert link').click()
+      const linkEdit = scope.getByRole('group', { name: 'Edit link' })
+      await linkEdit.waitFor({ timeout: 5000 })
+      assert(
+        (await linkEdit.getByRole('textbox', { name: 'Text to display' }).inputValue()) === label,
+        `${tag}: the link editor prefills the selected text`,
+        `${tag}: the link editor lost the selection text`
+      )
+      const linkTo = linkEdit.getByRole('textbox', { name: 'Link to' })
+      if (rejectUnsafeLink) {
+        await linkTo.fill('javascript:alert(1)')
+        await linkEdit.getByRole('button', { name: 'Apply link' }).click()
+        await linkEdit.getByRole('alert').waitFor({ timeout: 5000 })
+        assert(
+          (await editor.locator('a').count()) === 0,
+          `${tag}: an unsafe link scheme is refused with an inline error`,
+          `${tag}: a javascript: link reached the body`
+        )
+      }
+      await linkTo.fill('mailsy.example')
+      await linkEdit.getByRole('button', { name: 'Apply link' }).click()
+      await linkEdit.waitFor({ state: 'detached', timeout: 5000 })
+      await waitForPressed(tool('Insert link'), 'true', `${tag}: the link applies to the selection`, `${tag}: no link at the selection`)
+      await page.keyboard.press('ArrowRight')
+      await page.keyboard.press('Enter')
+      await tool('Bulleted list').click()
+      await waitForPressed(tool('Bulleted list'), 'true', `${tag}: Bulleted list starts a list`, `${tag}: no bulleted list`)
+      await page.keyboard.type(`First ${tag}`)
+      await page.keyboard.press('Enter')
+      await page.keyboard.type(`Second ${tag}`)
+      await page.keyboard.press('Enter')
+      await page.keyboard.press('Enter')
+      await waitForPressed(tool('Bulleted list'), 'false', `${tag}: Enter on an empty bullet leaves the list`, `${tag}: the bullet list never ended`)
+      await tool('Numbered list').click()
+      await waitForPressed(tool('Numbered list'), 'true', `${tag}: Numbered list starts a list`, `${tag}: no numbered list`)
+      await page.keyboard.type(`Step one ${tag}`)
+      await page.keyboard.press('Enter')
+      await page.keyboard.type(`Step two ${tag}`)
+      await page.keyboard.press('Enter')
+      await page.keyboard.press('Enter')
+      await waitForPressed(tool('Numbered list'), 'false', `${tag}: Enter on an empty step leaves the list`, `${tag}: the numbered list never ended`)
+      await page.keyboard.press('ControlOrMeta+b')
+      await page.keyboard.type(`Clear ${tag}`)
+      await selectBack(`Clear ${tag}`.length)
+      await waitForPressed(tool('Bold'), 'true', `${tag}: the text to clear starts bold`, `${tag}: the text to clear is not bold`)
+      await tool('Remove formatting').click()
+      await waitForPressed(tool('Bold'), 'false', `${tag}: Remove formatting clears the selection`, `${tag}: Remove formatting left bold`)
+      await page.keyboard.press('ArrowRight')
+      await page.keyboard.press('Enter')
+      await tool('Quote').click()
+      await waitForPressed(tool('Quote'), 'true', `${tag}: Quote opens a block quote`, `${tag}: no block quote`)
+      await page.keyboard.type(`Quoted ${tag}`)
+      await tool('Quote').click()
+      await waitForPressed(tool('Quote'), 'false', `${tag}: Quote toggles the block quote off`, `${tag}: Quote could not be undone`)
+      await tool('Quote').click()
+      await waitForPressed(tool('Quote'), 'true', `${tag}: Quote re-applies to the same line`, `${tag}: Quote did not re-apply`)
+      await assertShape(await editor.innerHTML(), tag, `${tag} editor`)
+      return editor
+    }
+
+    // New compose: every format, then the autosave payload carries them.
+    await page.getByRole('button', { name: 'Compose', exact: true }).click()
+    await content.getByRole('heading', { name: 'New email' }).waitFor({ timeout: 10000 })
+    await formatRun(content, 'compose', { rejectUnsafeLink: true })
+    await content.locator('.composerField input').first().fill('ada@example.com')
+    await content.locator('.composerField input').nth(1).fill('Rich text draft')
+    await snapshot(page, 'rich-text-compose')
+    const composeSave = await page.waitForFunction(() => {
+      const saves = window.__draftSaves ?? []
+      const last = saves[saves.length - 1]
+      return last?.subject === 'Rich text draft' && /Quoted compose/.test(last.bodyHtml ?? '') && last
+    }, null, { timeout: 10000 }).then((handle) => handle.jsonValue())
+    await assertShape(composeSave.bodyHtml, 'compose', 'the compose autosave')
+    assert(
+      composeSave.body.includes('Second compose') && !composeSave.body.includes('<'),
+      'the compose autosave keeps a plain-text body beside the html',
+      'the compose autosave lost its plain-text body'
+    )
+    await page.getByText('Launch checklist', { exact: true }).first().click()
+    await page.getByRole('heading', { name: 'Launch checklist' }).waitFor({ timeout: 10000 })
+
+    // Draft editing: the stored html reopens formatted, the toolbar reads
+    // it back, and new formatting joins it through autosave and send.
+    await page.getByRole('button', { name: 'Drafts' }).click()
+    const drafts = page.getByRole('complementary', { name: 'Drafts' })
+    await drafts.waitFor({ timeout: 10000 })
+    await drafts.getByText('Rich text draft', { exact: true }).first().click()
+    await content.getByRole('heading', { name: 'Draft', exact: true }).waitFor({ timeout: 10000 })
+    const draftEditor = content.getByRole('textbox', { name: 'Message', exact: true })
+    await assertShape(await draftEditor.innerHTML(), 'compose', 'the reopened draft')
+    const draftTool = (name) => content.getByRole('toolbar', { name: 'Formatting options' })
+      .getByRole('button', { name, exact: true })
+    await draftEditor.locator('b', { hasText: 'Bold compose' }).click()
+    await waitForPressed(draftTool('Bold'), 'true', 'clicking stored bold text presses Bold', 'the toolbar ignored stored bold')
+    await draftEditor.locator('li', { hasText: 'Step one compose' }).click()
+    await waitForPressed(draftTool('Numbered list'), 'true', 'clicking a stored step presses Numbered list', 'the toolbar ignored the stored list')
+    await waitForPressed(draftTool('Bold'), 'false', 'Bold releases outside bold text', 'Bold stayed pressed')
+    await draftEditor.locator('a', { hasText: 'Mailsy compose' }).click()
+    await waitForPressed(draftTool('Insert link'), 'true', 'clicking a stored link presses Insert link', 'the toolbar ignored the stored link')
+    await draftTool('Insert link').click()
+    const draftLink = content.getByRole('group', { name: 'Edit link' })
+    assert(
+      (await draftLink.getByRole('textbox', { name: 'Link to' }).inputValue()) === LINK &&
+        (await draftLink.getByRole('button', { name: 'Remove link' }).count()) === 1,
+      'an existing link opens its editor with the stored address and Remove link',
+      'the link editor did not load the stored link'
+    )
+    await draftLink.getByRole('button', { name: 'Cancel link' }).click()
+    await draftLink.waitFor({ state: 'detached', timeout: 5000 })
+    await formatRun(content, 'draft', { atEnd: true })
+    await snapshot(page, 'rich-text-draft')
+    const draftSave = await page.waitForFunction(() => {
+      const saves = window.__draftSaves ?? []
+      const last = saves[saves.length - 1]
+      return last?.subject === 'Rich text draft' && /Quoted draft/.test(last.bodyHtml ?? '') && last
+    }, null, { timeout: 10000 }).then((handle) => handle.jsonValue())
+    await assertShape(draftSave.bodyHtml, 'draft', 'the draft autosave')
+    await assertShape(draftSave.bodyHtml, 'compose', 'the draft autosave')
+    await content.getByRole('button', { name: 'Send', exact: true }).click()
+    await content.getByText('Message sent.').waitFor({ timeout: 10000 })
+    const draftSent = (await page.evaluate(() => window.__sent)).at(-1)
+    assert(
+      draftSent.subject === 'Rich text draft' && draftSent.draftId !== undefined,
+      'the formatted draft is sent as that draft',
+      `the draft send recorded the wrong message (${JSON.stringify(draftSent).slice(0, 120)})`
+    )
+    await assertShape(draftSent.bodyHtml, 'draft', 'the draft send')
+    await assertShape(draftSent.bodyHtml, 'compose', 'the draft send')
+    assert(
+      draftSent.body.includes('Step two draft') && draftSent.body.includes('Quoted compose'),
+      'the draft send keeps the plain-text body',
+      'the draft send lost its plain-text body'
+    )
+
+    // Reply and forward: formatting lands above the untouched quote and
+    // rides the send html beside it.
+    await page.getByRole('button', { name: 'Inbox' }).click()
+    await inbox.waitFor({ timeout: 10000 })
+    await inbox.getByText('Launch checklist').first().click()
+    await page.getByRole('button', { name: 'reply', exact: true }).waitFor({ timeout: 10000 })
+    for (const [action, tag] of [['reply', 'reply'], ['forward', 'forward']]) {
+      await page.getByRole('button', { name: action, exact: true }).click()
+      await page.getByRole('heading', { name: 'Compose email' }).waitFor({ timeout: 10000 })
+      if (action === 'forward') await page.locator('.composerField input').first().fill('ada@example.com')
+      const quote = page.locator('.body-editor .gmail_quote_container')
+      const originalQuote = await quote.innerHTML()
+      await formatRun(page, tag, { keyboardLink: true })
+      assert(
+        (await quote.innerHTML()) === originalQuote,
+        `${tag}: formatting leaves the quoted message untouched`,
+        `${tag}: formatting rewrote the quote`
+      )
+      await snapshot(page, `rich-text-${tag}`)
+      const before = (await page.evaluate(() => window.__sent)).length
+      await page.getByRole('button', { name: 'Send', exact: true }).click()
+      await page.getByRole('status').getByText('Message sent.').waitFor({ timeout: 10000 })
+      const sent = await page.evaluate(() => window.__sent)
+      const record = sent[sent.length - 1]
+      assert(
+        sent.length === before + 1 &&
+          String(record.bodyHtml).includes('gmail_quote_container') &&
+          String(record.bodyHtml).includes('<p>Final review of the launch checklist before Friday.</p>') &&
+          String(record.body).includes(`First ${tag}`),
+        `${tag}: the send keeps the quote and the plain-text body`,
+        `${tag}: the send lost the quote or plain text (${JSON.stringify(record).slice(0, 120)})`
+      )
+      await assertShape(record.bodyHtml, tag, `the ${tag} send`)
+    }
+    await snapshot(page, 'rich-text')
+    return 'rich-text'
+  })
   const journey = journeys.get(FEATURE)
   if (!journey) throw new Error(`unknown feature: ${FEATURE}`)
   const executed = await journey()

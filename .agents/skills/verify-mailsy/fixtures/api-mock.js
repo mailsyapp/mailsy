@@ -594,6 +594,16 @@
     return expectedMessageId !== undefined && target.id !== expectedMessageId
   }
 
+  // Main's assertMessageFields shape for the body pair: the plain text is
+  // required and the rich html, when the composer sends one, is a string.
+  function assertBodyShape(request) {
+    if (
+      typeof request.body !== 'string' ||
+      (request.bodyHtml !== undefined && typeof request.bodyHtml !== 'string')
+    ) {
+      throw new Error('Invalid email request')
+    }
+  }
   function draftConflict() {
     return new Error('Draft changed in Gmail. Leaving keeps your unsaved edits as a separate draft.')
   }
@@ -711,6 +721,7 @@
       ) {
         throw new Error('Recipient is required')
       }
+      assertBodyShape(request)
       sent.push({ ...request })
     },
     // The composer's file picker: the canned file stands in for the native
@@ -766,6 +777,7 @@
       ) {
         throw new Error('Recipient is required')
       }
+      assertBodyShape(request)
       if (hasDraftConflict(findDraft(request.draftId), request.expectedMessageId)) {
         throw draftConflict()
       }
@@ -784,6 +796,7 @@
         typeof request.to !== 'string' ||
         typeof request.subject !== 'string' ||
         typeof request.body !== 'string' ||
+        (request.bodyHtml !== undefined && typeof request.bodyHtml !== 'string') ||
         (request.cc !== undefined && typeof request.cc !== 'string') ||
         (request.bcc !== undefined && typeof request.bcc !== 'string') ||
         (request.threadId !== undefined && typeof request.threadId !== 'string')

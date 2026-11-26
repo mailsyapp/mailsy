@@ -3,6 +3,8 @@ import { useReaction } from '../hooks/useReaction'
 import { BodyEditor, type BodyEditorHandle } from './BodyEditor'
 import { AttachmentChips } from './AttachmentChips'
 import { SignatureBar } from './SignatureBar'
+import { FormattingToolbar } from './FormattingToolbar'
+import { useRichTextFormatting } from './useRichTextFormatting'
 import { loadSignature } from '../lib/signature'
 import { plainTextToHtml } from '../lib/emailHtml'
 import type { ComposerAttachments } from './useComposerAttachments'
@@ -22,6 +24,8 @@ export const ComposerBody = forwardRef<ComposerBodyHandle, ComposerBodyProps>(fu
 ) {
   const editorRef = useRef<BodyEditorHandle | null>(null)
   const [signaturePresent, setSignaturePresent] = useState(false)
+  const formatting = useRichTextFormatting(editorRef)
+  const refreshFormatting = formatting.refresh
   useImperativeHandle(
     ref,
     () => ({
@@ -38,9 +42,10 @@ export const ComposerBody = forwardRef<ComposerBodyHandle, ComposerBodyProps>(fu
       source: 'edit' | 'prefill'
     ) => {
       setSignaturePresent(editorRef.current?.hasSignatureBlock() ?? false)
+      refreshFormatting()
       onBodyChange(content, source)
     },
-    [onBodyChange]
+    [onBodyChange, refreshFormatting]
   )
   useReaction([autoSignature, initialHtml], () => {
     if (!autoSignature) return
@@ -60,8 +65,11 @@ export const ComposerBody = forwardRef<ComposerBodyHandle, ComposerBodyProps>(fu
           placeholder="Type your message..."
           onNonImageFiles={(files) => void attach.addFiles(files)}
           onChange={handleBodyChange}
+          onSelectionChange={formatting.refresh}
+          onLinkShortcut={formatting.openLink}
         />
       </label>
+      <FormattingToolbar formatting={formatting} />
       <SignatureBar editor={editorRef} present={signaturePresent} />
       <AttachmentChips attach={attach} />
     </>

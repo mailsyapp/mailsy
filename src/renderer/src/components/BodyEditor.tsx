@@ -4,6 +4,20 @@ import { useLatest } from '../hooks/useLatest'
 import { useOnMount } from '../hooks/useOnMount'
 import { imageToPayload, looksLikeImageFile } from '../lib/attachmentFile'
 import { SIGNATURE_BLOCK_CLASS, SIGNATURE_BLOCK_SELECTOR } from '../lib/signature'
+import {
+  EMPTY_FORMAT_STATE,
+  applyFormat,
+  applyLink,
+  formatShortcutOf,
+  insideListItem,
+  linkTargetAt,
+  readFormatState,
+  removeLink,
+  selectionRangeIn,
+  type FormatCommand,
+  type FormatState,
+  type LinkTarget
+} from '../lib/richText'
 export interface BodyEditorHandle {
   insertImages: (files: File[]) => Promise<void>
   insertSignatureBlock: (
@@ -14,12 +28,19 @@ export interface BodyEditorHandle {
   ) => void
   removeSignatureBlock: () => void
   hasSignatureBlock: () => boolean
+  format: (command: FormatCommand) => void
+  formatState: () => FormatState
+  linkTarget: () => LinkTarget
+  applyLink: (href: string, text: string) => void
+  removeLink: () => void
 }
 type BodyEditorProps = {
   initialHtml: string
   placeholder?: string
   onChange: (content: { html: string; text: string }, source: 'edit' | 'prefill') => void
   onNonImageFiles: (files: File[]) => void
+  onSelectionChange?: () => void
+  onLinkShortcut?: () => void
 }
 function readContent(editor: HTMLDivElement): {
   html: string
@@ -296,11 +317,49 @@ function insertSignatureBlockInto(editor: HTMLDivElement, html: string, focusCar
   placeCaret(editor, selection, container, offset)
 }
 export const BodyEditor = forwardRef<BodyEditorHandle, BodyEditorProps>(function BodyEditor(
-  { initialHtml, placeholder, onChange, onNonImageFiles },
+  { initialHtml, placeholder, onChange, onNonImageFiles, onSelectionChange, onLinkShortcut },
   ref
 ) {
   const editorRef = useRef<HTMLDivElement | null>(null)
+  const savedRangeRef = useRef<Range | null>(null)
   const onChangeRef = useLatest(onChange)
+  const onSelectionChangeRef = useLatest(onSelectionChange)
+  function rememberSelection(): void {
+    const editor = editorRef.current
+    const range = editor ? selectionRangeIn(editor) : null
+    if (range) savedRangeRef.current = range.cloneRange()
+  }
+  function restoreSelection(editor: HTMLDivElement): void {
+    const selection = window.getSelection()
+    const current = selectionRangeIn(editor)
+    editor.focus()
+    if (!selection) return
+    if (current) {
+      selection.removeAllRanges()
+      selection.addRange(current)
+      return
+    }
+    const saved = savedRangeRef.current
+    let range: Range
+    if (saved && editor.contains(saved.commonAncestorContainer)) {
+      range = saved
+    } else {
+      range = document.createRange()
+      range.selectNodeContents(editor)
+      range.collapse(false)
+    }
+    selection.removeAllRanges()
+    selection.addRange(range)
+  }
+  function runEdit(edit: (editor: HTMLDivElement) => void): void {
+    const editor = editorRef.current
+    if (!editor) return
+    restoreSelection(editor)
+    edit(editor)
+    rememberSelection()
+    reportNow(editor, onChangeRef.current)
+    onSelectionChangeRef.current?.()
+  }
   const reportAfterEditTransaction = useAfterCurrentTask(() => {
     if (editorRef.current) reportNow(editorRef.current, onChangeRef.current)
   })
@@ -311,38 +370,47 @@ export const BodyEditor = forwardRef<BodyEditorHandle, BodyEditorProps>(function
     editor.toggleAttribute('data-empty', isVisuallyEmpty(editor))
     onChange(readContent(editor), 'prefill')
   })
-  useImperativeHandle(
-    ref,
-    () => ({
-      insertImages: async (files: File[]) => {
-        const editor = editorRef.current
-        if (!editor) return
-        await insertImageFiles(editor, files)
-        editor.focus()
-        reportNow(editor, onChangeRef.current)
-      },
-      insertSignatureBlock: (
-        html: string,
-        options?: {
-          focusCaret?: boolean
-        }
-      ) => {
-        const editor = editorRef.current
-        if (!editor) return
-        insertSignatureBlockInto(editor, html, options?.focusCaret ?? true)
-        reportNow(editor, onChangeRef.current)
-      },
-      removeSignatureBlock: () => {
-        const editor = editorRef.current
-        if (!editor) return
-        removeSignatureBlocks(editor)
-        editor.focus()
-        reportNow(editor, onChangeRef.current)
-      },
-      hasSignatureBlock: () => Boolean(editorRef.current?.querySelector(SIGNATURE_OWNED_SELECTOR))
-    }),
-    [onChangeRef]
-  )
+  useImperativeHandle(ref, () => ({
+    insertImages: async (files: File[]) => {
+      const editor = editorRef.current
+      if (!editor) return
+      await insertImageFiles(editor, files)
+      editor.focus()
+      reportNow(editor, onChangeRef.current)
+    },
+    insertSignatureBlock: (
+      html: string,
+      options?: {
+        focusCaret?: boolean
+      }
+    ) => {
+      const editor = editorRef.current
+      if (!editor) return
+      insertSignatureBlockInto(editor, html, options?.focusCaret ?? true)
+      reportNow(editor, onChangeRef.current)
+    },
+    removeSignatureBlock: () => {
+      const editor = editorRef.current
+      if (!editor) return
+      removeSignatureBlocks(editor)
+      editor.focus()
+      reportNow(editor, onChangeRef.current)
+    },
+    hasSignatureBlock: () => Boolean(editorRef.current?.querySelector(SIGNATURE_OWNED_SELECTOR)),
+    format: (command: FormatCommand) => runEdit((editor) => applyFormat(editor, command)),
+    formatState: () => {
+      const editor = editorRef.current
+      return editor ? readFormatState(editor) : EMPTY_FORMAT_STATE
+    },
+    linkTarget: () => {
+      const editor = editorRef.current
+      if (!editor) return { href: '', text: '' }
+      restoreSelection(editor)
+      return linkTargetAt(editor)
+    },
+    applyLink: (href: string, text: string) => runEdit((editor) => applyLink(editor, href, text)),
+    removeLink: () => runEdit((editor) => removeLink(editor))
+  }))
   async function handleDrop(event: React.DragEvent<HTMLDivElement>): Promise<void> {
     if (event.dataTransfer.types.includes('Files')) event.preventDefault()
     event.stopPropagation()
@@ -371,6 +439,10 @@ export const BodyEditor = forwardRef<BodyEditorHandle, BodyEditorProps>(function
       contentEditable
       suppressContentEditableWarning
       onInput={reportAfterEditTransaction}
+      onSelect={() => {
+        rememberSelection()
+        onSelectionChangeRef.current?.()
+      }}
       onDrop={(event) => void handleDrop(event)}
       onPaste={(event) => {
         const editor = event.currentTarget
@@ -383,6 +455,21 @@ export const BodyEditor = forwardRef<BodyEditorHandle, BodyEditorProps>(function
         })
       }}
       onKeyDown={(event) => {
+        const shortcut = event.nativeEvent.isComposing ? null : formatShortcutOf(event)
+        if (shortcut) {
+          event.preventDefault()
+          if (shortcut === 'link') {
+            rememberSelection()
+            onLinkShortcut?.()
+          } else {
+            runEdit((editor) => applyFormat(editor, shortcut))
+          }
+          return
+        }
+        if (event.key === 'Enter' && !event.shiftKey && insideListItem(event.currentTarget)) {
+          reportAfterEditTransaction()
+          return
+        }
         if (event.key === 'Enter' && !event.shiftKey) {
           event.preventDefault()
           document.execCommand('insertLineBreak')
@@ -395,6 +482,7 @@ export const BodyEditor = forwardRef<BodyEditorHandle, BodyEditorProps>(function
           !event.altKey &&
           !event.ctrlKey &&
           !event.metaKey &&
+          !insideListItem(event.currentTarget) &&
           mergeBackward(event.currentTarget)
         ) {
           event.preventDefault()
