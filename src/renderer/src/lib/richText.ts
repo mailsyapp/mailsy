@@ -115,22 +115,30 @@ export function readFormatState(editor: HTMLElement): FormatState {
 
 const BLOCK_TAGS = new Set(['UL', 'OL', 'DIV', 'P', 'BLOCKQUOTE'])
 
-function unwrapQuote(quote: HTMLElement): void {
+function isBlock(node: Node | null): boolean {
+  return node instanceof HTMLElement && BLOCK_TAGS.has(node.tagName)
+}
+
+function endsLine(node: Node | null): boolean {
+  if (!node) return true
+  if (node.nodeName === 'BR' || isBlock(node)) return true
+  return node.nodeType === Node.TEXT_NODE && (node.textContent ?? '').endsWith('\n')
+}
+
+function unwrapQuote(quote: HTMLElement, caret: Range | null): void {
   const parent = quote.parentNode
-  const first = quote.firstChild
-  const last = quote.lastChild
-  if (!parent || !first || !last) return
-  const next = quote.nextSibling
-  if (next && !(last instanceof HTMLElement && BLOCK_TAGS.has(last.tagName)))
-    parent.insertBefore(document.createElement('br'), next)
+  if (!parent || !quote.firstChild) return
+  const kept = caret?.cloneRange() ?? null
+  if (!endsLine(quote.previousSibling) && !isBlock(quote.firstChild))
+    parent.insertBefore(document.createElement('br'), quote)
+  if (quote.nextSibling && !isBlock(quote.lastChild))
+    parent.insertBefore(document.createElement('br'), quote.nextSibling)
   while (quote.firstChild) parent.insertBefore(quote.firstChild, quote)
   parent.removeChild(quote)
-  const kept = document.createRange()
-  kept.setStartBefore(first)
-  kept.setEndAfter(last)
   const selection = window.getSelection()
-  selection?.removeAllRanges()
-  selection?.addRange(kept)
+  if (!kept || !selection) return
+  selection.removeAllRanges()
+  selection.addRange(kept)
 }
 
 function toggleQuote(editor: HTMLElement): void {
@@ -140,7 +148,7 @@ function toggleQuote(editor: HTMLElement): void {
   const quote = userQuoteAt(editor, range?.startContainer ?? null)
   if (quote) {
     const item = closestWithin(editor, range?.startContainer ?? null, 'li')
-    if (item && quote.contains(item)) unwrapQuote(quote)
+    if (item && quote.contains(item)) unwrapQuote(quote, range)
     else document.execCommand('outdent')
     return
   }

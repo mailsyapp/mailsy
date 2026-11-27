@@ -5295,6 +5295,12 @@ try {
       'unquoting a quoted list keeps the list',
       `unquoting a quoted list broke it: ${(await editor.innerHTML()).slice(-200)}`
     )
+    await editor.pressSequentially(' kept')
+    assert(
+      (await editor.locator('li', { hasText: 'quoted item kept' }).count()) === 1,
+      'typing after unquoting continues the list item at the caret',
+      `typing after unquoting went elsewhere: ${(await editor.innerHTML()).slice(-200)}`
+    )
     await content.getByRole('button', { name: 'Close', exact: true }).click().catch(() => {})
     return 'rich-text'
   })
