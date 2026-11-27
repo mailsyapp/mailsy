@@ -128,7 +128,8 @@ function endsLine(node: Node | null): boolean {
 function unwrapQuote(quote: HTMLElement, caret: Range | null): void {
   const parent = quote.parentNode
   if (!parent || !quote.firstChild) return
-  const kept = caret?.cloneRange() ?? null
+  const start = caret ? { node: caret.startContainer, offset: caret.startOffset } : null
+  const end = caret ? { node: caret.endContainer, offset: caret.endOffset } : null
   if (!endsLine(quote.previousSibling) && !isBlock(quote.firstChild))
     parent.insertBefore(document.createElement('br'), quote)
   if (quote.nextSibling && !isBlock(quote.lastChild))
@@ -136,7 +137,10 @@ function unwrapQuote(quote: HTMLElement, caret: Range | null): void {
   while (quote.firstChild) parent.insertBefore(quote.firstChild, quote)
   parent.removeChild(quote)
   const selection = window.getSelection()
-  if (!kept || !selection) return
+  if (!start || !end || !selection) return
+  const kept = document.createRange()
+  kept.setStart(start.node, start.offset)
+  kept.setEnd(end.node, end.offset)
   selection.removeAllRanges()
   selection.addRange(kept)
 }

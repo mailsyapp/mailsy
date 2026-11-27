@@ -5285,6 +5285,7 @@ try {
     await editor.press('Control+Shift+9')
     await editor.press('Control+Shift+8')
     await editor.pressSequentially('quoted item')
+    for (let i = 0; i < 'item'.length; i++) await editor.press('ArrowLeft')
     await waitForPressed(button('Bulleted list'), 'true', 'a list starts inside the quote', 'no list inside the quote')
     await waitForPressed(button('Quote'), 'true', 'the quoted list reads as quoted', 'the quoted list lost its quote')
     await button('Quote').click()
@@ -5295,9 +5296,9 @@ try {
       'unquoting a quoted list keeps the list',
       `unquoting a quoted list broke it: ${(await editor.innerHTML()).slice(-200)}`
     )
-    await editor.pressSequentially(' kept')
+    await editor.pressSequentially('kept ')
     assert(
-      (await editor.locator('li', { hasText: 'quoted item kept' }).count()) === 1,
+      (await editor.locator('li', { hasText: 'quoted kept item' }).count()) === 1,
       'typing after unquoting continues the list item at the caret',
       `typing after unquoting went elsewhere: ${(await editor.innerHTML()).slice(-200)}`
     )
