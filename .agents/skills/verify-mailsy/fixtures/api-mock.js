@@ -209,8 +209,8 @@
     bodyText: 'Launch notes:\nLaunch is go.\nOwners below.\nFrontend\nBackend\nFreeze\nShip\nRunbook\nNo late merges.',
     bodyHtml:
       'Launch notes:<br><b>Launch is go.</b><br><i>Owners</i> <u>below</u>.' +
-      '<ul><li>Frontend</li><li>Backend</li></ul>' +
-      '<ol><li>Freeze</li><li>Ship</li></ol>' +
+      '<ul>\n<li>Frontend</li>\n<li>Backend</li>\n</ul>' +
+      '<ol>\n<li>Freeze</li>\n<li>Ship</li>\n</ol>' +
       '<a href="https://example.com/runbook">Runbook</a>' +
       '<blockquote style="margin:0px 0px 0px 0.8ex;border-left:1px solid rgb(204,204,204);padding-left:1ex">No late merges.</blockquote>',
     folder: 'drafts',

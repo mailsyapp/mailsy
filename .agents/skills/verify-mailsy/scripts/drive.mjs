@@ -5334,6 +5334,11 @@ try {
         !draftSave.bodyHtml.includes('example.com/runbook'),
       'the autosave keeps the stored formats and drops the removed link', 'the draft autosave flattened stored html'
     )
+    assert(
+      draftSave.bodyHtml.includes('<ol><li>Freeze</li><li>Ship</li></ol>'),
+      'newlines between stored list items do not turn into blank lines',
+      `the stored list gained breaks: ${draftSave.bodyHtml.match(/<ol>[\s\S]*?<\/ol>/)?.[0]}`
+    )
     await snapshot(page, 'rich-text-draft')
     await page.getByRole('button', { name: 'Inbox', exact: true }).click()
     await inbox.waitFor({ timeout: 10000 })
@@ -5372,6 +5377,23 @@ try {
       'Quote and list commands leave the native reply quote markup untouched',
       'a block command rewrote the native reply quote'
     )
+    await page.evaluate(() => localStorage.setItem('mailsy.signature', 'Reply Signer'))
+    const replySignature = content.getByRole('button', { name: 'Signature', exact: true })
+    await replySignature.click()
+    await waitForPressed(replySignature, 'true', 'the signature joins the reply', 'the reply signature did not insert')
+    await editor.locator('blockquote.gmail_quote').click()
+    await page.keyboard.press(KEYS.selectAll)
+    await button('Bulleted list').click()
+    await button('Quote').click()
+    assert(
+      (await nativeQuote.innerHTML()) === nativeBefore &&
+        (await editor.locator('li .gmail_quote_container, li blockquote.gmail_quote').count()) === 0,
+      'Select All plus list or Quote in a signed reply leaves the native quote alone',
+      `a whole-message block command rewrote the signed reply quote: ${(await editor.innerHTML()).slice(-400)}`
+    )
+    await replySignature.click()
+    await waitForPressed(replySignature, 'false', 'the reply signature toggles off', 'the reply signature stuck')
+    await page.evaluate(() => localStorage.removeItem('mailsy.signature'))
     await snapshot(page, 'rich-text-reply')
     await content.getByRole('button', { name: 'Send', exact: true }).click()
     await content.getByRole('status').getByText('Message sent.').waitFor({ timeout: 10000 })
@@ -5572,7 +5594,93 @@ try {
       'toggling the signature off removes it instead of duplicating it',
       'the signature text stayed behind after toggling off'
     )
+    await signatureToggle.click()
+    await waitForPressed(signatureToggle, 'true', 'the signature returns', 'the signature did not reinsert')
+    await editor.locator(':scope > .mailsy-signature').getByText('Rich Signer').click()
+    await button('Quote').click()
+    assert(
+      (await editor.locator(':scope > .mailsy-signature').count()) === 1 &&
+        (await editor.locator('blockquote', { hasText: 'Rich Signer' }).count()) === 0,
+      'Quote with the caret in the signature leaves the signature block alone',
+      `quoting inside the signature rewrote it: ${(await editor.innerHTML()).slice(-300)}`
+    )
+    await signatureToggle.click()
+    await waitForPressed(signatureToggle, 'false', 'the signature toggles off after Quote inside it', 'the signature stuck after Quote inside it')
+    assert(
+      !(await editor.innerText()).includes('Rich Signer'),
+      'the signature toggle still removes the only copy',
+      'the signature text stayed behind after Quote inside it'
+    )
     await page.evaluate(() => localStorage.removeItem('mailsy.signature'))
+    await content.getByRole('button', { name: 'Close', exact: true }).click().catch(() => {})
+
+    await page.getByRole('button', { name: 'Compose', exact: true }).click()
+    await content.getByRole('heading', { name: 'New email' }).waitFor({ timeout: 10000 })
+    await editor.click()
+    await page.keyboard.press(KEYS.selectAll)
+    await page.keyboard.press('Delete')
+    await editor.pressSequentially('abc')
+    await page.keyboard.press(KEYS.selectAll)
+    await page.keyboard.type('x')
+    const replaceSteps = []
+    for (const key of ['Control+z', 'Control+z', 'Control+Shift+z', 'Control+Shift+z']) {
+      await page.keyboard.press(key)
+      replaceSteps.push((await editor.innerText()).trim())
+    }
+    assert(
+      JSON.stringify(replaceSteps) === JSON.stringify(['abc', '', 'abc', 'x']),
+      'typing over a selection is its own undo step',
+      `undo/redo around a replacement: ${JSON.stringify(replaceSteps)}`
+    )
+    const selectFromLineStart = async (skip, count) => {
+      await page.keyboard.press(KEYS.lineStart)
+      for (let i = 0; i < skip; i++) await page.keyboard.press('ArrowRight')
+      for (let i = 0; i < count; i++) await page.keyboard.press('Shift+ArrowRight')
+    }
+    const addLink = async (href) => {
+      await page.keyboard.press('Control+k')
+      await linkForm.waitFor({ timeout: 5000 })
+      await linkForm.getByLabel('Web address').fill(href)
+      await linkForm.getByRole('button', { name: 'Apply link', exact: true }).click()
+      await linkForm.waitFor({ state: 'hidden', timeout: 5000 })
+    }
+    const links = () =>
+      editor.evaluate((el) => [...el.querySelectorAll('a')].map((a) => [a.getAttribute('href'), a.textContent]))
+    await page.keyboard.press(KEYS.selectAll)
+    await page.keyboard.type('hello world')
+    await selectFromLineStart(6, 5)
+    await addLink('https://a.example')
+    await selectFromLineStart(0, 9)
+    await addLink('https://b.example')
+    assert(
+      JSON.stringify(await links()) ===
+        JSON.stringify([['https://b.example', 'hello wor'], ['https://a.example', 'ld']]),
+      'linking text that overlaps a link links the selection and leaves the old link alone',
+      `a mixed selection retargeted the link: ${JSON.stringify(await links())}`
+    )
+    await page.keyboard.press(KEYS.lineEnd)
+    await page.keyboard.type(' bb')
+    await page.keyboard.press('Shift+ArrowLeft')
+    await page.keyboard.press('Shift+ArrowLeft')
+    await addLink('https://c.example')
+    await editor.locator('a', { hasText: 'hello wor' }).click()
+    await page.keyboard.press('Control+k')
+    await linkForm.waitFor({ timeout: 5000 })
+    await editor.locator('a', { hasText: 'bb' }).click()
+    await page.keyboard.press('Control+k')
+    assert(
+      (await linkForm.getByLabel('Text to display').inputValue()) === 'bb' &&
+        (await linkForm.getByLabel('Web address').inputValue()) === 'https://c.example',
+      'reopening the link form on another link shows that link',
+      'the reopened link form kept the previous link'
+    )
+    await linkForm.getByRole('button', { name: 'Apply link', exact: true }).click()
+    assert(
+      JSON.stringify(await links()) ===
+        JSON.stringify([['https://b.example', 'hello wor'], ['https://a.example', 'ld'], ['https://c.example', 'bb']]),
+      'applying the reopened form leaves every link as it was',
+      `the reopened form rewrote a link: ${JSON.stringify(await links())}`
+    )
     await content.getByRole('button', { name: 'Close', exact: true }).click().catch(() => {})
     return 'rich-text'
   })
