@@ -194,6 +194,10 @@ function inReplyQuote(editor: HTMLElement, range: Range | null): boolean {
   )
 }
 
+function inSignature(editor: HTMLElement, range: Range | null): boolean {
+  return closestWithin(editor, range?.startContainer ?? null, SIGNATURE_BLOCK_SELECTOR) !== null
+}
+
 function keepSignatureOutside(editor: HTMLElement): void {
   const range = selectionRangeIn(editor)
   const signature = editor.querySelector(SIGNATURE_BLOCK_SELECTOR)
@@ -207,7 +211,8 @@ function keepSignatureOutside(editor: HTMLElement): void {
 }
 
 function prepareBlockFormat(editor: HTMLElement): boolean {
-  if (inReplyQuote(editor, selectionRangeIn(editor))) return false
+  const range = selectionRangeIn(editor)
+  if (inReplyQuote(editor, range) || inSignature(editor, range)) return false
   keepSignatureOutside(editor)
   separateBlocks(editor)
   return true
