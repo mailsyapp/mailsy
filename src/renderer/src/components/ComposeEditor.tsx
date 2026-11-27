@@ -10,6 +10,7 @@ import {
 import { useDraftAutosave } from './useDraftAutosave'
 import { ComposerBody, type ComposerBodyHandle } from './ComposerBody'
 import { useComposerAttachments } from './useComposerAttachments'
+import { blockImplicitSubmit } from '../lib/composerForm'
 type ComposeEditorProps = {
   onClose: () => void
   sessionSignal: AbortSignal
@@ -64,6 +65,7 @@ export function ComposeEditor({ onClose, sessionSignal }: ComposeEditorProps): R
     <form
       className={`composer composer-fill${attach.dropping ? ' composer-dragging' : ''}`}
       onSubmit={handleSend}
+      onKeyDown={blockImplicitSubmit}
       {...attach.drop}
     >
       <h2>New email</h2>

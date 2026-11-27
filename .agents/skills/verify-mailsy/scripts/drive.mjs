@@ -5126,6 +5126,76 @@ try {
     await snapshot(page, 'background-work')
     return 'background-work'
   })
+  journeys.set('implicit-submit', async () => {
+    // Enter inside a single-line composer input must not submit the form:
+    // implicit submission fires onSubmit={handleSend} straight out of the
+    // To/Subject fields. The shared keydown guard swallows it on every
+    // surface, while clicking Send still submits.
+    const inbox = page.getByRole('complementary', { name: 'Inbox' })
+    await inbox.waitFor({ timeout: 10000 })
+    const content = page.getByRole('region', { name: 'Email content' })
+    const toField = () => content.getByLabel('To', { exact: true })
+    const subjectField = () => content.getByRole('textbox', { name: 'Subject' })
+    const sentCount = () => page.evaluate(() => (window.__sent ?? []).length)
+
+    const enterKeepsComposer = async (surface, heading, proofName) => {
+      const toValue = await toField().inputValue()
+      const subjectValue = await subjectField().inputValue()
+      const before = await sentCount()
+      await toField().press('Enter')
+      await subjectField().press('Enter')
+      assert(
+        (await sentCount()) === before &&
+          (await content.getByRole('heading', { name: heading, exact: true }).count()) === 1 &&
+          (await toField().inputValue()) === toValue &&
+          (await subjectField().inputValue()) === subjectValue,
+        `${surface}: Enter in the To/Subject inputs sends nothing and keeps the composer`,
+        `${surface}: Enter submitted the composer or lost field contents`
+      )
+      await snapshot(page, proofName)
+      await content.getByRole('button', { name: 'Send', exact: true }).click()
+      await page.getByRole('status').getByText('Message sent.').waitFor({ timeout: 10000 })
+      const sent = await page.evaluate(() => window.__sent)
+      assert(
+        sent.length === before + 1 && sent.at(-1).subject === subjectValue,
+        `${surface}: clicking Send still sends exactly once (${JSON.stringify(sent.at(-1)).slice(0, 160)})`,
+        `${surface}: Send recorded ${sent.length - before} sends or a wrong subject: ${JSON.stringify(sent.at(-1)).slice(0, 200)}`
+      )
+    }
+
+    await page.getByRole('button', { name: 'Compose', exact: true }).click()
+    await content.getByRole('heading', { name: 'New email' }).waitFor({ timeout: 10000 })
+    await toField().pressSequentially('ada@example.com')
+    await subjectField().pressSequentially('Enter-safe compose')
+    await enterKeepsComposer('new compose', 'New email', 'implicit-submit-compose')
+    await content.getByRole('button', { name: 'Close', exact: true }).click()
+
+    await page.getByRole('button', { name: 'Drafts' }).click()
+    const drafts = page.getByRole('complementary', { name: 'Drafts' })
+    await drafts.getByText('Draft: Q4 planning notes').first().click()
+    await content.getByRole('heading', { name: 'Draft', exact: true }).waitFor({ timeout: 10000 })
+    await toField().pressSequentially(' hops')
+    await subjectField().pressSequentially(' plus Enter-safe')
+    await enterKeepsComposer('draft editor', 'Draft', 'implicit-submit-draft')
+
+    await page.getByRole('button', { name: 'Inbox', exact: true }).click()
+    await inbox.waitFor({ timeout: 10000 })
+    await inbox.getByText('Launch checklist').first().click()
+    await content.getByRole('button', { name: 'reply', exact: true }).click()
+    await content.getByRole('heading', { name: 'Compose email' }).waitFor({ timeout: 10000 })
+    await toField().pressSequentially(' hops')
+    await subjectField().pressSequentially(' plus Enter-safe')
+    await enterKeepsComposer('reply', 'Compose email', 'implicit-submit-reply')
+
+    await content.getByRole('button', { name: 'forward', exact: true }).click()
+    await content.getByRole('heading', { name: 'Compose email' }).waitFor({ timeout: 10000 })
+    await toField().pressSequentially('ada@example.com')
+    await subjectField().pressSequentially(' plus Enter-safe')
+    await enterKeepsComposer('forward', 'Compose email', 'implicit-submit-forward')
+
+    assert((await sentCount()) === 4, 'one send per surface, four total', 'unexpected outbox size')
+    return 'implicit-submit'
+  })
   journeys.set('rich-text', async () => {
     // Gmail-style formatting on all three composer surfaces: the shared
     // toolbar's commands land as html in the body, the toolbar mirrors the

@@ -12,6 +12,7 @@ import { useDraftAutosave } from './useDraftAutosave'
 import { ComposerBody, type ComposerBodyHandle } from './ComposerBody'
 import { useComposerAttachments } from './useComposerAttachments'
 import { plainTextToHtml } from '../lib/emailHtml'
+import { blockImplicitSubmit } from '../lib/composerForm'
 type DraftEditorProps = {
   row: ThreadSummary
   detail: EmailDetailData | null
@@ -114,6 +115,7 @@ function DraftForm({
     <form
       className={`composer composer-fill${attach.dropping ? ' composer-dragging' : ''}`}
       onSubmit={handleSend}
+      onKeyDown={blockImplicitSubmit}
       {...attach.drop}
     >
       <h2 id="draft-editor-title">Draft</h2>

@@ -4,6 +4,7 @@ import { errorMessage } from '../lib/format'
 import { RecipientFields } from './RecipientFields'
 import { ComposerBody, type ComposerBodyHandle } from './ComposerBody'
 import { useComposerAttachments, type AttachmentPrefill } from './useComposerAttachments'
+import { blockImplicitSubmit } from '../lib/composerForm'
 
 type ThreadReplyFormProps = {
   draft: SendEmailRequest
@@ -46,6 +47,7 @@ export function ThreadReplyForm({
     <form
       className={`composer${attach.dropping ? ' composer-dragging' : ''}`}
       onSubmit={handleSend}
+      onKeyDown={blockImplicitSubmit}
       {...attach.drop}
     >
       <h2 id="composer-title">Compose email</h2>
