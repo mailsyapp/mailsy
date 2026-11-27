@@ -7,7 +7,7 @@ Every composer body carries a Gmail-style formatting toolbar: bold, italic, unde
 - `inline-formats` Bold (`Ctrl+B`), Italic (`Ctrl+I`), Underline (`Ctrl+U`) toggle at the caret or over a selection; the buttons' `aria-pressed` mirrors the caret's formatting.
 - `link` the `Link` button or `Ctrl+K` opens the `Edit link` group (`Text to display`, `Web address`, `Apply link`/`Cancel link`, and `Remove link` when the caret is on a link). Bare domains get `https://`, bare emails `mailto:`; any other scheme (`javascript:`, `data:`, …) is refused with an alert.
 - `lists` `Numbered list` (`Ctrl+Shift+7`) and `Bulleted list` (`Ctrl+Shift+8`); Enter adds an item, Enter on an empty item leaves the list.
-- `quote` `Quote` (`Ctrl+Shift+9`) wraps the line in a Gmail-styled `<blockquote>`, and toggles it off again. A reply/forward's own `.gmail_quote_container` quote is not a user quote: the button stays unpressed inside it and never unwraps it.
+- `quote` `Quote` (`Ctrl+Shift+9`) wraps the line in a Gmail-styled `<blockquote>`, and toggles it off again. A reply/forward's own `.gmail_quote_container` quote is not a user quote: the button stays unpressed inside it and never unwraps it. Quote and both list commands are no-ops while the selection touches that native quote. Block commands clamp a selection that reaches the signature so `.mailsy-signature` stays a direct child of the body, and put a line break before a list/quote that would otherwise merge with the inline line above it.
 - `clear` `Remove formatting` (`Ctrl+\`) strips inline formats and links from the selection.
 
 ## How to get to it (user POV)
@@ -37,3 +37,5 @@ Run `node scripts/drive.mjs --feature rich-text --run-id "$RUN_ID" --port "$VERI
 - At a caret placed directly before stored bold text, `queryCommandState('bold')` already reports bold, so Bold turns it off (same as Gmail). The seeded draft starts with a plain line so the journey's caret at the body start is unformatted.
 - Enter outside a list is still the editor's `insertLineBreak`, which in the `pre-wrap` body serializes as a `\n` text node, not `<br>`; inside a list item the native Enter runs so lists grow and exit like Gmail's.
 - `drive/ui-pass-probe.mjs` must still end `PROBE: all pass` after toolbar or editor changes.
+- Undo/Redo (`Ctrl/Cmd+Z`, `Ctrl/Cmd+Shift+Z`, `Ctrl+Y`, and the Edit menu's `historyUndo`/`historyRedo`) run through the editor's own snapshot history in `lib/editorHistory.ts`, not the browser's. Several edits move DOM nodes directly (quoted-list unquote, Backspace merges, signatures, image inserts), and the native stack replays those against detached nodes. Every new mutation path must call `history.record(editor)` before it changes the DOM.
+- Closing the link form with Cancel or Escape restores the body selection it was opened from, so typing continues in the body.

@@ -1,9 +1,10 @@
-import { forwardRef, useImperativeHandle, useRef } from 'react'
+import { forwardRef, useImperativeHandle, useRef, useState } from 'react'
 import { useAfterCurrentTask } from '../hooks/useAfterCurrentTask'
 import { useLatest } from '../hooks/useLatest'
 import { useOnMount } from '../hooks/useOnMount'
 import { useSubscription } from '../hooks/useSubscription'
 import { imageToPayload, looksLikeImageFile } from '../lib/attachmentFile'
+import { EditorHistory } from '../lib/editorHistory'
 import { SIGNATURE_BLOCK_CLASS, SIGNATURE_BLOCK_SELECTOR } from '../lib/signature'
 import {
   applyFormat,
@@ -33,6 +34,7 @@ export interface BodyEditorHandle {
   captureLinkSelection: () => LinkSelection
   applyLink: (href: string, text: string) => void
   removeLink: () => void
+  cancelLink: () => void
 }
 type BodyEditorProps = {
   initialHtml: string
@@ -211,10 +213,12 @@ function runFormat(
   editor: HTMLDivElement,
   command: FormatCommand,
   savedRange: Range | null,
+  history: EditorHistory,
   onChange: BodyEditorProps['onChange'],
   onFormatState: FormatStateListener
 ): void {
   if (!selectionRangeIn(editor)) restoreRange(editor, savedRange)
+  history.record(editor)
   applyFormat(editor, command)
   reportNow(editor, onChange)
   reportFormatState(editor, onFormatState)
@@ -336,6 +340,25 @@ function insertSignatureBlockInto(editor: HTMLDivElement, html: string, focusCar
   }
   placeCaret(editor, selection, container, offset)
 }
+type HistoryDirection = 'undo' | 'redo'
+
+function historyShortcut(event: React.KeyboardEvent): HistoryDirection | null {
+  if (!(event.ctrlKey || event.metaKey) || event.altKey) return null
+  const key = event.key.toLowerCase()
+  if (key === 'z') return event.shiftKey ? 'redo' : 'undo'
+  if (key === 'y' && event.ctrlKey && !event.shiftKey) return 'redo'
+  return null
+}
+
+const COALESCED_INPUTS: Record<string, string> = {
+  insertText: 'type',
+  insertCompositionText: 'type',
+  deleteContentBackward: 'delete',
+  deleteContentForward: 'delete',
+  deleteWordBackward: 'delete',
+  deleteWordForward: 'delete'
+}
+
 export const BodyEditor = forwardRef<BodyEditorHandle, BodyEditorProps>(function BodyEditor(
   { initialHtml, placeholder, onChange, onNonImageFiles, onFormatState, onRequestLink },
   ref
@@ -345,6 +368,26 @@ export const BodyEditor = forwardRef<BodyEditorHandle, BodyEditorProps>(function
   const onFormatStateRef = useLatest(onFormatState)
   const savedRangeRef = useRef<Range | null>(null)
   const linkRangeRef = useRef<Range | null>(null)
+  const [history] = useState(() => new EditorHistory())
+  const stepHistory = (editor: HTMLDivElement, direction: HistoryDirection): void => {
+    if (!history[direction](editor)) return
+    reportNow(editor, onChangeRef.current)
+    reportFormatState(editor, onFormatStateRef.current)
+  }
+  useSubscription(true, () => {
+    const editor = editorRef.current
+    if (!editor) return () => {}
+    const beforeInput = (event: InputEvent): void => {
+      if (event.inputType === 'historyUndo' || event.inputType === 'historyRedo') {
+        event.preventDefault()
+        stepHistory(editor, event.inputType === 'historyUndo' ? 'undo' : 'redo')
+        return
+      }
+      history.record(editor, COALESCED_INPUTS[event.inputType] ?? null)
+    }
+    editor.addEventListener('beforeinput', beforeInput)
+    return () => editor.removeEventListener('beforeinput', beforeInput)
+  })
   useSubscription(true, () => {
     const track = (): void => {
       const editor = editorRef.current
@@ -364,6 +407,7 @@ export const BodyEditor = forwardRef<BodyEditorHandle, BodyEditorProps>(function
     const editor = editorRef.current
     if (!editor) return
     if (initialHtml) editor.innerHTML = initialHtml
+    history.reset()
     editor.toggleAttribute('data-empty', isVisuallyEmpty(editor))
     onChange(readContent(editor), 'prefill')
   })
@@ -373,6 +417,7 @@ export const BodyEditor = forwardRef<BodyEditorHandle, BodyEditorProps>(function
       insertImages: async (files: File[]) => {
         const editor = editorRef.current
         if (!editor) return
+        history.record(editor)
         await insertImageFiles(editor, files)
         editor.focus()
         reportNow(editor, onChangeRef.current)
@@ -385,12 +430,14 @@ export const BodyEditor = forwardRef<BodyEditorHandle, BodyEditorProps>(function
       ) => {
         const editor = editorRef.current
         if (!editor) return
+        history.record(editor)
         insertSignatureBlockInto(editor, html, options?.focusCaret ?? true)
         reportNow(editor, onChangeRef.current)
       },
       removeSignatureBlock: () => {
         const editor = editorRef.current
         if (!editor) return
+        history.record(editor)
         removeSignatureBlocks(editor)
         editor.focus()
         reportNow(editor, onChangeRef.current)
@@ -403,6 +450,7 @@ export const BodyEditor = forwardRef<BodyEditorHandle, BodyEditorProps>(function
             editor,
             command,
             savedRangeRef.current,
+            history,
             onChangeRef.current,
             onFormatStateRef.current
           )
@@ -417,6 +465,7 @@ export const BodyEditor = forwardRef<BodyEditorHandle, BodyEditorProps>(function
       applyLink: (href: string, text: string) => {
         const editor = editorRef.current
         if (!editor) return
+        history.record(editor)
         applyLink(editor, linkRangeRef.current, href, text)
         linkRangeRef.current = null
         reportNow(editor, onChangeRef.current)
@@ -425,13 +474,20 @@ export const BodyEditor = forwardRef<BodyEditorHandle, BodyEditorProps>(function
       removeLink: () => {
         const editor = editorRef.current
         if (!editor) return
+        history.record(editor)
         removeLink(editor, linkRangeRef.current)
         linkRangeRef.current = null
         reportNow(editor, onChangeRef.current)
         reportFormatState(editor, onFormatStateRef.current)
+      },
+      cancelLink: () => {
+        const editor = editorRef.current
+        if (!editor) return
+        restoreRange(editor, linkRangeRef.current)
+        linkRangeRef.current = null
       }
     }),
-    [onChangeRef, onFormatStateRef]
+    [history, onChangeRef, onFormatStateRef]
   )
   async function handleDrop(event: React.DragEvent<HTMLDivElement>): Promise<void> {
     if (event.dataTransfer.types.includes('Files')) event.preventDefault()
@@ -445,6 +501,7 @@ export const BodyEditor = forwardRef<BodyEditorHandle, BodyEditorProps>(function
       }
     }
     const files = Array.from(event.dataTransfer.files)
+    history.record(editor)
     const leftovers = await insertImageFiles(editor, files)
     if (leftovers.length) onNonImageFiles(leftovers)
     editor.focus()
@@ -467,12 +524,19 @@ export const BodyEditor = forwardRef<BodyEditorHandle, BodyEditorProps>(function
         const files = Array.from(event.clipboardData.files).filter(looksLikeImageFile)
         if (files.length === 0) return
         event.preventDefault()
+        history.record(editor)
         void insertImageFiles(editor, files).then(() => {
           editor.focus()
           reportNow(editor, onChangeRef.current)
         })
       }}
       onKeyDown={(event) => {
+        const direction = event.nativeEvent.isComposing ? null : historyShortcut(event)
+        if (direction) {
+          event.preventDefault()
+          stepHistory(event.currentTarget, direction)
+          return
+        }
         const shortcut = event.nativeEvent.isComposing ? null : formatShortcut(event)
         if (shortcut) {
           event.preventDefault()
@@ -482,6 +546,7 @@ export const BodyEditor = forwardRef<BodyEditorHandle, BodyEditorProps>(function
               event.currentTarget,
               shortcut,
               savedRangeRef.current,
+              history,
               onChangeRef.current,
               onFormatStateRef.current
             )
@@ -493,6 +558,7 @@ export const BodyEditor = forwardRef<BodyEditorHandle, BodyEditorProps>(function
         }
         if (event.key === 'Enter' && !event.shiftKey) {
           event.preventDefault()
+          history.record(event.currentTarget)
           document.execCommand('insertLineBreak')
           reportAfterEditTransaction()
           return
@@ -502,11 +568,13 @@ export const BodyEditor = forwardRef<BodyEditorHandle, BodyEditorProps>(function
           !event.nativeEvent.isComposing &&
           !event.altKey &&
           !event.ctrlKey &&
-          !event.metaKey &&
-          mergeBackward(event.currentTarget)
+          !event.metaKey
         ) {
-          event.preventDefault()
-          reportAfterEditTransaction()
+          history.record(event.currentTarget, 'delete')
+          if (mergeBackward(event.currentTarget)) {
+            event.preventDefault()
+            reportAfterEditTransaction()
+          }
         }
       }}
     />

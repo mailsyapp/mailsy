@@ -5170,6 +5170,24 @@ try {
     await waitForPressed(button('Quote'), 'true', 'a stored block quote reads back pressed', 'stored quote lost')
     await editor.locator('a', { hasText: 'Runbook' }).click()
     await waitForPressed(button('Link'), 'true', 'a stored link reads back pressed', 'stored link lost')
+    await editor.locator('ul li', { hasText: 'Frontend' }).click()
+    await page.keyboard.press('Home')
+    await page.keyboard.press('Shift+ArrowDown')
+    await page.keyboard.press('Shift+End')
+    await button('Numbered list').click()
+    await button('Bulleted list').click()
+    const roundTrip = await editor.evaluate((el) => ({
+      items: [...el.querySelectorAll('ul li')].map((li) => li.textContent),
+      lines: el.innerText.split('\n').map((line) => line.trim()).filter(Boolean)
+    }))
+    assert(
+      JSON.stringify(roundTrip.items) === JSON.stringify(['Frontend', 'Backend']) &&
+        roundTrip.lines.includes('Owners below.') &&
+        roundTrip.lines.indexOf('Owners below.') < roundTrip.lines.indexOf('Frontend'),
+      'a numbered/bulleted round trip leaves the neighbouring line alone',
+      `the list round trip rewrote its neighbours: ${JSON.stringify(roundTrip)}`
+    )
+    await editor.locator('a', { hasText: 'Runbook' }).click()
     await editor.press('Control+k')
     const linkEditor = content.getByRole('group', { name: 'Edit link' })
     await linkEditor.waitFor({ timeout: 5000 })
@@ -5221,10 +5239,13 @@ try {
     await button('Quote').click()
     await editor.press('Control+Shift+9')
     await waitForPressed(button('Quote'), 'false', 'Quote is a no-op inside the reply quote', 'Quote toggled on inside the reply quote')
+    await button('Bulleted list').click()
+    await page.keyboard.press('Control+Shift+7')
+    await waitForPressed(button('Bulleted list'), 'false', 'lists are no-ops inside the reply quote', 'a list started inside the reply quote')
     assert(
       (await nativeQuote.innerHTML()) === nativeBefore,
-      'Quote leaves the native reply quote markup untouched',
-      'Quote rewrote the native reply quote'
+      'Quote and list commands leave the native reply quote markup untouched',
+      'a block command rewrote the native reply quote'
     )
     await snapshot(page, 'rich-text-reply')
     await content.getByRole('button', { name: 'Send', exact: true }).click()
@@ -5280,6 +5301,18 @@ try {
     await linkForm.getByRole('button', { name: 'Cancel link', exact: true }).press('Enter')
     await linkForm.waitFor({ state: 'hidden', timeout: 5000 })
     assert((await editor.locator('a').count()) === 0, 'Enter on Cancel link cancels instead of applying', 'Enter on Cancel link applied the link')
+    await page.keyboard.press('End')
+    await page.keyboard.type('!')
+    await page.keyboard.press('Control+k')
+    await linkForm.waitFor({ timeout: 5000 })
+    await page.keyboard.press('Escape')
+    await linkForm.waitFor({ state: 'hidden', timeout: 5000 })
+    await page.keyboard.type('?')
+    assert(
+      (await editor.innerText()).includes('line three!?'),
+      'Cancel and Escape hand the caret back to the body',
+      `typing after closing the link form went nowhere: ${JSON.stringify(await editor.innerText())}`
+    )
     await editor.press('Control+End')
     await editor.press('Enter')
     await editor.press('Control+Shift+9')
@@ -5289,7 +5322,7 @@ try {
     await waitForPressed(button('Bulleted list'), 'true', 'a list starts inside the quote', 'no list inside the quote')
     await waitForPressed(button('Quote'), 'true', 'the quoted list reads as quoted', 'the quoted list lost its quote')
     await button('Quote').click()
-    await waitForPressed(button('Quote'), 'false', 'Quote toggles off inside a quoted list', 'Quote stayed on in the quoted list')
+    await waitForPressed(button('Quote'), 'false', 'Quote toggles off inside a quoted list', 'Quote stayed on in the quoted list ' + (await editor.innerHTML()).slice(-600))
     assert(
       (await editor.locator('li', { hasText: 'quoted item' }).count()) === 1 &&
         (await editor.locator('blockquote').count()) === 0,
@@ -5301,6 +5334,26 @@ try {
       (await editor.locator('li', { hasText: 'quoted kept item' }).count()) === 1,
       'typing after unquoting continues the list item at the caret',
       `typing after unquoting went elsewhere: ${(await editor.innerHTML()).slice(-200)}`
+    )
+    const afterTyping = await editor.innerHTML()
+    for (let i = 0; i < 4 && (await editor.locator('blockquote').count()) === 0; i++)
+      await page.keyboard.press('Control+z')
+    const undone = await editor.evaluate((el) => ({
+      quotedItem: el.querySelector('blockquote li')?.textContent ?? null,
+      lines: el.innerText.split('\n').map((line) => line.trim()).filter(Boolean)
+    }))
+    assert(
+      undone.quotedItem === 'quoted item' &&
+        ['line one', 'quoted line', 'line three!?'].every((line) => undone.lines.includes(line)),
+      'undo brings the quoted list back without touching the lines around it',
+      `undo after unquoting a list misbehaved: ${JSON.stringify(undone)}`
+    )
+    for (let i = 0; i < 4 && (await editor.innerHTML()) !== afterTyping; i++)
+      await page.keyboard.press('Control+Shift+z')
+    assert(
+      (await editor.innerHTML()) === afterTyping,
+      'redo replays the unquote and the typing exactly',
+      `redo diverged: ${(await editor.innerHTML()).slice(-300)}`
     )
     const unquoteErrors = []
     page.on('pageerror', (error) => unquoteErrors.push(error.message))
@@ -5325,6 +5378,40 @@ try {
       'unquoting a selection that ends on the quote element keeps the list without errors',
       `unquoting ended badly: errors=${JSON.stringify(unquoteErrors)} html=${(await editor.innerHTML()).slice(-200)}`
     )
+    if (!EXECUTABLE) await page.setViewportSize({ width: 1066, height: 748 })
+    await editor.locator('li', { hasText: 'quoted kept item' }).click()
+    await page.keyboard.press('Control+k')
+    await linkForm.waitFor({ timeout: 5000 })
+    const editorBox = await editor.boundingBox()
+    const signatureBox = await content.locator('.signatureBar').boundingBox()
+    assert(
+      editorBox && signatureBox && editorBox.y + editorBox.height <= signatureBox.y + 1,
+      'the open link form never pushes the body under the signature row',
+      `body ${JSON.stringify(editorBox)} overlaps signature row ${JSON.stringify(signatureBox)}`
+    )
+    await page.keyboard.press('Escape')
+    await linkForm.waitFor({ state: 'hidden', timeout: 5000 })
+    await page.evaluate(() => localStorage.setItem('mailsy.signature', 'Rich Signer'))
+    const signatureToggle = content.getByRole('button', { name: 'Signature', exact: true })
+    await signatureToggle.click()
+    await waitForPressed(signatureToggle, 'true', 'the signature joins the formatted body', 'the signature did not insert')
+    await editor.locator('li', { hasText: 'quoted kept item' }).click()
+    await page.keyboard.press('Control+a')
+    await button('Quote').click()
+    assert(
+      (await editor.locator(':scope > .mailsy-signature').count()) === 1 &&
+        (await editor.locator('blockquote .mailsy-signature').count()) === 0,
+      'quoting the whole message leaves the signature block outside the quote',
+      `whole-message quote swallowed the signature: ${(await editor.innerHTML()).slice(-300)}`
+    )
+    await signatureToggle.click()
+    await waitForPressed(signatureToggle, 'false', 'the signature still toggles off after a whole-message quote', 'the signature stuck after quoting')
+    assert(
+      !(await editor.innerText()).includes('Rich Signer'),
+      'toggling the signature off removes it instead of duplicating it',
+      'the signature text stayed behind after toggling off'
+    )
+    await page.evaluate(() => localStorage.removeItem('mailsy.signature'))
     await content.getByRole('button', { name: 'Close', exact: true }).click().catch(() => {})
     return 'rich-text'
   })

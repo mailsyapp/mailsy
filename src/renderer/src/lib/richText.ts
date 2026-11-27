@@ -1,4 +1,5 @@
 import { escapeHtml, QUOTE_BLOCKQUOTE_STYLE } from './emailHtml'
+import { SIGNATURE_BLOCK_SELECTOR } from './signature'
 
 export type FormatCommand =
   'bold' | 'italic' | 'underline' | 'bulletedList' | 'numberedList' | 'quote' | 'clear'
@@ -121,25 +122,27 @@ function isBlock(node: Node | null): boolean {
 
 function endsLine(node: Node | null): boolean {
   if (!node) return true
+  if (node.nodeType === Node.TEXT_NODE && (node.textContent ?? '').trim() === '')
+    return endsLine(node.previousSibling)
   if (node.nodeName === 'BR' || isBlock(node)) return true
   return node.nodeType === Node.TEXT_NODE && (node.textContent ?? '').endsWith('\n')
 }
 
-type Boundary = { node: Node; offset: number } | { after: Node }
+type Boundary = { node: Node; offset: number } | { before: Node } | { after: Node }
 
-function boundaryOutside(quote: HTMLElement, node: Node, offset: number): Boundary {
+function boundaryOutside(quote: Node, node: Node, offset: number): Boundary {
   if (node !== quote) return { node, offset }
   const child = quote.childNodes[offset]
-  return child ? { node: child, offset: -1 } : { after: quote.lastChild as Node }
+  return child ? { before: child } : { after: quote.lastChild as Node }
 }
 
 function setBoundary(range: Range, boundary: Boundary, start: boolean): void {
   if ('after' in boundary) {
     if (start) range.setStartAfter(boundary.after)
     else range.setEndAfter(boundary.after)
-  } else if (boundary.offset < 0) {
-    if (start) range.setStartBefore(boundary.node)
-    else range.setEndBefore(boundary.node)
+  } else if ('before' in boundary) {
+    if (start) range.setStartBefore(boundary.before)
+    else range.setEndBefore(boundary.before)
   } else if (start) range.setStart(boundary.node, boundary.offset)
   else range.setEnd(boundary.node, boundary.offset)
 }
@@ -147,10 +150,9 @@ function setBoundary(range: Range, boundary: Boundary, start: boolean): void {
 function unwrapQuote(quote: HTMLElement, caret: Range | null): void {
   const parent = quote.parentNode
   if (!parent || !quote.firstChild) return
-  const start = caret ? boundaryOutside(quote, caret.startContainer, caret.startOffset) : null
-  const end = caret ? boundaryOutside(quote, caret.endContainer, caret.endOffset) : null
-  if (!endsLine(quote.previousSibling) && !isBlock(quote.firstChild))
-    parent.insertBefore(document.createElement('br'), quote)
+  const start = caret && boundaryOutside(quote, caret.startContainer, caret.startOffset)
+  const end = caret && boundaryOutside(quote, caret.endContainer, caret.endOffset)
+  if (!endsLine(quote.previousSibling)) parent.insertBefore(document.createElement('br'), quote)
   if (quote.nextSibling && !isBlock(quote.lastChild))
     parent.insertBefore(document.createElement('br'), quote.nextSibling)
   while (quote.firstChild) parent.insertBefore(quote.firstChild, quote)
@@ -164,10 +166,43 @@ function unwrapQuote(quote: HTMLElement, caret: Range | null): void {
   selection.addRange(kept)
 }
 
+function needsLineBreakBefore(block: Element): boolean {
+  return !block.closest(`li, ${REPLY_QUOTE_SELECTOR}`) && !endsLine(block.previousSibling)
+}
+
+function separateBlocks(editor: HTMLElement): void {
+  for (const block of Array.from(editor.querySelectorAll('ul, ol, blockquote')))
+    if (needsLineBreakBefore(block)) block.before(document.createElement('br'))
+}
+
+function inReplyQuote(editor: HTMLElement, range: Range | null): boolean {
+  return Boolean(
+    closestWithin(editor, range?.startContainer ?? null, REPLY_QUOTE_SELECTOR) ||
+    closestWithin(editor, range?.endContainer ?? null, REPLY_QUOTE_SELECTOR)
+  )
+}
+
+function keepSignatureOutside(editor: HTMLElement): void {
+  const range = selectionRangeIn(editor)
+  const signature = editor.querySelector(SIGNATURE_BLOCK_SELECTOR)
+  if (!range || !signature || signature.contains(range.startContainer)) return
+  if (!range.intersectsNode(signature)) return
+  const clamped = range.cloneRange()
+  clamped.setEndBefore(signature)
+  const selection = window.getSelection()
+  selection?.removeAllRanges()
+  selection?.addRange(clamped)
+}
+
+function prepareBlockFormat(editor: HTMLElement): boolean {
+  if (inReplyQuote(editor, selectionRangeIn(editor))) return false
+  keepSignatureOutside(editor)
+  separateBlocks(editor)
+  return true
+}
+
 function toggleQuote(editor: HTMLElement): void {
   const range = selectionRangeIn(editor)
-  if (closestWithin(editor, range?.startContainer ?? null, REPLY_QUOTE_SELECTOR)) return
-  if (closestWithin(editor, range?.endContainer ?? null, REPLY_QUOTE_SELECTOR)) return
   const quote = userQuoteAt(editor, range?.startContainer ?? null)
   if (quote) {
     const item = closestWithin(editor, range?.startContainer ?? null, 'li')
@@ -191,13 +226,13 @@ export function applyFormat(editor: HTMLElement, command: FormatCommand): void {
       document.execCommand(command)
       return
     case 'bulletedList':
-      document.execCommand('insertUnorderedList')
+      if (prepareBlockFormat(editor)) document.execCommand('insertUnorderedList')
       return
     case 'numberedList':
-      document.execCommand('insertOrderedList')
+      if (prepareBlockFormat(editor)) document.execCommand('insertOrderedList')
       return
     case 'quote':
-      toggleQuote(editor)
+      if (prepareBlockFormat(editor)) toggleQuote(editor)
       return
     case 'clear':
       document.execCommand('removeFormat')

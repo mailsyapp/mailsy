@@ -100,6 +100,11 @@ function LinkEditor({
     onClose()
   }
 
+  function cancel(): void {
+    editor.current?.cancelLink()
+    onClose()
+  }
+
   function remove(): void {
     editor.current?.removeLink()
     onClose()
@@ -113,7 +118,7 @@ function LinkEditor({
       onKeyDown={(event) => {
         if (event.key === 'Escape') {
           event.preventDefault()
-          onClose()
+          cancel()
         }
         if (event.key === 'Enter' && event.target instanceof HTMLInputElement) {
           event.preventDefault()
@@ -145,7 +150,7 @@ function LinkEditor({
             Remove link
           </button>
         )}
-        <button type="button" onClick={onClose}>
+        <button type="button" onClick={cancel}>
           Cancel link
         </button>
         <button type="button" onClick={apply}>
