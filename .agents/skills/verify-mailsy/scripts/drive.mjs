@@ -55,6 +55,22 @@ function assert(cond, okMsg, failMsg) {
   log(`pass: ${okMsg}`)
 }
 
+// Caret navigation still goes through real keystrokes (the editor's
+// caret-move history.seal() path listens for them), but the keys differ by
+// platform: on darwin Playwright maps Home/End to scroll-to-document and
+// Shift+Home/Shift+End to document-wide selection, while Control+Home/End
+// and Control+A are unmapped no-ops / Emacs bindings there.
+const MAC = process.platform === 'darwin'
+const KEYS = {
+  docStart: MAC ? 'Meta+ArrowUp' : 'Control+Home',
+  docEnd: MAC ? 'Meta+ArrowDown' : 'Control+End',
+  lineStart: MAC ? 'Meta+ArrowLeft' : 'Home',
+  lineEnd: MAC ? 'Meta+ArrowRight' : 'End',
+  selectLineStart: MAC ? 'Shift+Meta+ArrowLeft' : 'Shift+Home',
+  selectLineEnd: MAC ? 'Shift+Meta+ArrowRight' : 'Shift+End',
+  selectAll: MAC ? 'Meta+a' : 'Control+a'
+}
+
 // Checkbox state flips asynchronously after the boundary write resolves
 // (the menu re-derives from the thread's own label list), so a click is
 // followed by this bounded wait instead of an instant read.
@@ -147,7 +163,7 @@ async function formatRichBody(page, content, marker) {
   await button('Bold').click()
   await waitForPressed(button('Bold'), 'true', `${marker}: Bold turns on at the caret`, `${marker}: Bold did not press`)
   await editor.pressSequentially(`${marker} cleared`)
-  await editor.press('Shift+Home')
+  await editor.press(KEYS.selectLineStart)
   await button('Remove formatting').click()
   await waitForPressed(button('Bold'), 'false', `${marker}: Remove formatting clears bold from the selection`, `${marker}: Remove formatting left Bold pressed`)
   await editor.press('ArrowRight')
@@ -4533,7 +4549,7 @@ try {
     )
     // Typing above the signature leaves the block alone at the end.
     await content.locator('.body-editor').click()
-    await content.locator('.body-editor').press('Control+Home')
+    await content.locator('.body-editor').press(KEYS.docStart)
     await content.locator('.body-editor').pressSequentially('Hello from Mailsy.')
     const freshBody = await bodyTextOf(content.locator('.body-editor'))
     assert(
@@ -4546,7 +4562,7 @@ try {
     assert(
       (await bodyTextOf(content.locator('.body-editor'))).includes('Hello from Mailsy.') &&
         !(await bodyTextOf(content.locator('.body-editor'))).includes('Analytical Engine Dept.'),
-      'Ctrl+Home body text survives signature removal',
+      'typed-above body text survives signature removal',
       'signature removal deleted the body text or retained the signature'
     )
     await snapshot(page, 'signature-removed')
@@ -4742,7 +4758,7 @@ try {
         editor.replaceChildren(document.createTextNode('Line start'))
         editor.dispatchEvent(new InputEvent('input', { bubbles: true }))
       })
-      await autoBody.press('Control+End')
+      await autoBody.press(KEYS.docEnd)
       for (let i = 0; i < enters; i++) await autoBody.press('Enter')
       await toggle.click()
       await autoBody.pressSequentially('Line continuation.')
@@ -4824,7 +4840,7 @@ try {
         editor.replaceChildren(document.createTextNode('Before image.'))
         editor.dispatchEvent(new InputEvent('input', { bubbles: true }))
       })
-      await autoBody.press('Control+End')
+      await autoBody.press(KEYS.docEnd)
       await pasteSignatureImage()
       await autoBody.locator(':scope > img').waitFor({ timeout: 10000 })
       assert(
@@ -5264,9 +5280,9 @@ try {
     await editor.locator('a', { hasText: 'Runbook' }).click()
     await waitForPressed(button('Link'), 'true', 'a stored link reads back pressed', 'stored link lost')
     await editor.locator('ul li', { hasText: 'Frontend' }).click()
-    await page.keyboard.press('Home')
+    await page.keyboard.press(KEYS.lineStart)
     await page.keyboard.press('Shift+ArrowDown')
-    await page.keyboard.press('Shift+End')
+    await page.keyboard.press(KEYS.selectLineEnd)
     await button('Numbered list').click()
     await button('Bulleted list').click()
     const roundTrip = await editor.evaluate((el) => ({
@@ -5402,15 +5418,15 @@ try {
       'removing a quote keeps the line breaks around it',
       `removing a quote joined lines: ${JSON.stringify(unquotedLines)}`
     )
-    await editor.press('Control+End')
-    await editor.press('Shift+Home')
+    await editor.press(KEYS.docEnd)
+    await editor.press(KEYS.selectLineStart)
     await editor.press('Control+k')
     const linkForm = content.getByRole('group', { name: 'Edit link' })
     await linkForm.getByLabel('Web address').fill('example.com')
     await linkForm.getByRole('button', { name: 'Cancel link', exact: true }).press('Enter')
     await linkForm.waitFor({ state: 'hidden', timeout: 5000 })
     assert((await editor.locator('a').count()) === 0, 'Enter on Cancel link cancels instead of applying', 'Enter on Cancel link applied the link')
-    await page.keyboard.press('End')
+    await page.keyboard.press(KEYS.lineEnd)
     await page.keyboard.type('!')
     await page.keyboard.press('Control+k')
     await linkForm.waitFor({ timeout: 5000 })
@@ -5422,9 +5438,9 @@ try {
       'Cancel and Escape hand the caret back to the body',
       `typing after closing the link form went nowhere: ${JSON.stringify(await editor.innerText())}`
     )
-    await page.keyboard.press('Home')
+    await page.keyboard.press(KEYS.lineStart)
     await page.keyboard.type('P')
-    await page.keyboard.press('End')
+    await page.keyboard.press(KEYS.lineEnd)
     await page.keyboard.type('Q')
     await page.keyboard.press('Control+z')
     const caretUndo = await editor.innerText()
@@ -5441,11 +5457,11 @@ try {
       'redo replays both caret-separated edits',
       `redo after caret moves diverged: ${JSON.stringify(await editor.innerText())}`
     )
-    await page.keyboard.press('Home')
+    await page.keyboard.press(KEYS.lineStart)
     await page.keyboard.press('Delete')
-    await page.keyboard.press('End')
+    await page.keyboard.press(KEYS.lineEnd)
     await page.keyboard.press('Backspace')
-    await editor.press('Control+End')
+    await editor.press(KEYS.docEnd)
     await editor.press('Enter')
     await editor.press('Control+Shift+9')
     await editor.press('Control+Shift+8')
@@ -5528,7 +5544,7 @@ try {
     await signatureToggle.click()
     await waitForPressed(signatureToggle, 'true', 'the signature joins the formatted body', 'the signature did not insert')
     await editor.locator('li', { hasText: 'quoted kept item' }).click()
-    await page.keyboard.press('Control+a')
+    await page.keyboard.press(KEYS.selectAll)
     await button('Quote').click()
     assert(
       (await editor.locator(':scope > .mailsy-signature').count()) === 1 &&
