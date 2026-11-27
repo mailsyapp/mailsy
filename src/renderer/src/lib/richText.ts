@@ -98,6 +98,12 @@ function linkAt(editor: HTMLElement, range: Range): HTMLAnchorElement | null {
   )
 }
 
+function linkAround(editor: HTMLElement, range: Range): HTMLAnchorElement | null {
+  const start = closestWithin(editor, range.startContainer, 'a[href]')
+  const end = closestWithin(editor, range.endContainer, 'a[href]')
+  return start && start === end ? (start as HTMLAnchorElement) : null
+}
+
 function withoutLinkUnderline<T>(run: () => T): T {
   const style = document.createElement('style')
   style.textContent = '.body-editor a { text-decoration: none }'
@@ -263,7 +269,7 @@ export function applyFormat(editor: HTMLElement, command: FormatCommand): void {
 export function readLinkSelection(editor: HTMLElement, range: Range | null): LinkSelection {
   if (!range || !editor.contains(range.commonAncestorContainer))
     return { text: '', href: '', editing: false }
-  const anchor = linkAt(editor, range)
+  const anchor = linkAround(editor, range)
   if (anchor)
     return {
       text: anchor.textContent ?? '',
@@ -294,7 +300,7 @@ export function applyLink(
   restoreRange(editor, range)
   const current = selectionRangeIn(editor)
   const label = text.trim() === '' ? href : text
-  const anchor = current ? linkAt(editor, current) : null
+  const anchor = current ? linkAround(editor, current) : null
   if (anchor) {
     const relabel = text.trim() !== '' && anchor.textContent !== text
     const whole = document.createRange()
