@@ -395,7 +395,8 @@ export const BodyEditor = forwardRef<BodyEditorHandle, BodyEditorProps>(function
         stepHistory(editor, event.inputType === 'historyUndo' ? 'undo' : 'redo')
         return
       }
-      history.record(editor, COALESCED_INPUTS[event.inputType] ?? null)
+      const replacing = selectionRangeIn(editor)?.collapsed === false
+      history.record(editor, replacing ? null : (COALESCED_INPUTS[event.inputType] ?? null))
     }
     editor.addEventListener('beforeinput', beforeInput)
     return () => editor.removeEventListener('beforeinput', beforeInput)
