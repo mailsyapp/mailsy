@@ -115,7 +115,7 @@ function LinkEditor({
           event.preventDefault()
           onClose()
         }
-        if (event.key === 'Enter') {
+        if (event.key === 'Enter' && event.target instanceof HTMLInputElement) {
           event.preventDefault()
           apply()
         }
