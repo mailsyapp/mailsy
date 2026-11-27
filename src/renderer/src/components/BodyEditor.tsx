@@ -350,6 +350,17 @@ function historyShortcut(event: React.KeyboardEvent): HistoryDirection | null {
   return null
 }
 
+const CARET_KEYS = new Set([
+  'ArrowLeft',
+  'ArrowRight',
+  'ArrowUp',
+  'ArrowDown',
+  'Home',
+  'End',
+  'PageUp',
+  'PageDown'
+])
+
 const COALESCED_INPUTS: Record<string, string> = {
   insertText: 'type',
   insertCompositionText: 'type',
@@ -465,7 +476,7 @@ export const BodyEditor = forwardRef<BodyEditorHandle, BodyEditorProps>(function
       applyLink: (href: string, text: string) => {
         const editor = editorRef.current
         if (!editor) return
-        history.record(editor)
+        history.record(editor, null, linkRangeRef.current)
         applyLink(editor, linkRangeRef.current, href, text)
         linkRangeRef.current = null
         reportNow(editor, onChangeRef.current)
@@ -474,7 +485,7 @@ export const BodyEditor = forwardRef<BodyEditorHandle, BodyEditorProps>(function
       removeLink: () => {
         const editor = editorRef.current
         if (!editor) return
-        history.record(editor)
+        history.record(editor, null, linkRangeRef.current)
         removeLink(editor, linkRangeRef.current)
         linkRangeRef.current = null
         reportNow(editor, onChangeRef.current)
@@ -518,6 +529,7 @@ export const BodyEditor = forwardRef<BodyEditorHandle, BodyEditorProps>(function
       contentEditable
       suppressContentEditableWarning
       onInput={reportAfterEditTransaction}
+      onMouseDown={() => history.seal()}
       onDrop={(event) => void handleDrop(event)}
       onPaste={(event) => {
         const editor = event.currentTarget
@@ -531,6 +543,7 @@ export const BodyEditor = forwardRef<BodyEditorHandle, BodyEditorProps>(function
         })
       }}
       onKeyDown={(event) => {
+        if (CARET_KEYS.has(event.key)) history.seal()
         const direction = event.nativeEvent.isComposing ? null : historyShortcut(event)
         if (direction) {
           event.preventDefault()

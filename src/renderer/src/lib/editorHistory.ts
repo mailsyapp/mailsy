@@ -34,9 +34,10 @@ function nodeLength(node: Node): number {
     : (node.textContent ?? '').length
 }
 
-function capture(editor: HTMLElement): Snapshot {
+function capture(editor: HTMLElement, fallback: Range | null = null): Snapshot {
   const selection = window.getSelection()
-  const range = selection && selection.rangeCount > 0 ? selection.getRangeAt(0) : null
+  const live = selection && selection.rangeCount > 0 ? selection.getRangeAt(0) : null
+  const range = live && editor.contains(live.commonAncestorContainer) ? live : fallback
   const inside = range && editor.contains(range.commonAncestorContainer)
   return {
     html: editor.innerHTML,
@@ -78,13 +79,17 @@ export class EditorHistory {
     this.lastKind = null
   }
 
-  record(editor: HTMLElement, kind: string | null = null): void {
+  seal(): void {
+    this.lastKind = null
+  }
+
+  record(editor: HTMLElement, kind: string | null = null, fallback: Range | null = null): void {
     const now = Date.now()
     const coalesce = kind !== null && kind === this.lastKind && now - this.lastAt < COALESCE_MS
     this.lastKind = kind
     this.lastAt = now
     if (coalesce) return
-    const snapshot = capture(editor)
+    const snapshot = capture(editor, fallback)
     if (this.undoStack.at(-1)?.html === snapshot.html && this.redoStack.length === 0) return
     this.undoStack.push(snapshot)
     if (this.undoStack.length > HISTORY_LIMIT) this.undoStack.shift()

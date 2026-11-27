@@ -5313,6 +5313,29 @@ try {
       'Cancel and Escape hand the caret back to the body',
       `typing after closing the link form went nowhere: ${JSON.stringify(await editor.innerText())}`
     )
+    await page.keyboard.press('Home')
+    await page.keyboard.type('P')
+    await page.keyboard.press('End')
+    await page.keyboard.type('Q')
+    await page.keyboard.press('Control+z')
+    const caretUndo = await editor.innerText()
+    assert(
+      caretUndo.includes('Pline three!?') && !caretUndo.includes('!?Q'),
+      'moving the caret starts a new undo step',
+      `undo after moving the caret took too much: ${JSON.stringify(caretUndo)}`
+    )
+    await page.keyboard.press('Control+z')
+    await page.keyboard.press('Control+Shift+z')
+    await page.keyboard.press('Control+Shift+z')
+    assert(
+      (await editor.innerText()).includes('Pline three!?Q'),
+      'redo replays both caret-separated edits',
+      `redo after caret moves diverged: ${JSON.stringify(await editor.innerText())}`
+    )
+    await page.keyboard.press('Home')
+    await page.keyboard.press('Delete')
+    await page.keyboard.press('End')
+    await page.keyboard.press('Backspace')
     await editor.press('Control+End')
     await editor.press('Enter')
     await editor.press('Control+Shift+9')

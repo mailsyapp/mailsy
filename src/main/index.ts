@@ -10,6 +10,7 @@ import {
   getOAuthCredentialsStatus
 } from './auth'
 import { pickAttachments, saveAttachmentFile } from './attachments'
+import { installApplicationMenu } from './editMenu'
 import {
   discardDraft,
   armSyncClock,
@@ -67,6 +68,7 @@ function createWindow(): void {
   }
 }
 app.whenReady().then(() => {
+  installApplicationMenu()
   electronApp.setAppUserModelId('com.electron')
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)
