@@ -214,6 +214,14 @@ async function formatRichBody(page, content, marker) {
   await editor.locator('a', { hasText: `${marker} link` }).click()
   await waitForPressed(button('Link'), 'true', `${marker}: the caret lands inside the link`, `${marker}: Link not pressed inside the link`)
   await waitForPressed(button('Underline'), 'false', `${marker}: a link's own underline does not press Underline`, `${marker}: Underline pressed inside a plain link`)
+  await editor.locator('a', { hasText: `${marker} link` }).selectText()
+  await button('Underline').click()
+  await waitForPressed(button('Underline'), 'true', `${marker}: Underline applies inside a link`, `${marker}: Underline did nothing inside a link`)
+  const underlinedLink = await editor.evaluate((el) => el.innerHTML)
+  if (!underlinedLink.includes(`<a href="https://mailsy.example/docs"><u>${marker} link</u></a>`))
+    throw new Error(`${marker}: the link was not explicitly underlined: ${underlinedLink}`)
+  await button('Underline').click()
+  await waitForPressed(button('Underline'), 'false', `${marker}: Underline toggles back off inside a link`, `${marker}: Underline stuck on inside a link`)
   return editor.evaluate((el) => el.innerHTML)
 }
 
