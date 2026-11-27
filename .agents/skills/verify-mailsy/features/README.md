@@ -68,5 +68,6 @@ Keep implementation details out of the map. Name only user paths, stable handles
 - [Forward attachments](./forward-attachments.md) covers original-file chips and bytes, explicit removal, loading/failure recovery, and isolation from reply/reply-all.
 - [Inline images](./inline-images.md) covers the rich compose body on all three surfaces: a dropped/pasted image lands inside the text with editable text around it, the send and draft autosave carry the html, and received image attachments preview inline in the read view.
 - [Signature](./signature.md) covers the per-compose signature on all three composers: the stored text born from the first toggle, the block riding sends and autosaves, the fresh-compose auto-insert, and the draft round trip.
+- [Rich text](./rich-text.md) covers the Gmail-style formatting toolbar on all three composers: bold, italic, underline, links, both list kinds, quotes and remove formatting, with the html riding autosave, the draft round trip and every send.
 - [Refresh](./refresh.md) covers the live refresh channel: the button's instant busy state and in-flight dedupe, surfaced sweep failures, and arrival of new mail through pushed delta and reset folds without a click.
 - [Pagination](./pagination.md) covers overlapping refresh and page loads, removals between pages, and distinct drafts that share a conversation.

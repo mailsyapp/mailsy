@@ -120,6 +120,126 @@ async function bodyTextOf(editor) {
   return (await editor.evaluate((el) => el.innerText)) ?? ''
 }
 
+// Rich-text formatting is one shared toolbar over every composer body, so
+// one routine drives it identically on each surface: each command through
+// its real button or shortcut, with the toolbar's pressed state read back.
+async function caretAtBodyStart(editor) {
+  await editor.evaluate((el) => {
+    el.focus()
+    const sel = window.getSelection()
+    sel.removeAllRanges()
+    const range = document.createRange()
+    range.selectNodeContents(el)
+    range.collapse(true)
+    sel.addRange(range)
+  })
+}
+
+async function formatRichBody(page, content, marker) {
+  const editor = content.locator('.body-editor')
+  const toolbar = content.getByRole('toolbar', { name: 'Formatting options' })
+  const button = (name) => toolbar.getByRole('button', { name, exact: true })
+  await caretAtBodyStart(editor)
+  await button('Bold').click()
+  await waitForPressed(button('Bold'), 'true', `${marker}: Bold turns on at the caret`, `${marker}: Bold did not press`)
+  await editor.pressSequentially(`${marker} cleared`)
+  await editor.press('Shift+Home')
+  await button('Remove formatting').click()
+  await waitForPressed(button('Bold'), 'false', `${marker}: Remove formatting clears bold from the selection`, `${marker}: Remove formatting left Bold pressed`)
+  await editor.press('End')
+  await editor.press('Enter')
+  await button('Bold').click()
+  await editor.pressSequentially(`${marker} bold`)
+  await button('Bold').click()
+  await waitForPressed(button('Bold'), 'false', `${marker}: Bold toggles back off`, `${marker}: Bold stuck on`)
+  await editor.press('Control+i')
+  await waitForPressed(button('Italic'), 'true', `${marker}: Ctrl+I presses Italic`, `${marker}: Ctrl+I did not italicize`)
+  await editor.pressSequentially(' italic')
+  await editor.press('Control+i')
+  await button('Underline').click()
+  await waitForPressed(button('Underline'), 'true', `${marker}: Underline turns on`, `${marker}: Underline did not press`)
+  await editor.pressSequentially(' underline')
+  await button('Underline').click()
+  await editor.pressSequentially(' ')
+  await button('Link').click()
+  const linkEditor = content.getByRole('group', { name: 'Edit link' })
+  await linkEditor.waitFor({ timeout: 5000 })
+  await linkEditor.getByLabel('Text to display').fill(`${marker} link`)
+  await linkEditor.getByLabel('Web address').fill('javascript:alert(1)')
+  await linkEditor.getByRole('button', { name: 'Apply link' }).click()
+  await linkEditor.getByRole('alert').filter({ hasText: 'Enter a valid web address or email.' }).waitFor({ timeout: 5000 })
+  assert(true, `${marker}: an unsafe link scheme is refused`, `${marker}: javascript: link accepted`)
+  await linkEditor.getByLabel('Web address').fill('mailsy.example/docs')
+  await linkEditor.getByLabel('Web address').press('Enter')
+  await linkEditor.waitFor({ state: 'detached', timeout: 5000 })
+  await editor.press('Enter')
+  await button('Bulleted list').click()
+  await waitForPressed(button('Bulleted list'), 'true', `${marker}: Bulleted list presses inside the list`, `${marker}: no bulleted list at the caret`)
+  await editor.pressSequentially('Bullet one')
+  await editor.press('Enter')
+  await editor.pressSequentially('Bullet two')
+  await editor.press('Enter')
+  await editor.press('Enter')
+  await waitForPressed(button('Bulleted list'), 'false', `${marker}: a second Enter leaves the bulleted list`, `${marker}: Enter did not leave the list`)
+  await editor.press('Control+Shift+7')
+  await waitForPressed(button('Numbered list'), 'true', `${marker}: Ctrl+Shift+7 starts a numbered list`, `${marker}: no numbered list at the caret`)
+  await editor.pressSequentially('Step one')
+  await editor.press('Enter')
+  await editor.pressSequentially('Step two')
+  await editor.press('Enter')
+  await editor.press('Enter')
+  await button('Quote').click()
+  await waitForPressed(button('Quote'), 'true', `${marker}: Quote presses inside the new block quote`, `${marker}: no block quote at the caret`)
+  await editor.pressSequentially(`${marker} quoted note`)
+  return editor.evaluate((el) => el.innerHTML)
+}
+
+function richHtmlProblems(html, marker) {
+  const problems = []
+  const need = (ok, what) => { if (!ok) problems.push(what) }
+  need(html.includes(`${marker} cleared`) && !new RegExp(`<b>[^<]*${marker} cleared`).test(html), 'cleared text still bold')
+  need(new RegExp(`<b>${marker} bold</b>`).test(html), 'bold')
+  need(/<i>\s?italic<\/i>/.test(html), 'italic')
+  need(/<u>\s?underline<\/u>/.test(html), 'underline')
+  need(html.includes(`<a href="https://mailsy.example/docs">${marker} link</a>`), 'link')
+  need(!html.includes('javascript:'), 'unsafe href')
+  need(/<ul><li>Bullet one<\/li><li>Bullet two<\/li><\/ul>/.test(html), 'bulleted list')
+  need(/<ol><li>Step one<\/li><li>Step two<\/li><\/ol>/.test(html), 'numbered list')
+  need(new RegExp(`<blockquote style="margin:0px 0px 0px 0.8ex;border-left:1px solid rgb\\(204,204,204\\);padding-left:1ex">${marker} quoted note`).test(html), 'block quote')
+  return problems
+}
+
+function assertRichHtml(html, marker, where) {
+  const problems = richHtmlProblems(String(html ?? ''), marker)
+  assert(
+    problems.length === 0,
+    `${where} carries every format (${String(html).slice(0, 120)}…)`,
+    `${where} lost ${problems.join(', ')}: ${String(html).slice(0, 600)}`
+  )
+}
+
+async function waitForRichSave(page, marker, draftId) {
+  await page.waitForFunction(
+    ({ marker, draftId }) =>
+      (window.__draftSaves ?? []).some(
+        (save) =>
+          (draftId === undefined || save.draftId === draftId) &&
+          String(save.bodyHtml ?? '').includes(`${marker} quoted note`)
+      ),
+    { marker, draftId },
+    { timeout: 10000 }
+  )
+  return page.evaluate(
+    ({ marker, draftId }) =>
+      window.__draftSaves.filter(
+        (save) =>
+          (draftId === undefined || save.draftId === draftId) &&
+          String(save.bodyHtml ?? '').includes(`${marker} quoted note`)
+      ).at(-1),
+    { marker, draftId }
+  )
+}
+
 async function snapshot(page, name) {
   const snap = await page.locator('body').ariaSnapshot()
   writeFileSync(resolve(ART, `${name}.aria.txt`), `feature: ${FEATURE}\nentry: ${entry}\n${snap}\n`)
@@ -5001,6 +5121,124 @@ try {
     )
     await snapshot(page, 'background-work')
     return 'background-work'
+  })
+  journeys.set('rich-text', async () => {
+    // Gmail-style formatting on all three composer surfaces: the shared
+    // toolbar's commands land as html in the body, the toolbar mirrors the
+    // caret, and the html rides draft autosave and the send on each one.
+    const inbox = page.getByRole('complementary', { name: 'Inbox' })
+    await inbox.waitFor({ timeout: 10000 })
+    const content = page.getByRole('region', { name: 'Email content' })
+    const toolbar = content.getByRole('toolbar', { name: 'Formatting options' })
+    const button = (name) => toolbar.getByRole('button', { name, exact: true })
+
+    await page.getByRole('button', { name: 'Compose', exact: true }).click()
+    await content.getByRole('heading', { name: 'New email' }).waitFor({ timeout: 10000 })
+    await content.locator('.composerField input').first().fill('ada@example.com')
+    await content.locator('.composerField input').nth(1).fill('Formatted compose')
+    const composeHtml = await formatRichBody(page, content, 'Compose')
+    assertRichHtml(composeHtml, 'Compose', 'new compose body')
+    const composeSave = await waitForRichSave(page, 'Compose')
+    assertRichHtml(composeSave.bodyHtml, 'Compose', 'new compose autosave')
+    await snapshot(page, 'rich-text-compose')
+    await content.getByRole('button', { name: 'Send', exact: true }).click()
+    await content.getByText('Message sent.').waitFor({ timeout: 10000 })
+    const composeSent = (await page.evaluate(() => window.__sent)).at(-1)
+    assert(composeSent.subject === 'Formatted compose' && composeSent.body.includes('Bullet two'),
+      'the formatted compose sent with its text fallback', `compose send misshapen ${JSON.stringify(composeSent).slice(0, 200)}`)
+    assertRichHtml(composeSent.bodyHtml, 'Compose', 'new compose send')
+    log(`outbox html: ${JSON.stringify(composeSent.bodyHtml)}`)
+    await content.getByRole('button', { name: 'Close', exact: true }).click()
+
+    await page.getByRole('button', { name: 'Drafts' }).click()
+    const drafts = page.getByRole('complementary', { name: 'Drafts' })
+    await drafts.waitFor({ timeout: 10000 })
+    await drafts.getByText('Draft: formatted launch notes', { exact: true }).first().click()
+    await content.getByRole('heading', { name: 'Draft', exact: true }).waitFor({ timeout: 10000 })
+    const editor = content.locator('.body-editor')
+    await editor.locator('ul li', { hasText: 'Frontend' }).click()
+    await waitForPressed(button('Bulleted list'), 'true', 'a stored bulleted list reads back pressed', 'stored list lost')
+    await editor.locator('ol li', { hasText: 'Ship' }).click()
+    await waitForPressed(button('Numbered list'), 'true', 'a stored numbered list reads back pressed', 'stored numbered list lost')
+    await editor.locator('b', { hasText: 'Launch is go.' }).click()
+    await waitForPressed(button('Bold'), 'true', 'stored bold reads back pressed', 'stored bold lost')
+    await editor.locator('blockquote', { hasText: 'No late merges.' }).click()
+    await waitForPressed(button('Quote'), 'true', 'a stored block quote reads back pressed', 'stored quote lost')
+    await editor.locator('a', { hasText: 'Runbook' }).click()
+    await waitForPressed(button('Link'), 'true', 'a stored link reads back pressed', 'stored link lost')
+    await editor.press('Control+k')
+    const linkEditor = content.getByRole('group', { name: 'Edit link' })
+    await linkEditor.waitFor({ timeout: 5000 })
+    assert(
+      (await linkEditor.getByLabel('Web address').inputValue()) === 'https://example.com/runbook' &&
+        (await linkEditor.getByLabel('Text to display').inputValue()) === 'Runbook',
+      'Ctrl+K on a link opens it for editing', 'the link editor did not read the existing link'
+    )
+    await linkEditor.getByRole('button', { name: 'Remove link' }).click()
+    await linkEditor.waitFor({ state: 'detached', timeout: 5000 })
+    assert(
+      (await editor.locator('a').count()) === 0 && (await bodyTextOf(editor)).includes('Runbook'),
+      'Remove link unlinks and keeps the words', 'Remove link lost the text or kept the link'
+    )
+    const draftHtml = await formatRichBody(page, content, 'Draft')
+    assertRichHtml(draftHtml, 'Draft', 'draft editor body')
+    const draftSave = await waitForRichSave(page, 'Draft', 'draft-rich')
+    assertRichHtml(draftSave.bodyHtml, 'Draft', 'draft autosave')
+    assert(
+      draftSave.bodyHtml.includes('<b>Launch is go.</b>') && draftSave.bodyHtml.includes('<li>Frontend</li>') &&
+        !draftSave.bodyHtml.includes('example.com/runbook'),
+      'the autosave keeps the stored formats and drops the removed link', 'the draft autosave flattened stored html'
+    )
+    await snapshot(page, 'rich-text-draft')
+    await page.getByRole('button', { name: 'Inbox', exact: true }).click()
+    await inbox.waitFor({ timeout: 10000 })
+    await page.getByRole('button', { name: 'Drafts' }).click()
+    await drafts.getByText('Draft: formatted launch notes', { exact: true }).first().click()
+    await content.getByRole('heading', { name: 'Draft', exact: true }).waitFor({ timeout: 10000 })
+    assertRichHtml(await editor.evaluate((el) => el.innerHTML), 'Draft', 'the reopened draft')
+    await content.getByRole('button', { name: 'Send', exact: true }).click()
+    await content.getByText('Message sent.').waitFor({ timeout: 10000 })
+    const draftSent = (await page.evaluate(() => window.__sent)).at(-1)
+    assert(draftSent.draftId === 'draft-rich', 'the draft sent as itself', `draft send misrouted ${JSON.stringify(draftSent).slice(0, 200)}`)
+    assertRichHtml(draftSent.bodyHtml, 'Draft', 'draft send')
+    await content.getByRole('button', { name: 'Close', exact: true }).click().catch(() => {})
+
+    await page.getByRole('button', { name: 'Inbox', exact: true }).click()
+    await inbox.waitFor({ timeout: 10000 })
+    await inbox.getByText('Launch checklist').first().click()
+    await content.getByRole('button', { name: 'reply', exact: true }).click()
+    await content.getByRole('heading', { name: 'Compose email' }).waitFor({ timeout: 10000 })
+    const replyHtml = await formatRichBody(page, content, 'Reply')
+    assertRichHtml(replyHtml, 'Reply', 'reply body')
+    await editor.locator('blockquote.gmail_quote', { hasText: 'Final review of the launch checklist' }).click()
+    await waitForPressed(button('Quote'), 'false', 'the reply quote is not a user block quote', 'the reply quote read as a user quote')
+    await snapshot(page, 'rich-text-reply')
+    await content.getByRole('button', { name: 'Send', exact: true }).click()
+    await content.getByRole('status').getByText('Message sent.').waitFor({ timeout: 10000 })
+    const replySent = (await page.evaluate(() => window.__sent)).at(-1)
+    assertRichHtml(replySent.bodyHtml, 'Reply', 'reply send')
+    assert(
+      replySent.inReplyTo && replySent.bodyHtml.includes('gmail_quote_container') &&
+        replySent.bodyHtml.includes('<blockquote class="gmail_quote"') &&
+        replySent.bodyHtml.includes('Final review of the launch checklist before Friday.'),
+      'the reply keeps its threading and the native quote below the formats', 'the reply lost its quote or threading'
+    )
+    await content.getByRole('button', { name: 'forward', exact: true }).click()
+    await content.getByRole('heading', { name: 'Compose email' }).waitFor({ timeout: 10000 })
+    await content.locator('.composerField input').first().fill('brook@example.com')
+    const forwardHtml = await formatRichBody(page, content, 'Forward')
+    assertRichHtml(forwardHtml, 'Forward', 'forward body')
+    await content.getByRole('button', { name: 'Send', exact: true }).click()
+    await content.getByRole('status').getByText('Message sent.').waitFor({ timeout: 10000 })
+    const forwardSent = (await page.evaluate(() => window.__sent)).at(-1)
+    assertRichHtml(forwardSent.bodyHtml, 'Forward', 'forward send')
+    assert(
+      forwardSent.subject === 'Fwd: Launch checklist' && forwardSent.bodyHtml.includes('Forwarded message'),
+      'the forward keeps its forwarded block below the formats', 'the forward lost its forwarded content'
+    )
+    assert((await page.evaluate(() => window.__sent.length)) === 4, 'four formatted sends, one per surface path', 'unexpected outbox size')
+    await snapshot(page, 'rich-text')
+    return 'rich-text'
   })
   const journey = journeys.get(FEATURE)
   if (!journey) throw new Error(`unknown feature: ${FEATURE}`)

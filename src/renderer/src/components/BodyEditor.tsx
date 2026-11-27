@@ -2,8 +2,23 @@ import { forwardRef, useImperativeHandle, useRef } from 'react'
 import { useAfterCurrentTask } from '../hooks/useAfterCurrentTask'
 import { useLatest } from '../hooks/useLatest'
 import { useOnMount } from '../hooks/useOnMount'
+import { useSubscription } from '../hooks/useSubscription'
 import { imageToPayload, looksLikeImageFile } from '../lib/attachmentFile'
 import { SIGNATURE_BLOCK_CLASS, SIGNATURE_BLOCK_SELECTOR } from '../lib/signature'
+import {
+  applyFormat,
+  applyLink,
+  formatShortcut,
+  isInListItem,
+  readFormatState,
+  readLinkSelection,
+  removeLink,
+  restoreRange,
+  selectionRangeIn,
+  type FormatCommand,
+  type FormatState,
+  type LinkSelection
+} from '../lib/richText'
 export interface BodyEditorHandle {
   insertImages: (files: File[]) => Promise<void>
   insertSignatureBlock: (
@@ -14,12 +29,18 @@ export interface BodyEditorHandle {
   ) => void
   removeSignatureBlock: () => void
   hasSignatureBlock: () => boolean
+  format: (command: FormatCommand) => void
+  captureLinkSelection: () => LinkSelection
+  applyLink: (href: string, text: string) => void
+  removeLink: () => void
 }
 type BodyEditorProps = {
   initialHtml: string
   placeholder?: string
   onChange: (content: { html: string; text: string }, source: 'edit' | 'prefill') => void
   onNonImageFiles: (files: File[]) => void
+  onFormatState?: (state: FormatState) => void
+  onRequestLink?: () => void
 }
 function readContent(editor: HTMLDivElement): {
   html: string
@@ -179,6 +200,26 @@ function reportNow(editor: HTMLDivElement, onChange: BodyEditorProps['onChange']
   editor.toggleAttribute('data-empty', isVisuallyEmpty(editor))
   onChange(readContent(editor), 'edit')
 }
+
+type FormatStateListener = ((state: FormatState) => void) | undefined
+
+function reportFormatState(editor: HTMLDivElement, onFormatState: FormatStateListener): void {
+  onFormatState?.(readFormatState(editor))
+}
+
+function runFormat(
+  editor: HTMLDivElement,
+  command: FormatCommand,
+  savedRange: Range | null,
+  onChange: BodyEditorProps['onChange'],
+  onFormatState: FormatStateListener
+): void {
+  if (!selectionRangeIn(editor)) restoreRange(editor, savedRange)
+  applyFormat(editor, command)
+  reportNow(editor, onChange)
+  reportFormatState(editor, onFormatState)
+}
+
 function insertDataUrlAtCaret(editor: HTMLDivElement, dataUrl: string): void {
   const img = document.createElement('img')
   img.src = dataUrl
@@ -296,11 +337,26 @@ function insertSignatureBlockInto(editor: HTMLDivElement, html: string, focusCar
   placeCaret(editor, selection, container, offset)
 }
 export const BodyEditor = forwardRef<BodyEditorHandle, BodyEditorProps>(function BodyEditor(
-  { initialHtml, placeholder, onChange, onNonImageFiles },
+  { initialHtml, placeholder, onChange, onNonImageFiles, onFormatState, onRequestLink },
   ref
 ) {
   const editorRef = useRef<HTMLDivElement | null>(null)
   const onChangeRef = useLatest(onChange)
+  const onFormatStateRef = useLatest(onFormatState)
+  const savedRangeRef = useRef<Range | null>(null)
+  const linkRangeRef = useRef<Range | null>(null)
+  useSubscription(true, () => {
+    const track = (): void => {
+      const editor = editorRef.current
+      if (!editor) return
+      const range = selectionRangeIn(editor)
+      if (!range) return
+      savedRangeRef.current = range.cloneRange()
+      reportFormatState(editor, onFormatStateRef.current)
+    }
+    document.addEventListener('selectionchange', track)
+    return () => document.removeEventListener('selectionchange', track)
+  })
   const reportAfterEditTransaction = useAfterCurrentTask(() => {
     if (editorRef.current) reportNow(editorRef.current, onChangeRef.current)
   })
@@ -339,9 +395,43 @@ export const BodyEditor = forwardRef<BodyEditorHandle, BodyEditorProps>(function
         editor.focus()
         reportNow(editor, onChangeRef.current)
       },
-      hasSignatureBlock: () => Boolean(editorRef.current?.querySelector(SIGNATURE_OWNED_SELECTOR))
+      hasSignatureBlock: () => Boolean(editorRef.current?.querySelector(SIGNATURE_OWNED_SELECTOR)),
+      format: (command: FormatCommand) => {
+        const editor = editorRef.current
+        if (editor)
+          runFormat(
+            editor,
+            command,
+            savedRangeRef.current,
+            onChangeRef.current,
+            onFormatStateRef.current
+          )
+      },
+      captureLinkSelection: () => {
+        const editor = editorRef.current
+        if (!editor) return { text: '', href: '', editing: false }
+        const range = selectionRangeIn(editor) ?? savedRangeRef.current
+        linkRangeRef.current = range ? range.cloneRange() : null
+        return readLinkSelection(editor, linkRangeRef.current)
+      },
+      applyLink: (href: string, text: string) => {
+        const editor = editorRef.current
+        if (!editor) return
+        applyLink(editor, linkRangeRef.current, href, text)
+        linkRangeRef.current = null
+        reportNow(editor, onChangeRef.current)
+        reportFormatState(editor, onFormatStateRef.current)
+      },
+      removeLink: () => {
+        const editor = editorRef.current
+        if (!editor) return
+        removeLink(editor, linkRangeRef.current)
+        linkRangeRef.current = null
+        reportNow(editor, onChangeRef.current)
+        reportFormatState(editor, onFormatStateRef.current)
+      }
     }),
-    [onChangeRef]
+    [onChangeRef, onFormatStateRef]
   )
   async function handleDrop(event: React.DragEvent<HTMLDivElement>): Promise<void> {
     if (event.dataTransfer.types.includes('Files')) event.preventDefault()
@@ -383,6 +473,24 @@ export const BodyEditor = forwardRef<BodyEditorHandle, BodyEditorProps>(function
         })
       }}
       onKeyDown={(event) => {
+        const shortcut = event.nativeEvent.isComposing ? null : formatShortcut(event)
+        if (shortcut) {
+          event.preventDefault()
+          if (shortcut === 'link') onRequestLink?.()
+          else
+            runFormat(
+              event.currentTarget,
+              shortcut,
+              savedRangeRef.current,
+              onChangeRef.current,
+              onFormatStateRef.current
+            )
+          return
+        }
+        if (event.key === 'Enter' && !event.shiftKey && isInListItem(event.currentTarget)) {
+          reportAfterEditTransaction()
+          return
+        }
         if (event.key === 'Enter' && !event.shiftKey) {
           event.preventDefault()
           document.execCommand('insertLineBreak')
