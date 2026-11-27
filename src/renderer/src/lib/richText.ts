@@ -98,13 +98,24 @@ function linkAt(editor: HTMLElement, range: Range): HTMLAnchorElement | null {
   )
 }
 
+function withoutLinkUnderline<T>(run: () => T): T {
+  const style = document.createElement('style')
+  style.textContent = '.body-editor a { text-decoration: none }'
+  document.head.append(style)
+  try {
+    return run()
+  } finally {
+    style.remove()
+  }
+}
+
 export function readFormatState(editor: HTMLElement): FormatState {
   const range = selectionRangeIn(editor)
   if (!range) return EMPTY_FORMAT_STATE
   return {
     bold: document.queryCommandState('bold'),
     italic: document.queryCommandState('italic'),
-    underline: document.queryCommandState('underline'),
+    underline: withoutLinkUnderline(() => document.queryCommandState('underline')),
     link: linkAt(editor, range) !== null,
     bulletedList:
       closestWithin(editor, range.startContainer, 'li')?.parentElement?.tagName === 'UL',
@@ -222,8 +233,10 @@ export function applyFormat(editor: HTMLElement, command: FormatCommand): void {
   switch (command) {
     case 'bold':
     case 'italic':
-    case 'underline':
       document.execCommand(command)
+      return
+    case 'underline':
+      withoutLinkUnderline(() => document.execCommand('underline'))
       return
     case 'bulletedList':
       if (prepareBlockFormat(editor)) document.execCommand('insertUnorderedList')

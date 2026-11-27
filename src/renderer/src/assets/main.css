@@ -934,14 +934,6 @@ button {
 
 .body-editor a {
   color: #1a73e8;
-  text-decoration: none;
-  border-bottom: 1px solid currentColor;
-}
-
-.body-editor u a,
-.body-editor a:has(u),
-.body-editor a[style*='underline'] {
-  border-bottom: 0;
 }
 
 /* Fill mode (fresh compose, draft editor): the Message row owns exactly
