@@ -113,28 +113,12 @@ export function readFormatState(editor: HTMLElement): FormatState {
   }
 }
 
-function unwrap(element: Element): void {
-  const parent = element.parentNode
-  if (!parent) return
-  while (element.firstChild) parent.insertBefore(element.firstChild, element)
-  parent.removeChild(element)
-}
-
 function toggleQuote(editor: HTMLElement): void {
   const range = selectionRangeIn(editor)
-  const existing = userQuoteAt(editor, range?.startContainer ?? null)
-  if (existing) {
-    const selection = window.getSelection()
-    const first = existing.firstChild
-    const last = existing.lastChild
-    unwrap(existing)
-    if (selection && first && last) {
-      const kept = document.createRange()
-      kept.setStartBefore(first)
-      kept.setEndAfter(last)
-      selection.removeAllRanges()
-      selection.addRange(kept)
-    }
+  if (closestWithin(editor, range?.startContainer ?? null, REPLY_QUOTE_SELECTOR)) return
+  if (closestWithin(editor, range?.endContainer ?? null, REPLY_QUOTE_SELECTOR)) return
+  if (userQuoteAt(editor, range?.startContainer ?? null)) {
+    document.execCommand('outdent')
     return
   }
   document.execCommand('formatBlock', false, 'blockquote')
@@ -181,6 +165,18 @@ export function readLinkSelection(editor: HTMLElement, range: Range | null): Lin
   return { text: range.toString(), href: '', editing: false }
 }
 
+function caretAfterLink(editor: HTMLElement): void {
+  const range = selectionRangeIn(editor)
+  const anchor = range ? linkAt(editor, range) : null
+  const selection = window.getSelection()
+  if (!anchor || !selection) return
+  const after = document.createRange()
+  after.setStartAfter(anchor)
+  after.collapse(true)
+  selection.removeAllRanges()
+  selection.addRange(after)
+}
+
 export function applyLink(
   editor: HTMLElement,
   range: Range | null,
@@ -192,14 +188,21 @@ export function applyLink(
   const label = text.trim() === '' ? href : text
   const anchor = current ? linkAt(editor, current) : null
   if (anchor) {
-    anchor.setAttribute('href', href)
-    if (anchor.textContent !== label) anchor.textContent = label
+    const relabel = text.trim() !== '' && anchor.textContent !== text
+    const whole = document.createRange()
+    if (relabel) whole.selectNode(anchor)
+    else whole.selectNodeContents(anchor)
     const selection = window.getSelection()
-    const after = document.createRange()
-    after.setStartAfter(anchor)
-    after.collapse(true)
     selection?.removeAllRanges()
-    selection?.addRange(after)
+    selection?.addRange(whole)
+    if (relabel)
+      document.execCommand(
+        'insertHTML',
+        false,
+        `<a href="${escapeHtml(href)}">${escapeHtml(text)}</a>`
+      )
+    else document.execCommand('createLink', false, href)
+    caretAfterLink(editor)
     return
   }
   if (current && !current.collapsed && current.toString() === label) {

@@ -5216,6 +5216,16 @@ try {
     assertRichHtml(replyHtml, 'Reply', 'reply body')
     await editor.locator('blockquote.gmail_quote', { hasText: 'Final review of the launch checklist' }).click()
     await waitForPressed(button('Quote'), 'false', 'the reply quote is not a user block quote', 'the reply quote read as a user quote')
+    const nativeQuote = editor.locator('.gmail_quote_container')
+    const nativeBefore = await nativeQuote.innerHTML()
+    await button('Quote').click()
+    await editor.press('Control+Shift+9')
+    await waitForPressed(button('Quote'), 'false', 'Quote is a no-op inside the reply quote', 'Quote toggled on inside the reply quote')
+    assert(
+      (await nativeQuote.innerHTML()) === nativeBefore,
+      'Quote leaves the native reply quote markup untouched',
+      'Quote rewrote the native reply quote'
+    )
     await snapshot(page, 'rich-text-reply')
     await content.getByRole('button', { name: 'Send', exact: true }).click()
     await content.getByRole('status').getByText('Message sent.').waitFor({ timeout: 10000 })
@@ -5242,6 +5252,35 @@ try {
     )
     assert((await page.evaluate(() => window.__sent.length)) === 4, 'four formatted sends, one per surface path', 'unexpected outbox size')
     await snapshot(page, 'rich-text')
+
+    await page.getByRole('button', { name: 'Compose', exact: true }).click()
+    await content.getByRole('heading', { name: 'New email' }).waitFor({ timeout: 10000 })
+    await editor.click()
+    await editor.pressSequentially('line one')
+    await editor.press('Enter')
+    await editor.pressSequentially('quoted line')
+    await editor.press('Enter')
+    await editor.pressSequentially('line three')
+    await editor.press('ArrowUp')
+    await button('Quote').click()
+    await waitForPressed(button('Quote'), 'true', 'Quote wraps the middle line', 'Quote did not wrap the middle line')
+    await button('Quote').click()
+    await waitForPressed(button('Quote'), 'false', 'Quote toggles off on the middle line', 'Quote stayed on')
+    const unquotedLines = (await editor.innerText()).split('\n').filter((line) => line.trim() !== '')
+    assert(
+      JSON.stringify(unquotedLines) === JSON.stringify(['line one', 'quoted line', 'line three']),
+      'removing a quote keeps the line breaks around it',
+      `removing a quote joined lines: ${JSON.stringify(unquotedLines)}`
+    )
+    await editor.press('Control+End')
+    await editor.press('Shift+Home')
+    await editor.press('Control+k')
+    const linkForm = content.getByRole('group', { name: 'Edit link' })
+    await linkForm.getByLabel('Web address').fill('example.com')
+    await linkForm.getByRole('button', { name: 'Cancel link', exact: true }).press('Enter')
+    await linkForm.waitFor({ state: 'hidden', timeout: 5000 })
+    assert((await editor.locator('a').count()) === 0, 'Enter on Cancel link cancels instead of applying', 'Enter on Cancel link applied the link')
+    await content.getByRole('button', { name: 'Close', exact: true }).click().catch(() => {})
     return 'rich-text'
   })
   const journey = journeys.get(FEATURE)
