@@ -125,11 +125,30 @@ function endsLine(node: Node | null): boolean {
   return node.nodeType === Node.TEXT_NODE && (node.textContent ?? '').endsWith('\n')
 }
 
+type Boundary = { node: Node; offset: number } | { after: Node }
+
+function boundaryOutside(quote: HTMLElement, node: Node, offset: number): Boundary {
+  if (node !== quote) return { node, offset }
+  const child = quote.childNodes[offset]
+  return child ? { node: child, offset: -1 } : { after: quote.lastChild as Node }
+}
+
+function setBoundary(range: Range, boundary: Boundary, start: boolean): void {
+  if ('after' in boundary) {
+    if (start) range.setStartAfter(boundary.after)
+    else range.setEndAfter(boundary.after)
+  } else if (boundary.offset < 0) {
+    if (start) range.setStartBefore(boundary.node)
+    else range.setEndBefore(boundary.node)
+  } else if (start) range.setStart(boundary.node, boundary.offset)
+  else range.setEnd(boundary.node, boundary.offset)
+}
+
 function unwrapQuote(quote: HTMLElement, caret: Range | null): void {
   const parent = quote.parentNode
   if (!parent || !quote.firstChild) return
-  const start = caret ? { node: caret.startContainer, offset: caret.startOffset } : null
-  const end = caret ? { node: caret.endContainer, offset: caret.endOffset } : null
+  const start = caret ? boundaryOutside(quote, caret.startContainer, caret.startOffset) : null
+  const end = caret ? boundaryOutside(quote, caret.endContainer, caret.endOffset) : null
   if (!endsLine(quote.previousSibling) && !isBlock(quote.firstChild))
     parent.insertBefore(document.createElement('br'), quote)
   if (quote.nextSibling && !isBlock(quote.lastChild))
@@ -139,8 +158,8 @@ function unwrapQuote(quote: HTMLElement, caret: Range | null): void {
   const selection = window.getSelection()
   if (!start || !end || !selection) return
   const kept = document.createRange()
-  kept.setStart(start.node, start.offset)
-  kept.setEnd(end.node, end.offset)
+  setBoundary(kept, start, true)
+  setBoundary(kept, end, false)
   selection.removeAllRanges()
   selection.addRange(kept)
 }

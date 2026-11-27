@@ -5302,6 +5302,29 @@ try {
       'typing after unquoting continues the list item at the caret',
       `typing after unquoting went elsewhere: ${(await editor.innerHTML()).slice(-200)}`
     )
+    const unquoteErrors = []
+    page.on('pageerror', (error) => unquoteErrors.push(error.message))
+    await editor.evaluate((el, style) => {
+      const list = [...el.querySelectorAll('ul')].find((ul) => ul.textContent.includes('quoted kept item'))
+      const quote = document.createElement('blockquote')
+      quote.setAttribute('style', style)
+      list.replaceWith(quote)
+      quote.append(list, document.createElement('br'))
+      const range = document.createRange()
+      range.setStart(list.querySelector('li').firstChild, 0)
+      range.setEnd(quote, quote.childNodes.length)
+      getSelection().removeAllRanges()
+      getSelection().addRange(range)
+    }, 'margin:0px 0px 0px 0.8ex;border-left:1px solid rgb(204,204,204);padding-left:1ex')
+    await button('Quote').click()
+    await waitForPressed(button('Quote'), 'false', 'a selection ending on the quote itself unquotes', 'Quote stayed on for a selection ending on the quote')
+    assert(
+      unquoteErrors.length === 0 &&
+        (await editor.locator('blockquote').count()) === 0 &&
+        (await editor.locator('li', { hasText: 'quoted kept item' }).count()) === 1,
+      'unquoting a selection that ends on the quote element keeps the list without errors',
+      `unquoting ended badly: errors=${JSON.stringify(unquoteErrors)} html=${(await editor.innerHTML()).slice(-200)}`
+    )
     await content.getByRole('button', { name: 'Close', exact: true }).click().catch(() => {})
     return 'rich-text'
   })
