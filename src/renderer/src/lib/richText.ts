@@ -187,9 +187,10 @@ function separateBlocks(editor: HTMLElement): void {
 }
 
 function inReplyQuote(editor: HTMLElement, range: Range | null): boolean {
-  return Boolean(
-    closestWithin(editor, range?.startContainer ?? null, REPLY_QUOTE_SELECTOR) ||
-    closestWithin(editor, range?.endContainer ?? null, REPLY_QUOTE_SELECTOR)
+  if (!range) return false
+  if (closestWithin(editor, range.startContainer, REPLY_QUOTE_SELECTOR)) return true
+  return Array.from(editor.querySelectorAll(REPLY_QUOTE_SELECTOR)).some((quote) =>
+    range.intersectsNode(quote)
   )
 }
 
