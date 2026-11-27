@@ -392,6 +392,23 @@ const SERIALIZE_BLOCKS = new Set([
   'UL'
 ])
 
+const UNRENDERED_WHITESPACE_PARENTS = new Set([
+  'OL',
+  'UL',
+  'TABLE',
+  'TBODY',
+  'THEAD',
+  'TFOOT',
+  'TR'
+])
+
+function isUnrenderedWhitespace(text: Text): boolean {
+  const parent = text.parentElement
+  return (
+    parent !== null && UNRENDERED_WHITESPACE_PARENTS.has(parent.tagName) && text.data.trim() === ''
+  )
+}
+
 function serializeEndsLine(node: Node | null): boolean {
   if (!node) return true
   const text = node.nodeType === Node.TEXT_NODE ? (node.textContent ?? '') : null
@@ -424,7 +441,7 @@ export function serializeBodyHtml(root: HTMLElement): string {
   const texts: Text[] = []
   for (let node = walker.nextNode(); node; node = walker.nextNode()) texts.push(node as Text)
   for (const text of texts) {
-    if (text.parentElement?.closest(SERIALIZE_SKIP)) continue
+    if (text.parentElement?.closest(SERIALIZE_SKIP) || isUnrenderedWhitespace(text)) continue
     const lineStart = serializeLineStart(text)
     const segments = text.data.replace(/\r\n?/g, '\n').split('\n')
     const fragment = document.createDocumentFragment()
