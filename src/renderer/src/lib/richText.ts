@@ -98,29 +98,14 @@ function linkAt(editor: HTMLElement, range: Range): HTMLAnchorElement | null {
   )
 }
 
-function underlinesOwnText(element: Element): boolean {
-  if (element.tagName === 'U') return true
-  const style = (element as HTMLElement).style
-  return /underline/.test(`${style?.textDecorationLine ?? ''} ${style?.textDecoration ?? ''}`)
-}
-
-function explicitUnderlineAt(editor: HTMLElement, node: Node | null): boolean {
-  for (let probe = elementOf(node); probe && probe !== editor; probe = probe.parentElement)
-    if (underlinesOwnText(probe)) return true
-  return false
-}
-
 export function readFormatState(editor: HTMLElement): FormatState {
   const range = selectionRangeIn(editor)
   if (!range) return EMPTY_FORMAT_STATE
-  const link = linkAt(editor, range) !== null
   return {
     bold: document.queryCommandState('bold'),
     italic: document.queryCommandState('italic'),
-    underline:
-      document.queryCommandState('underline') &&
-      (!link || explicitUnderlineAt(editor, range.startContainer)),
-    link,
+    underline: document.queryCommandState('underline'),
+    link: linkAt(editor, range) !== null,
     bulletedList:
       closestWithin(editor, range.startContainer, 'li')?.parentElement?.tagName === 'UL',
     numberedList:
