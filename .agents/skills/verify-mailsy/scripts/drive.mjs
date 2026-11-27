@@ -211,6 +211,9 @@ async function formatRichBody(page, content, marker) {
   await button('Quote').click()
   await waitForPressed(button('Quote'), 'true', `${marker}: Quote presses inside the new block quote`, `${marker}: no block quote at the caret`)
   await editor.pressSequentially(`${marker} quoted note`)
+  await editor.locator('a', { hasText: `${marker} link` }).click()
+  await waitForPressed(button('Link'), 'true', `${marker}: the caret lands inside the link`, `${marker}: Link not pressed inside the link`)
+  await waitForPressed(button('Underline'), 'false', `${marker}: a link's own underline does not press Underline`, `${marker}: Underline pressed inside a plain link`)
   return editor.evaluate((el) => el.innerHTML)
 }
 
@@ -223,6 +226,7 @@ function richHtmlProblems(html, marker) {
   need(/<u>\s?underline<\/u>/.test(html), 'underline')
   need(html.includes(`<a href="https://mailsy.example/docs">${marker} link</a>`), 'link')
   need(!html.includes('javascript:'), 'unsafe href')
+  need(!/\n<br><(ul|ol|blockquote)[\s>]/.test(html), 'blank line inserted above a list or quote')
   need(/<ul><li>Bullet one<\/li><li>Bullet two<\/li><\/ul>/.test(html), 'bulleted list')
   need(/<ol><li>Step one<\/li><li>Step two<\/li><\/ol>/.test(html), 'numbered list')
   need(new RegExp(`<blockquote style="margin:0px 0px 0px 0.8ex;border-left:1px solid rgb\\(204,204,204\\);padding-left:1ex">${marker} quoted note`).test(html), 'block quote')
@@ -5279,6 +5283,7 @@ try {
     await waitForPressed(button('Quote'), 'true', 'a stored block quote reads back pressed', 'stored quote lost')
     await editor.locator('a', { hasText: 'Runbook' }).click()
     await waitForPressed(button('Link'), 'true', 'a stored link reads back pressed', 'stored link lost')
+    await waitForPressed(button('Underline'), 'false', 'a stored link does not press Underline', 'Underline pressed inside a stored link')
     await editor.locator('ul li', { hasText: 'Frontend' }).click()
     await page.keyboard.press(KEYS.lineStart)
     await page.keyboard.press('Shift+ArrowDown')
