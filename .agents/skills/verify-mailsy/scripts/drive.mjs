@@ -5280,6 +5280,21 @@ try {
     await linkForm.getByRole('button', { name: 'Cancel link', exact: true }).press('Enter')
     await linkForm.waitFor({ state: 'hidden', timeout: 5000 })
     assert((await editor.locator('a').count()) === 0, 'Enter on Cancel link cancels instead of applying', 'Enter on Cancel link applied the link')
+    await editor.press('Control+End')
+    await editor.press('Enter')
+    await editor.press('Control+Shift+9')
+    await editor.press('Control+Shift+8')
+    await editor.pressSequentially('quoted item')
+    await waitForPressed(button('Bulleted list'), 'true', 'a list starts inside the quote', 'no list inside the quote')
+    await waitForPressed(button('Quote'), 'true', 'the quoted list reads as quoted', 'the quoted list lost its quote')
+    await button('Quote').click()
+    await waitForPressed(button('Quote'), 'false', 'Quote toggles off inside a quoted list', 'Quote stayed on in the quoted list')
+    assert(
+      (await editor.locator('li', { hasText: 'quoted item' }).count()) === 1 &&
+        (await editor.locator('blockquote').count()) === 0,
+      'unquoting a quoted list keeps the list',
+      `unquoting a quoted list broke it: ${(await editor.innerHTML()).slice(-200)}`
+    )
     await content.getByRole('button', { name: 'Close', exact: true }).click().catch(() => {})
     return 'rich-text'
   })

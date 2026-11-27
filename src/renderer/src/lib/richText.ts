@@ -113,12 +113,35 @@ export function readFormatState(editor: HTMLElement): FormatState {
   }
 }
 
+const BLOCK_TAGS = new Set(['UL', 'OL', 'DIV', 'P', 'BLOCKQUOTE'])
+
+function unwrapQuote(quote: HTMLElement): void {
+  const parent = quote.parentNode
+  const first = quote.firstChild
+  const last = quote.lastChild
+  if (!parent || !first || !last) return
+  const next = quote.nextSibling
+  if (next && !(last instanceof HTMLElement && BLOCK_TAGS.has(last.tagName)))
+    parent.insertBefore(document.createElement('br'), next)
+  while (quote.firstChild) parent.insertBefore(quote.firstChild, quote)
+  parent.removeChild(quote)
+  const kept = document.createRange()
+  kept.setStartBefore(first)
+  kept.setEndAfter(last)
+  const selection = window.getSelection()
+  selection?.removeAllRanges()
+  selection?.addRange(kept)
+}
+
 function toggleQuote(editor: HTMLElement): void {
   const range = selectionRangeIn(editor)
   if (closestWithin(editor, range?.startContainer ?? null, REPLY_QUOTE_SELECTOR)) return
   if (closestWithin(editor, range?.endContainer ?? null, REPLY_QUOTE_SELECTOR)) return
-  if (userQuoteAt(editor, range?.startContainer ?? null)) {
-    document.execCommand('outdent')
+  const quote = userQuoteAt(editor, range?.startContainer ?? null)
+  if (quote) {
+    const item = closestWithin(editor, range?.startContainer ?? null, 'li')
+    if (item && quote.contains(item)) unwrapQuote(quote)
+    else document.execCommand('outdent')
     return
   }
   document.execCommand('formatBlock', false, 'blockquote')
