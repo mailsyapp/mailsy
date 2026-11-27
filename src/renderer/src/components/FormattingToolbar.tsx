@@ -23,6 +23,7 @@ type FormattingToolbarProps = {
   editor: React.RefObject<BodyEditorHandle | null>
   state: FormatState
   link: LinkEditorState | null
+  linkKey: number
   onOpenLink: () => void
   onCloseLink: () => void
 }
@@ -165,6 +166,7 @@ export function FormattingToolbar({
   editor,
   state,
   link,
+  linkKey,
   onOpenLink,
   onCloseLink
 }: FormattingToolbarProps): React.JSX.Element {
@@ -204,7 +206,7 @@ export function FormattingToolbar({
         </button>
         {BLOCK_BUTTONS.map(renderButton)}
       </div>
-      {link && <LinkEditor editor={editor} link={link} onClose={onCloseLink} />}
+      {link && <LinkEditor key={linkKey} editor={editor} link={link} onClose={onCloseLink} />}
     </div>
   )
 }

@@ -26,12 +26,15 @@ export const ComposerBody = forwardRef<ComposerBodyHandle, ComposerBodyProps>(fu
   const [signaturePresent, setSignaturePresent] = useState(false)
   const [formatState, setFormatState] = useState<FormatState>(EMPTY_FORMAT_STATE)
   const [linkEditor, setLinkEditor] = useState<LinkEditorState | null>(null)
+  const [linkEditorKey, setLinkEditorKey] = useState(0)
   const handleFormatState = useCallback((next: FormatState) => {
     setFormatState((prev) => (sameFormatState(prev, next) ? prev : next))
   }, [])
   const openLinkEditor = useCallback(() => {
     const selection = editorRef.current?.captureLinkSelection()
-    if (selection) setLinkEditor(selection)
+    if (!selection) return
+    setLinkEditor(selection)
+    setLinkEditorKey((key) => key + 1)
   }, [])
   useImperativeHandle(
     ref,
@@ -66,6 +69,7 @@ export const ComposerBody = forwardRef<ComposerBodyHandle, ComposerBodyProps>(fu
         editor={editorRef}
         state={formatState}
         link={linkEditor}
+        linkKey={linkEditorKey}
         onOpenLink={openLinkEditor}
         onCloseLink={() => setLinkEditor(null)}
       />
