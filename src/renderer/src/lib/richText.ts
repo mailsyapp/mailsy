@@ -346,3 +346,70 @@ export function formatShortcut(event: {
   if (event.code === 'Digit9') return 'quote'
   return null
 }
+
+const SERIALIZE_SKIP = `${REPLY_QUOTE_SELECTOR}, ${SIGNATURE_BLOCK_SELECTOR}, pre`
+const SERIALIZE_BLOCKS = new Set([
+  'BLOCKQUOTE',
+  'DIV',
+  'H1',
+  'H2',
+  'H3',
+  'H4',
+  'H5',
+  'H6',
+  'LI',
+  'OL',
+  'P',
+  'PRE',
+  'TABLE',
+  'TD',
+  'TH',
+  'UL'
+])
+
+function serializeEndsLine(node: Node | null): boolean {
+  if (!node) return true
+  if (node.nodeType === Node.TEXT_NODE && (node.textContent ?? '').trim() === '')
+    return serializeEndsLine(node.previousSibling)
+  if (node.nodeName === 'BR') return true
+  if (node instanceof HTMLElement && SERIALIZE_BLOCKS.has(node.tagName)) return true
+  return node.nodeType === Node.TEXT_NODE && (node.textContent ?? '').endsWith('\n')
+}
+
+function serializeLineStart(node: Node): boolean {
+  let probe: Node = node
+  while (true) {
+    if (probe.previousSibling) return serializeEndsLine(probe.previousSibling)
+    const parent = probe.parentNode
+    if (!(parent instanceof HTMLElement) || SERIALIZE_BLOCKS.has(parent.tagName)) return true
+    probe = parent
+  }
+}
+
+function serializeSpaces(segment: string, lineStart: boolean): string {
+  return segment.replace(/ +/g, (run, offset) => {
+    if (run.length > 1) return '\u00a0'.repeat(run.length - 1) + ' '
+    return lineStart && offset === 0 ? '\u00a0' : run
+  })
+}
+
+export function serializeBodyHtml(root: HTMLElement): string {
+  const clone = root.cloneNode(true) as HTMLElement
+  const walker = document.createTreeWalker(clone, NodeFilter.SHOW_TEXT)
+  const texts: Text[] = []
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) texts.push(node as Text)
+  for (const text of texts) {
+    if (text.parentElement?.closest(SERIALIZE_SKIP)) continue
+    const lineStart = serializeLineStart(text)
+    const segments = text.data.replace(/\r\n?/g, '\n').split('\n')
+    const fragment = document.createDocumentFragment()
+    segments.forEach((segment, index) => {
+      if (index > 0) fragment.appendChild(document.createElement('br'))
+      fragment.appendChild(
+        document.createTextNode(serializeSpaces(segment, index === 0 ? lineStart : true))
+      )
+    })
+    text.replaceWith(fragment)
+  }
+  return clone.innerHTML
+}

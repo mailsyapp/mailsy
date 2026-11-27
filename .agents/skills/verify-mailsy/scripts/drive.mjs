@@ -222,6 +222,28 @@ function assertRichHtml(html, marker, where) {
   )
 }
 
+// The editor keeps pre-wrap text nodes with raw "\n" for typed Enters;
+// readContent serializes them to <br> for the wire. A raw newline is only
+// legitimate inside the native reply quote, the signature block and <pre>,
+// whose source html stays byte-identical.
+async function assertSerializedLines(page, html, marker, where) {
+  const parsed = await page.evaluate((raw) => {
+    const host = document.createElement('div')
+    host.innerHTML = String(raw ?? '')
+    const quote = host.querySelector('.gmail_quote_container')
+    const quoteHtml = quote ? quote.innerHTML : null
+    for (const node of host.querySelectorAll('.gmail_quote_container, .mailsy-signature, pre'))
+      node.remove()
+    return { rest: host.innerHTML, quoteHtml }
+  }, html)
+  assert(
+    parsed.rest.includes(`${marker} cleared<br>`) && !parsed.rest.includes('\n'),
+    `${where}: a typed Enter serializes as <br> with no raw newlines outside quote/signature/pre`,
+    `${where}: serialization left raw newlines or lost the break: ${parsed.rest.slice(0, 240)}`
+  )
+  return parsed.quoteHtml
+}
+
 async function waitForRichSave(page, marker, draftId) {
   await page.waitForFunction(
     ({ marker, draftId }) =>
@@ -5221,6 +5243,7 @@ try {
     assert(composeSent.subject === 'Formatted compose' && composeSent.body.includes('Bullet two'),
       'the formatted compose sent with its text fallback', `compose send misshapen ${JSON.stringify(composeSent).slice(0, 200)}`)
     assertRichHtml(composeSent.bodyHtml, 'Compose', 'new compose send')
+    await assertSerializedLines(page, composeSent.bodyHtml, 'Compose', 'new compose send')
     log(`outbox html: ${JSON.stringify(composeSent.bodyHtml)}`)
     await content.getByRole('button', { name: 'Close', exact: true }).click()
 
@@ -5276,6 +5299,7 @@ try {
     assertRichHtml(draftHtml, 'Draft', 'draft editor body')
     const draftSave = await waitForRichSave(page, 'Draft', 'draft-rich')
     assertRichHtml(draftSave.bodyHtml, 'Draft', 'draft autosave')
+    await assertSerializedLines(page, draftSave.bodyHtml, 'Draft', 'draft autosave')
     assert(
       draftSave.bodyHtml.includes('<b>Launch is go.</b>') && draftSave.bodyHtml.includes('<li>Frontend</li>') &&
         !draftSave.bodyHtml.includes('example.com/runbook'),
@@ -5293,6 +5317,7 @@ try {
     const draftSent = (await page.evaluate(() => window.__sent)).at(-1)
     assert(draftSent.draftId === 'draft-rich', 'the draft sent as itself', `draft send misrouted ${JSON.stringify(draftSent).slice(0, 200)}`)
     assertRichHtml(draftSent.bodyHtml, 'Draft', 'draft send')
+    await assertSerializedLines(page, draftSent.bodyHtml, 'Draft', 'draft send')
     await content.getByRole('button', { name: 'Close', exact: true }).click().catch(() => {})
 
     await page.getByRole('button', { name: 'Inbox', exact: true }).click()
@@ -5300,6 +5325,7 @@ try {
     await inbox.getByText('Launch checklist').first().click()
     await content.getByRole('button', { name: 'reply', exact: true }).click()
     await content.getByRole('heading', { name: 'Compose email' }).waitFor({ timeout: 10000 })
+    const replyQuotePrefill = await content.locator('.body-editor .gmail_quote_container').innerHTML()
     const replyHtml = await formatRichBody(page, content, 'Reply')
     assertRichHtml(replyHtml, 'Reply', 'reply body')
     await editor.locator('blockquote.gmail_quote', { hasText: 'Final review of the launch checklist' }).click()
@@ -5322,6 +5348,12 @@ try {
     await content.getByRole('status').getByText('Message sent.').waitFor({ timeout: 10000 })
     const replySent = (await page.evaluate(() => window.__sent)).at(-1)
     assertRichHtml(replySent.bodyHtml, 'Reply', 'reply send')
+    const replyQuoteSent = await assertSerializedLines(page, replySent.bodyHtml, 'Reply', 'reply send')
+    assert(
+      replyQuoteSent === replyQuotePrefill,
+      'the serialized send keeps the prefilled quote html byte-identical',
+      `serialization rewrote the native quote: ${String(replyQuoteSent).slice(0, 200)}`
+    )
     assert(
       replySent.inReplyTo && replySent.bodyHtml.includes('gmail_quote_container') &&
         replySent.bodyHtml.includes('<blockquote class="gmail_quote"') &&
@@ -5330,6 +5362,7 @@ try {
     )
     await content.getByRole('button', { name: 'forward', exact: true }).click()
     await content.getByRole('heading', { name: 'Compose email' }).waitFor({ timeout: 10000 })
+    const forwardQuotePrefill = await content.locator('.body-editor .gmail_quote_container').innerHTML()
     await content.locator('.composerField input').first().fill('brook@example.com')
     const forwardHtml = await formatRichBody(page, content, 'Forward')
     assertRichHtml(forwardHtml, 'Forward', 'forward body')
@@ -5337,6 +5370,12 @@ try {
     await content.getByRole('status').getByText('Message sent.').waitFor({ timeout: 10000 })
     const forwardSent = (await page.evaluate(() => window.__sent)).at(-1)
     assertRichHtml(forwardSent.bodyHtml, 'Forward', 'forward send')
+    const forwardQuoteSent = await assertSerializedLines(page, forwardSent.bodyHtml, 'Forward', 'forward send')
+    assert(
+      forwardQuoteSent === forwardQuotePrefill,
+      'the serialized forward keeps the prefilled quote html byte-identical',
+      `serialization rewrote the forward quote: ${String(forwardQuoteSent).slice(0, 200)}`
+    )
     assert(
       forwardSent.subject === 'Fwd: Launch checklist' && forwardSent.bodyHtml.includes('Forwarded message'),
       'the forward keeps its forwarded block below the formats', 'the forward lost its forwarded content'

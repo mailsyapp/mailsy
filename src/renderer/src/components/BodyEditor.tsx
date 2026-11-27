@@ -16,6 +16,7 @@ import {
   removeLink,
   restoreRange,
   selectionRangeIn,
+  serializeBodyHtml,
   type FormatCommand,
   type FormatState,
   type LinkSelection
@@ -48,7 +49,7 @@ function readContent(editor: HTMLDivElement): {
   html: string
   text: string
 } {
-  const html = editor.innerHTML
+  const html = serializeBodyHtml(editor)
   const text = editor.innerText
   return { html: /^(\s|<br\/?>)*$/i.test(html) ? '' : html, text }
 }
