@@ -139,6 +139,10 @@ async function formatRichBody(page, content, marker) {
   const editor = content.locator('.body-editor')
   const toolbar = content.getByRole('toolbar', { name: 'Formatting options' })
   const button = (name) => toolbar.getByRole('button', { name, exact: true })
+  // An empty first line of its own, so existing body content (a stored
+  // draft's first line, a reply quote) never joins the formatted lines.
+  await caretAtBodyStart(editor)
+  await editor.press('Enter')
   await caretAtBodyStart(editor)
   await button('Bold').click()
   await waitForPressed(button('Bold'), 'true', `${marker}: Bold turns on at the caret`, `${marker}: Bold did not press`)
@@ -146,7 +150,7 @@ async function formatRichBody(page, content, marker) {
   await editor.press('Shift+Home')
   await button('Remove formatting').click()
   await waitForPressed(button('Bold'), 'false', `${marker}: Remove formatting clears bold from the selection`, `${marker}: Remove formatting left Bold pressed`)
-  await editor.press('End')
+  await editor.press('ArrowRight')
   await editor.press('Enter')
   await button('Bold').click()
   await editor.pressSequentially(`${marker} bold`)
