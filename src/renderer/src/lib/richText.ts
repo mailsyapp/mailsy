@@ -122,10 +122,10 @@ function isBlock(node: Node | null): boolean {
 
 function endsLine(node: Node | null): boolean {
   if (!node) return true
-  if (node.nodeType === Node.TEXT_NODE && (node.textContent ?? '').trim() === '')
-    return endsLine(node.previousSibling)
-  if (node.nodeName === 'BR' || isBlock(node)) return true
-  return node.nodeType === Node.TEXT_NODE && (node.textContent ?? '').endsWith('\n')
+  const text = node.nodeType === Node.TEXT_NODE ? (node.textContent ?? '') : null
+  if (text !== null && text.endsWith('\n')) return true
+  if (text !== null && text.trim() === '') return endsLine(node.previousSibling)
+  return node.nodeName === 'BR' || isBlock(node)
 }
 
 type Boundary = { node: Node; offset: number } | { before: Node } | { after: Node }
@@ -369,11 +369,11 @@ const SERIALIZE_BLOCKS = new Set([
 
 function serializeEndsLine(node: Node | null): boolean {
   if (!node) return true
-  if (node.nodeType === Node.TEXT_NODE && (node.textContent ?? '').trim() === '')
-    return serializeEndsLine(node.previousSibling)
+  const text = node.nodeType === Node.TEXT_NODE ? (node.textContent ?? '') : null
+  if (text !== null && text.endsWith('\n')) return true
+  if (text !== null && text.trim() === '') return serializeEndsLine(node.previousSibling)
   if (node.nodeName === 'BR') return true
-  if (node instanceof HTMLElement && SERIALIZE_BLOCKS.has(node.tagName)) return true
-  return node.nodeType === Node.TEXT_NODE && (node.textContent ?? '').endsWith('\n')
+  return node instanceof HTMLElement && SERIALIZE_BLOCKS.has(node.tagName)
 }
 
 function serializeLineStart(node: Node): boolean {
