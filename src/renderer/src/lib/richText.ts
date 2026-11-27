@@ -441,7 +441,11 @@ export function serializeBodyHtml(root: HTMLElement): string {
   const texts: Text[] = []
   for (let node = walker.nextNode(); node; node = walker.nextNode()) texts.push(node as Text)
   for (const text of texts) {
-    if (text.parentElement?.closest(SERIALIZE_SKIP) || isUnrenderedWhitespace(text)) continue
+    if (text.parentElement?.closest(SERIALIZE_SKIP)) continue
+    if (isUnrenderedWhitespace(text)) {
+      text.remove()
+      continue
+    }
     const lineStart = serializeLineStart(text)
     const segments = text.data.replace(/\r\n?/g, '\n').split('\n')
     const fragment = document.createDocumentFragment()
