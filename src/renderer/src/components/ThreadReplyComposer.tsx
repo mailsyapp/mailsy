@@ -1,3 +1,4 @@
+import { useLatest } from '../hooks/useLatest'
 import { useReaction } from '../hooks/useReaction'
 import { forwardRef, useCallback, useImperativeHandle, useRef, useState } from 'react'
 import type {
@@ -20,12 +21,14 @@ type ThreadReplyComposerProps = {
   thread: ThreadSummary
   messages: EmailDetailData[]
   userEmail: string
+  sessionSignal: AbortSignal
   onSent: (threadId: string | undefined) => void
 }
 
 export const ThreadReplyComposer = forwardRef<ThreadReplyComposerHandle, ThreadReplyComposerProps>(
-  function ThreadReplyComposer({ thread, messages, userEmail, onSent }, ref) {
-    const latestMessage: EmailDetailData | null = messages[messages.length - 1] ?? null
+  function ThreadReplyComposer({ thread, messages, userEmail, sessionSignal, onSent }, ref) {
+    const latestMessage: EmailDetailData | null =
+      messages.filter((message) => !message.isDraft).pop() ?? null
 
     const [draft, setDraft] = useState<SendEmailRequest | null>(null)
     const pendingReplyRef = useRef<{ target: EmailDetailData; prefilledTo: string } | null>(null)
@@ -33,6 +36,7 @@ export const ThreadReplyComposer = forwardRef<ThreadReplyComposerHandle, ThreadR
     const [composerSeq, setComposerSeq] = useState(0)
     const [attachmentPrefill, setAttachmentPrefill] = useState<AttachmentPrefill>()
     const [sent, setSent] = useState(false)
+    const currentComposerSeq = useLatest(composerSeq)
 
     useReaction([userEmail], () => {
       const pending = pendingReplyRef.current
@@ -121,6 +125,7 @@ export const ThreadReplyComposer = forwardRef<ThreadReplyComposerHandle, ThreadR
           <ThreadReplyForm
             key={composerSeq}
             draft={draft}
+            sessionSignal={sessionSignal}
             prefill={attachmentPrefill}
             initialHtml={quotedContent?.html ?? ''}
             onChange={(patch) => setDraft((prev) => (prev ? { ...prev, ...patch } : prev))}
@@ -129,9 +134,11 @@ export const ThreadReplyComposer = forwardRef<ThreadReplyComposerHandle, ThreadR
               setQuotedContent(null)
             }}
             onSent={() => {
-              setDraft(null)
-              setQuotedContent(null)
-              setSent(true)
+              if (currentComposerSeq.current === composerSeq) {
+                setDraft(null)
+                setQuotedContent(null)
+                setSent(true)
+              }
               onSent(latestMessage?.threadId ?? thread.id)
             }}
           />

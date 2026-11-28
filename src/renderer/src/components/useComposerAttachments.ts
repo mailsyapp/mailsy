@@ -28,6 +28,7 @@ export interface ComposerAttachments {
   retry: (attachmentId: string) => Promise<void>
   removeFailed: (attachmentId: string) => void
   picking: boolean
+  adding: boolean
 
   dropping: boolean
   drop: DragHandlers
@@ -45,6 +46,15 @@ export interface DragHandlers {
   onDragLeave: (event: React.DragEvent) => void
   onDrop: (event: React.DragEvent) => void
 }
+function blockFileDrag(event: React.DragEvent): void {
+  if (dragsFiles(event)) event.preventDefault()
+}
+export const BLOCKED_DROP: DragHandlers = {
+  onDragEnter: blockFileDrag,
+  onDragOver: blockFileDrag,
+  onDragLeave: () => {},
+  onDrop: blockFileDrag
+}
 export type AttachmentPrefill = {
   messageId: string
   refs: MessageAttachmentRef[]
@@ -61,6 +71,11 @@ export function useComposerAttachments(
   const [error, setError] = useState<string | null>(null)
   const [edited, setEdited] = useState(false)
   const [picking, setPicking] = useState(false)
+  const [pendingFiles, setPendingFiles] = useState(0)
+  const trackFiles = useCallback(<T>(work: Promise<T>): Promise<T> => {
+    setPendingFiles((count) => count + 1)
+    return work.finally(() => setPendingFiles((count) => count - 1))
+  }, [])
   const [loading, setLoading] = useState(Boolean(prefill?.refs.length))
   const [failed, setFailed] = useState<MessageAttachmentRef[]>([])
   const [unresolved, setUnresolved] = useState(prefill?.refs ?? [])
@@ -210,10 +225,10 @@ export function useComposerAttachments(
         return
       }
       setError(null)
-      const loaded = await Promise.all(files.map(fileToAttachment))
+      const loaded = await trackFiles(Promise.all(files.map(fileToAttachment)))
       push(loaded.filter((entry): entry is ComposeAttachment => entry !== null))
     },
-    [push, ready]
+    [push, ready, trackFiles]
   )
   const drop = useMemo<DragHandlers>(
     () => ({
@@ -242,11 +257,12 @@ export function useComposerAttachments(
         const files = Array.from(event.dataTransfer.files)
         const images = files.filter((file) => looksLikeImageFile(file))
         const others = files.filter((file) => !looksLikeImageFile(file))
-        if (images.length) void bodyEditorRef?.current?.insertImages(images)
+        const editor = bodyEditorRef?.current
+        if (images.length && editor) void trackFiles(editor.insertImages(images))
         void addFiles(others)
       }
     }),
-    [addFiles, bodyEditorRef]
+    [addFiles, bodyEditorRef, trackFiles]
   )
   const remove = useCallback(
     (index: number) => {
@@ -278,6 +294,7 @@ export function useComposerAttachments(
     retry,
     removeFailed,
     picking,
+    adding: picking || pendingFiles > 0,
     dropping,
     drop,
     pick,

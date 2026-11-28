@@ -1,5 +1,4 @@
 import { useRef, useState } from 'react'
-import { errorMessage } from '../lib/format'
 import type { EmailDetail as EmailDetailData, ThreadSummary } from '../../../shared/types'
 import {
   composeRequest,
@@ -10,8 +9,10 @@ import {
 import { RecipientFields } from './RecipientFields'
 import { useDraftAutosave } from './useDraftAutosave'
 import { ComposerBody, type ComposerBodyHandle } from './ComposerBody'
-import { useComposerAttachments } from './useComposerAttachments'
+import { BLOCKED_DROP, useComposerAttachments } from './useComposerAttachments'
 import { plainTextToHtml } from '../lib/emailHtml'
+import { useUndoSend } from './useUndoSend'
+import { UndoSendNotice } from './UndoSendNotice'
 type DraftEditorProps = {
   row: ThreadSummary
   detail: EmailDetailData | null
@@ -46,9 +47,6 @@ function DraftForm({
   const initialText = detail.bodyText || detail.snippet || ''
   const [body, setBody] = useState<ComposeBody>(() => ({ html: initialHtml, text: initialText }))
   const bodyRef = useRef<ComposerBodyHandle | null>(null)
-  const [sending, setSending] = useState(false)
-  const [sendError, setSendError] = useState<string | null>(null)
-  const [notice, setNotice] = useState<string | null>(null)
   const [sent, setSent] = useState(false)
   const [edited, setEdited] = useState(false)
   const attach = useComposerAttachments(
@@ -74,83 +72,60 @@ function DraftForm({
     edited || attach.edited,
     attach.adoptSaved
   )
-  async function handleSend(event: React.FormEvent<HTMLFormElement>): Promise<void> {
+  const send = useUndoSend(sessionSignal)
+  function handleSend(event: React.FormEvent<HTMLFormElement>): void {
     event.preventDefault()
-    if (sending || sent || !attach.ready || !hasRecipient(recipients)) return
-    setSending(true)
-    setSendError(null)
-    setNotice(null)
-    try {
-      await autosave.flushPending()
-      if (sessionSignal.aborted) return
-      autosave.suspend()
-      try {
-        const target = autosave.currentDraft()
-        if (target) {
-          await window.api.sendDraft({ ...request, ...target })
-        } else {
-          await window.api.sendEmail(
-            composeRequest({ recipients, subject, body, attachments: attach.attachments })
-          )
-          setNotice(
-            'Sent as a new message; the original draft entry was left in place (unknown draft ID).'
-          )
-          return
-        }
-      } finally {
-        autosave.resume()
-      }
-      if (sessionSignal.aborted) return
-      autosave.stop()
+    if (sent || !attach.ready || attach.adding || !hasRecipient(recipients)) return
+    const snapshot = draftId
+      ? request
+      : composeRequest({ recipients, subject, body, attachments: attach.attachments })
+    void send.start(snapshot, autosave, () => {
       setSent(true)
-      onSent()
-    } catch (error) {
-      setSendError(errorMessage(error))
-    } finally {
-      setSending(false)
-    }
+      if (draftId) onSent()
+    })
   }
   return (
     <form
       className={`composer composer-fill${attach.dropping ? ' composer-dragging' : ''}`}
       onSubmit={handleSend}
-      {...attach.drop}
+      {...(send.busy ? BLOCKED_DROP : attach.drop)}
     >
       <h2 id="draft-editor-title">Draft</h2>
 
-      <RecipientFields
-        to={recipients.to}
-        cc={recipients.cc}
-        bcc={recipients.bcc}
-        onChange={(patch) => {
-          setEdited(true)
-          setRecipients({ ...recipients, ...patch })
-        }}
-      />
-
-      <label className="composerField">
-        <span>Subject</span>
-        <input
-          value={subject}
-          onChange={(event) => {
+      <div className="composerFields" inert={send.busy}>
+        <RecipientFields
+          to={recipients.to}
+          cc={recipients.cc}
+          bcc={recipients.bcc}
+          onChange={(patch) => {
             setEdited(true)
-            setSubject(event.target.value)
+            setRecipients({ ...recipients, ...patch })
           }}
         />
-      </label>
 
-      <ComposerBody
-        ref={bodyRef}
-        attach={attach}
-        initialHtml={initialHtml}
-        onBodyChange={(value, source) => {
-          if (source === 'edit') setEdited(true)
-          setBody(value)
-        }}
-      />
+        <label className="composerField">
+          <span>Subject</span>
+          <input
+            value={subject}
+            onChange={(event) => {
+              setEdited(true)
+              setSubject(event.target.value)
+            }}
+          />
+        </label>
 
-      {sendError && <p role="alert">{sendError}</p>}
-      {notice && <p role="status">{notice}</p>}
+        <ComposerBody
+          ref={bodyRef}
+          attach={attach}
+          initialHtml={initialHtml}
+          onBodyChange={(value, source) => {
+            if (source === 'edit') setEdited(true)
+            setBody(value)
+          }}
+        />
+      </div>
+
+      {send.error && <p role="alert">{send.error}</p>}
       {autosave.error && (
         <p role="alert">
           {autosave.refsStale ? 'Attachment refresh required: ' : 'Draft not saved: '}
@@ -161,19 +136,28 @@ function DraftForm({
       {autosave.status === 'saved' && <p role="status">Draft saved.</p>}
       {discardError && <p role="alert">Delete failed: {discardError}</p>}
 
+      {send.phase === 'waiting' && <UndoSendNotice onUndo={send.undo} />}
       <div className="composerActions">
-        <button type="button" onClick={onDraftDiscard} disabled={sending || sent}>
+        <button type="button" onClick={onDraftDiscard} disabled={send.busy || sent}>
           delete draft
         </button>
 
         <button
           type="submit"
-          disabled={sending || sent || !attach.ready || !hasRecipient(recipients)}
+          disabled={
+            send.busy || sent || !attach.ready || attach.adding || !hasRecipient(recipients)
+          }
         >
-          {sending ? 'Sending...' : sent ? 'Sent' : 'Send'}
+          {sent ? 'Sent' : send.buttonLabel}
         </button>
       </div>
-      {sent && <p role="status">Message sent.</p>}
+      {sent && (
+        <p role="status">
+          {draftId
+            ? 'Message sent.'
+            : 'Sent as a new message; the original draft entry was left in place (unknown draft ID).'}
+        </p>
+      )}
     </form>
   )
 }

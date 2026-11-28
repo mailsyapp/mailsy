@@ -66,7 +66,8 @@ export async function toEmailDetail(
     starred: (msg.labelIds ?? []).includes('STARRED'),
     bodyText: out.text,
     bodyHtml,
-    attachments: out.attachments
+    attachments: out.attachments,
+    ...((msg.labelIds ?? []).includes('DRAFT') ? { isDraft: true } : {})
   }
 }
 

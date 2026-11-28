@@ -33,6 +33,7 @@ type EmailDetailProps = {
   thread: ThreadSummary
   folder: MailFolder
   labels: MailLabel[]
+  sessionSignal: AbortSignal
   onThreadRemoved: (threadId: string) => void
   onThreadReadChanged: (threadId: string, unread: boolean) => void
   onThreadStarChanged: (threadId: string, starred: boolean) => void
@@ -148,6 +149,7 @@ export function EmailDetail({
   thread,
   folder,
   labels,
+  sessionSignal,
   onThreadRemoved,
   onThreadReadChanged,
   onThreadStarChanged,
@@ -519,6 +521,7 @@ export function EmailDetail({
         thread={thread}
         messages={messages}
         userEmail={threadData?.userEmail ?? ''}
+        sessionSignal={sessionSignal}
         onSent={(threadId) => {
           if (threadId) void loadThread(threadId, true)
         }}

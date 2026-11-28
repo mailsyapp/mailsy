@@ -12,12 +12,14 @@ import { EmailDetail } from './components/EmailDetail'
 import { applyMailDelta, listRowKey, mergeIncoming, viewLabelOf } from './lib/syncApply'
 import { hasGmailOperator, previewMatches, rerankByFuse } from './lib/search'
 import { FOLDER_CONFIG } from './lib/folderViews'
+import { leftSends } from './lib/pendingSend'
 import type { SyncResult } from '../../shared/sync'
 import { DraftEditor } from './components/DraftEditor'
 import { ComposeEditor } from './components/ComposeEditor'
 import { FolderRail } from './components/FolderRail'
 import { MailListRow } from './components/MailListRow'
 import { OAuthCredentialsSetup } from './components/OAuthCredentialsSetup'
+import { LeftSendNotices } from './components/UndoSendNotice'
 import { useIntersection } from './hooks/useIntersection'
 import { useInterval } from './hooks/useInterval'
 import { useLatest } from './hooks/useLatest'
@@ -66,6 +68,7 @@ function App(): React.JSX.Element {
   } | null>(null)
   const selectionRef = useRef<string | null>(null)
   const sessionAbortRef = useRef(new AbortController())
+  const reopenDraftRef = useRef<string | null>(null)
   const selectedDraftRef = useRef<{
     key: string
     id: string
@@ -306,6 +309,7 @@ function App(): React.JSX.Element {
         if (sessionSignal.aborted) return
         setDraftDiscard(null)
         invalidatePageCursor()
+        leftSends.forgetDraft(row.draftId)
         removeListRow(rowKey)
       })
       .catch((e: unknown) => {
@@ -687,6 +691,32 @@ function App(): React.JSX.Element {
         }
       })
   }
+  useReaction([threads, activeFolder], () => {
+    const draftId = reopenDraftRef.current
+    if (draftId === null || activeFolder !== 'drafts') return
+    const row = threads.find((thread) => thread.draftId === draftId)
+    if (!row) return
+    reopenDraftRef.current = null
+    handleSelect(row)
+  })
+  function openLeftDraft(draftId: string): void {
+    reopenDraftRef.current = draftId
+    if (activeFolder !== 'drafts' || activeLabel !== null) {
+      handleFolderSelect('drafts')
+      return
+    }
+    if (committedQuery !== '') {
+      handleClearSearch()
+      return
+    }
+    const row = threads.find((thread) => thread.draftId === draftId)
+    if (!row) {
+      handleRefresh()
+      return
+    }
+    reopenDraftRef.current = null
+    handleSelect(row)
+  }
   const syncResultHandlerRef = useLatest(handleSyncResult)
   const firstPageLoaderRef = useLatest(loadFirstPage)
   const signedInRef = useLatest(signedIn)
@@ -871,6 +901,7 @@ function App(): React.JSX.Element {
               Refresh
             </button>
             <button onClick={handleSignOut}>Sign out</button>
+            <LeftSendNotices onOpenDraft={openLeftDraft} />
           </>
         )}
         {searching && threads.length === 0 && !isSearchActive && (
@@ -988,7 +1019,10 @@ function App(): React.JSX.Element {
                 detail={draftDetail}
                 detailLoading={draftDetailLoading}
                 sessionSignal={sessionAbortRef.current.signal}
-                onSent={() => handleDraftSent(listRowKey(selectedThread))}
+                onSent={() => {
+                  leftSends.forgetDraft(selectedThread.draftId)
+                  handleDraftSent(listRowKey(selectedThread))
+                }}
                 onDraftDiscard={() => handleDraftDiscard(selectedThread)}
                 discardError={
                   draftDiscard && draftDiscard.rowKey === selectedKey ? draftDiscard.error : null
@@ -1000,6 +1034,7 @@ function App(): React.JSX.Element {
                 thread={selectedThread}
                 folder={activeFolder}
                 labels={labels}
+                sessionSignal={sessionAbortRef.current.signal}
                 onThreadRemoved={handleThreadRemoved}
                 onThreadReadChanged={handleThreadReadChanged}
                 onThreadStarChanged={handleThreadStarChanged}
