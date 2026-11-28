@@ -69,7 +69,12 @@ export function collectBodies(
       data: part.body?.data,
       attachmentId: part.body?.attachmentId
     })
-  } else if (part.filename && (part.body?.attachmentId || typeof part.body?.data === 'string')) {
+  }
+  if (
+    part.filename &&
+    (part.body?.attachmentId || typeof part.body?.data === 'string') &&
+    (!inlineCid || hasAttachmentDisposition(part))
+  ) {
     out.attachments.push({
       filename: part.filename,
       size: part.body?.size ?? 0,
@@ -77,6 +82,13 @@ export function collectBodies(
     })
   }
   for (const [index, p] of (part.parts ?? []).entries()) collectBodies(p, out, `${path}.${index}`)
+}
+
+function hasAttachmentDisposition(part: gmail_v1.Schema$MessagePart): boolean {
+  const header = part.headers?.find(
+    (header) => header.name?.toLowerCase() === 'content-disposition'
+  )
+  return /^\s*attachment\s*(?:[;(]|$)/i.test(header?.value ?? '')
 }
 
 type RawMessageFields = Pick<
