@@ -5693,6 +5693,17 @@ try {
     )
     await page.keyboard.press(KEYS.selectAll)
     await page.keyboard.press('Delete')
+    await page.keyboard.type('ab')
+    await button('Bold').click()
+    await page.keyboard.type('cd')
+    await page.keyboard.press('Control+z')
+    assert(
+      (await editor.innerText()).trim() === 'ab',
+      'a Bold toggle at the caret starts a new undo step',
+      `Undo crossed the Bold toggle: ${JSON.stringify(await editor.innerText())}`
+    )
+    await page.keyboard.press(KEYS.selectAll)
+    await page.keyboard.press('Delete')
     await editor.evaluate((el) => {
       el.innerHTML = '<ul><li style="display:inline">Alpha</li>&nbsp;<li style="display:inline">Beta</li></ul>'
     })
