@@ -25,6 +25,7 @@ export type LeftSend = {
   draftId?: string
   error?: string
   undo: () => boolean
+  onRemove?: () => void
 }
 
 let leftSendList: readonly LeftSend[] = []
@@ -53,6 +54,17 @@ export const leftSends = {
     publishLeftSends(leftSendList.map((send) => (send.id === id ? { ...send, ...patch } : send)))
   },
   remove(id: number): void {
-    publishLeftSends(leftSendList.filter((send) => send.id !== id))
+    const removed = leftSendList.find((send) => send.id === id)
+    if (!removed) return
+    publishLeftSends(leftSendList.filter((send) => send !== removed))
+    removed.onRemove?.()
+  },
+  forgetDraft(draftId: string | undefined): void {
+    if (!draftId) return
+    leftSendList
+      .filter(
+        (send) => send.draftId === draftId && (send.phase === 'undone' || send.phase === 'failed')
+      )
+      .forEach((send) => leftSends.remove(send.id))
   }
 }

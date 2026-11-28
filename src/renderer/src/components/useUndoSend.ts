@@ -56,7 +56,13 @@ export function useUndoSend(sessionSignal: AbortSignal): {
         return true
       },
       leave: () => {
-        if (!settled) leftId = leftSends.add({ phase: current, draftId, undo: attempt.undo })
+        if (settled) return
+        leftId = leftSends.add({
+          phase: current,
+          draftId,
+          undo: attempt.undo,
+          onRemove: () => sessionSignal.removeEventListener('abort', abandon)
+        })
       }
     }
     active.current = attempt
@@ -75,10 +81,8 @@ export function useUndoSend(sessionSignal: AbortSignal): {
         setPhase('idle')
         if (failure !== undefined) setError(errorMessage(failure))
       } else if (leftId !== null) {
-        if (failure === undefined) {
-          sessionSignal.removeEventListener('abort', abandon)
-          leftSends.remove(leftId)
-        } else
+        if (failure === undefined) leftSends.remove(leftId)
+        else
           leftSends.update(leftId, {
             phase: 'failed',
             error: errorMessage(failure),

@@ -63,3 +63,25 @@ test('leftSends publishes added, updated and removed sends to subscribers', asyn
   leftSends.add({ phase: 'sending', undo: () => false })
   assert.equal(notified, 3)
 })
+
+test('leftSends runs onRemove once and forgetDraft clears only settled notices for that draft', async () => {
+  const { leftSends } = await import('../src/renderer/src/lib/pendingSend.ts')
+  leftSends.snapshot().forEach((send) => leftSends.remove(send.id))
+  let released = 0
+  const undone = leftSends.add({
+    phase: 'undone',
+    draftId: 'd2',
+    undo: () => false,
+    onRemove: () => released++
+  })
+  const waiting = leftSends.add({ phase: 'waiting', draftId: 'd2', undo: () => true })
+  leftSends.forgetDraft('d2')
+  assert.deepEqual(
+    leftSends.snapshot().map((send) => send.id),
+    [waiting]
+  )
+  leftSends.remove(undone)
+  assert.equal(released, 1)
+  leftSends.remove(waiting)
+  assert.deepEqual(leftSends.snapshot(), [])
+})

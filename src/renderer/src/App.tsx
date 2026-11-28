@@ -12,6 +12,7 @@ import { EmailDetail } from './components/EmailDetail'
 import { applyMailDelta, listRowKey, mergeIncoming, viewLabelOf } from './lib/syncApply'
 import { hasGmailOperator, previewMatches, rerankByFuse } from './lib/search'
 import { FOLDER_CONFIG } from './lib/folderViews'
+import { leftSends } from './lib/pendingSend'
 import type { SyncResult } from '../../shared/sync'
 import { DraftEditor } from './components/DraftEditor'
 import { ComposeEditor } from './components/ComposeEditor'
@@ -308,6 +309,7 @@ function App(): React.JSX.Element {
         if (sessionSignal.aborted) return
         setDraftDiscard(null)
         invalidatePageCursor()
+        leftSends.forgetDraft(row.draftId)
         removeListRow(rowKey)
       })
       .catch((e: unknown) => {
@@ -1017,7 +1019,10 @@ function App(): React.JSX.Element {
                 detail={draftDetail}
                 detailLoading={draftDetailLoading}
                 sessionSignal={sessionAbortRef.current.signal}
-                onSent={() => handleDraftSent(listRowKey(selectedThread))}
+                onSent={() => {
+                  leftSends.forgetDraft(selectedThread.draftId)
+                  handleDraftSent(listRowKey(selectedThread))
+                }}
                 onDraftDiscard={() => handleDraftDiscard(selectedThread)}
                 discardError={
                   draftDiscard && draftDiscard.rowKey === selectedKey ? draftDiscard.error : null
