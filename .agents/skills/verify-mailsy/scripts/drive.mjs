@@ -5596,8 +5596,18 @@ try {
     )
     await signatureToggle.click()
     await waitForPressed(signatureToggle, 'true', 'the signature returns', 'the signature did not reinsert')
+    await editor.click({ position: { x: 5, y: 5 } })
+    await page.keyboard.type('zz')
+    await page.keyboard.press('Control+z')
+    assert(!(await editor.innerText()).includes('zz'), 'Undo removes the typed text', 'Undo left the typed text')
     await editor.locator(':scope > .mailsy-signature').getByText('Rich Signer').click()
     await button('Quote').click()
+    await page.keyboard.press('Control+Shift+z')
+    assert(
+      (await editor.innerText()).includes('zz'),
+      'a Quote that changes nothing keeps the Redo step',
+      'Quote inside the signature cleared Redo'
+    )
     assert(
       (await editor.locator(':scope > .mailsy-signature').count()) === 1 &&
         (await editor.locator('blockquote', { hasText: 'Rich Signer' }).count()) === 0,
@@ -5680,6 +5690,50 @@ try {
         JSON.stringify([['https://b.example', 'hello wor'], ['https://a.example', 'ld'], ['https://c.example', 'bb']]),
       'applying the reopened form leaves every link as it was',
       `the reopened form rewrote a link: ${JSON.stringify(await links())}`
+    )
+    await page.keyboard.press(KEYS.selectAll)
+    await page.keyboard.press('Delete')
+    await editor.evaluate((el) => {
+      el.innerHTML = '<ul><li style="display:inline">Alpha</li>&nbsp;<li style="display:inline">Beta</li></ul>'
+    })
+    await editor.locator('li', { hasText: 'Beta' }).click()
+    await page.keyboard.press(KEYS.lineEnd)
+    await page.keyboard.type('!')
+    await page.waitForFunction(() => window.__draftSaves.at(-1)?.bodyHtml.includes('Beta!'), null, { timeout: 10000 })
+    const inlineListSave = await page.evaluate(() => window.__draftSaves.at(-1).bodyHtml)
+    assert(
+      inlineListSave.includes('Alpha</li>&nbsp;<li'),
+      'a nonbreaking space between list items survives the autosave',
+      `the autosave dropped a visible list separator: ${inlineListSave.slice(0, 200)}`
+    )
+
+    await page.keyboard.press(KEYS.selectAll)
+    await page.keyboard.press('Delete')
+    await editor.evaluate((el) => {
+      const bytes = new Uint8Array(4 * 1024 * 1024)
+      for (let i = 0; i < bytes.length; i++) bytes[i] = (i * 2654435761) >>> 24
+      const data = new DataTransfer()
+      data.items.add(new File([bytes], 'large.png', { type: 'image/png' }))
+      el.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }))
+    })
+    await editor.locator('img').waitFor({ timeout: 10000 })
+    const largeSteps = 16
+    for (let i = 0; i < largeSteps; i++) {
+      await editor.press('a')
+      await editor.press('ArrowLeft')
+      await editor.press('ArrowRight')
+    }
+    let largeUndos = 0
+    for (let i = 0; i < largeSteps + 5; i++) {
+      const before = await editor.evaluate((el) => el.textContent)
+      await page.keyboard.press('Control+z')
+      if ((await editor.evaluate((el) => el.textContent)) === before) break
+      largeUndos++
+    }
+    assert(
+      largeUndos > 0 && largeUndos < largeSteps && (await editor.locator('img').count()) === 1,
+      'undo history with a large inline image is capped by size, not only by step count',
+      `undo history kept ${largeUndos} snapshots of a 4 MB image`
     )
     await content.getByRole('button', { name: 'Close', exact: true }).click().catch(() => {})
     return 'rich-text'
