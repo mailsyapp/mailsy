@@ -5,6 +5,7 @@ Drafts lets the user work from an unsent message: the Drafts folder lists seeded
 ## Sub-features
 
 - `drafts-list` lists the seeded draft in the Drafts folder.
+- `draft-load-error` surfaces a failed draft-detail load inside the draft pane with a `Retry` button instead of staying on `Loading draft...`, and recovers the editor on retry.
 - `draft-open` opens a direct editor prefilling To/Subject/Message from the draft.
 - `draft-send` sends and records the outbox entry with the draft's stored `inReplyTo`/`references` headers (not the draft's own Message-ID).
 - `draft-prune` removes the sent row from the list after the `Message sent.` delay, even if the row was re-opened inside the window.
