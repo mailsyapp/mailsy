@@ -7,6 +7,7 @@ interface Snapshot {
 }
 
 const HISTORY_LIMIT = 200
+const HISTORY_CHAR_LIMIT = 64 * 1024 * 1024
 const COALESCE_MS = 1000
 
 export function pathTo(root: Node, node: Node): number[] | null {
@@ -105,8 +106,14 @@ export class EditorHistory {
 
   private push(snapshot: Snapshot): void {
     this.undoStack.push(snapshot)
-    if (this.undoStack.length > HISTORY_LIMIT) this.undoStack.shift()
     this.redoStack = []
+    let chars = this.undoStack.reduce((total, entry) => total + entry.html.length, 0)
+    while (
+      this.undoStack.length > 1 &&
+      (this.undoStack.length > HISTORY_LIMIT || chars > HISTORY_CHAR_LIMIT)
+    ) {
+      chars -= this.undoStack.shift()?.html.length ?? 0
+    }
   }
 
   undo(editor: HTMLElement): boolean {
