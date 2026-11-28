@@ -657,6 +657,14 @@ button {
   color: #173b74;
 }
 
+.actions:has(.leftSendNotices) {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  padding: 8px 0;
+  background: #fff;
+}
+
 .leftSendNotices {
   display: flex;
   flex-wrap: wrap;
