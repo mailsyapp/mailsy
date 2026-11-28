@@ -85,6 +85,20 @@ async function fetchDrafts(
   const threads = results.filter((r): r is ThreadSummary => r !== null)
   return { threads, nextPageToken: list.data.nextPageToken ?? null }
 }
+type SnoozedPageToken = [native: string | null, mailsy: string | null]
+
+function decodeSnoozedPageToken(token: string): SnoozedPageToken {
+  const decoded: unknown = JSON.parse(token)
+  const [native, mailsy]: unknown[] = Array.isArray(decoded) && decoded.length === 2 ? decoded : []
+  if (
+    (native !== null && typeof native !== 'string') ||
+    (mailsy !== null && typeof mailsy !== 'string')
+  ) {
+    throw new Error('Invalid Snoozed page token')
+  }
+  return [native, mailsy]
+}
+
 async function fetchSnoozed(
   gmail: GmailClient,
   session: symbol,
@@ -92,26 +106,32 @@ async function fetchSnoozed(
   maxResults: number,
   userQuery: string | undefined
 ): Promise<ThreadPage> {
+  const [nativePageToken, mailsyPageToken] = options.pageToken
+    ? decodeSnoozedPageToken(options.pageToken)
+    : []
   const nativeQuery = [userQuery, 'in:snoozed'].filter((part) => part).join(' ')
   const mailSnoozeLabelId = await resolveSnoozeLabelId(gmail, false)
   const [native, emulated] = await Promise.all([
-    withQuotaRetry(
-      () =>
-        gmail.users.threads.list({
-          userId: 'me',
-          maxResults,
-          ...(options.pageToken ? { pageToken: options.pageToken } : {}),
-          ...(nativeQuery ? { q: nativeQuery } : {})
-        }),
-      session
-    ),
-    mailSnoozeLabelId && !options.pageToken
+    nativePageToken !== null
+      ? withQuotaRetry(
+          () =>
+            gmail.users.threads.list({
+              userId: 'me',
+              maxResults,
+              ...(nativePageToken ? { pageToken: nativePageToken } : {}),
+              q: nativeQuery
+            }),
+          session
+        )
+      : Promise.resolve(null),
+    mailSnoozeLabelId && mailsyPageToken !== null
       ? withQuotaRetry(
           () =>
             gmail.users.threads.list({
               userId: 'me',
               maxResults,
               labelIds: [mailSnoozeLabelId],
+              ...(mailsyPageToken ? { pageToken: mailsyPageToken } : {}),
               ...(userQuery ? { q: userQuery } : {})
             }),
           session
@@ -119,7 +139,7 @@ async function fetchSnoozed(
       : Promise.resolve(null)
   ])
   const idSets = [
-    (native.data.threads ?? []).map((thread) => thread.id ?? '').filter((id) => id.trim()),
+    (native?.data.threads ?? []).map((thread) => thread.id ?? '').filter((id) => id.trim()),
     (emulated?.data.threads ?? []).map((thread) => thread.id ?? '').filter((id) => id.trim())
   ]
   const ids = [...new Set(idSets[0].concat(idSets[1]))]
@@ -142,7 +162,11 @@ async function fetchSnoozed(
       return threadToSummary(thread.data, mailSnoozeLabelId ?? undefined)
     }
   )
-  return { threads, nextPageToken: native.data.nextPageToken ?? null }
+  const nextNativePage = native?.data.nextPageToken || null
+  const nextMailsyPage = emulated?.data.nextPageToken || null
+  const nextPageToken =
+    nextNativePage || nextMailsyPage ? JSON.stringify([nextNativePage, nextMailsyPage]) : null
+  return { threads, nextPageToken }
 }
 export async function fetchFolder(options: ListFolderOptions = {}): Promise<ThreadPage> {
   const gmail = getGmailClient()
