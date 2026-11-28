@@ -37,6 +37,8 @@ const api = {
   },
   getMessage: (id: string, draftId?: string): Promise<EmailDetail> =>
     ipcRenderer.invoke('gmail:get', id, draftId),
+  getDraftForMessage: (messageId: string): Promise<EmailDetail | null> =>
+    ipcRenderer.invoke('gmail:draft-for-message', messageId),
   getThread: (threadId: string): Promise<EmailThread> =>
     ipcRenderer.invoke('gmail:thread', threadId),
   sendEmail: (request: SendEmailRequest): Promise<void> =>

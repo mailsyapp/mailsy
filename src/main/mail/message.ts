@@ -101,9 +101,11 @@ export function threadToSummary(
     m.payload?.headers ?? []
 
   const participants: string[] = []
+  let draftMessageId: string | undefined
   for (const message of messages) {
     const from = headerOf(headersOf(message), 'From')
     if (from && !participants.includes(from)) participants.push(from)
+    if (message.id && (message.labelIds ?? []).includes('DRAFT')) draftMessageId = message.id
   }
 
   const id = thread.id ?? ''
@@ -120,7 +122,7 @@ export function threadToSummary(
     messageIds: ids,
     unreadCount: messages.filter((m) => (m.labelIds ?? []).includes('UNREAD')).length,
     starred: messages.some((m) => (m.labelIds ?? []).includes('STARRED')),
-    hasDraft: messages.some((m) => (m.labelIds ?? []).includes('DRAFT')),
+    ...(draftMessageId ? { draftMessageId } : {}),
     ...(snoozeLabelId && messages.some((m) => (m.labelIds ?? []).includes(snoozeLabelId))
       ? { snoozedByMailsy: true }
       : {})

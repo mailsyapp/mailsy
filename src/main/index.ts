@@ -17,6 +17,7 @@ import {
   deleteUserLabel,
   draftExists,
   fetchAttachment,
+  fetchDraftForMessage,
   fetchFolder,
   fetchMessage,
   fetchThread,
@@ -78,6 +79,9 @@ app.whenReady().then(() => {
   ipcMain.handle('auth:sign-out', () => signOut())
   ipcMain.handle('gmail:list', (_event, options?: ListFolderOptions) => fetchFolder(options))
   ipcMain.handle('gmail:get', (_event, id: string, draftId?: string) => fetchMessage(id, draftId))
+  ipcMain.handle('gmail:draft-for-message', (_event, messageId: string) =>
+    fetchDraftForMessage(messageId)
+  )
   ipcMain.handle('gmail:thread', (_event, threadId: string) => fetchThread(threadId))
   ipcMain.handle('gmail:sync', (_event, reason: SyncReason) => syncMail(reason))
   ipcMain.handle('gmail:send', (_event, request: SendEmailRequest) => sendEmail(request))

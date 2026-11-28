@@ -24,6 +24,7 @@ declare global {
       syncMail(reason: SyncReason): Promise<SyncResult>
       onSyncResult(listener: (result: SyncResult) => void): () => void
       getMessage(id: string, draftId?: string): Promise<EmailDetail>
+      getDraftForMessage(messageId: string): Promise<EmailDetail | null>
       getThread(threadId: string): Promise<EmailThread>
       sendEmail(request: SendEmailRequest): Promise<void>
       sendDraft(request: SendDraftRequest): Promise<void>

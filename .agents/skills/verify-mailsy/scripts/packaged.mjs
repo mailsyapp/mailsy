@@ -42,6 +42,7 @@ export async function launchPackaged({
         'auth:save-credentials': 'saveOAuthCredentials',
         'gmail:list': 'listFolder',
         'gmail:get': 'getMessage',
+        'gmail:draft-for-message': 'getDraftForMessage',
         'gmail:thread': 'getThread',
         'gmail:sync': 'syncMail',
         'gmail:send': 'sendEmail',
