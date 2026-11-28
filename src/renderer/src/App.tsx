@@ -233,6 +233,11 @@ function App(): React.JSX.Element {
   function handleRetryDraft(row: ThreadSummary): void {
     const rowKey = listRowKey(row)
     if (selectionRef.current !== rowKey) return
+    const draftHere = activeFolder === 'drafts' || (activeFolder === 'all' && row.hasDraft === true)
+    if (!draftHere) {
+      handleSelect(row)
+      return
+    }
     loadDraftDetail(row, rowKey, selectedDraftRef.current)
   }
   function handleSelect(row: ThreadSummary): void {
