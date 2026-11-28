@@ -98,9 +98,8 @@ export class EditorHistory {
   change(editor: HTMLElement, apply: () => void): void {
     const snapshot = capture(editor)
     apply()
-    if (editor.innerHTML === snapshot.html) return
     this.lastKind = null
-    this.lastAt = Date.now()
+    if (editor.innerHTML === snapshot.html) return
     this.push(snapshot)
   }
 
