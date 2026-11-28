@@ -5257,7 +5257,9 @@ try {
     const button = (name) => toolbar.getByRole('button', { name, exact: true })
     const editMenu = (label) => browser.evaluate(({ Menu }, label) => {
       const edit = Menu.getApplicationMenu().items.find((item) => item.label === 'Edit')
-      edit.submenu.items.find((item) => item.label === label).click()
+      const item = edit.submenu.items.find((entry) => entry.label === label)
+      if (!item.enabled || !item.visible) throw new Error(`Edit > ${label} is disabled or hidden`)
+      item.click()
     }, label)
     const settleTo = async (read, done, ok, fail) => {
       let value = await read()
@@ -5271,8 +5273,8 @@ try {
     await page.getByRole('button', { name: 'Compose', exact: true }).click()
     await content.getByRole('heading', { name: 'New email' }).waitFor({ timeout: 10000 })
     if (EXECUTABLE) {
-      for (const [index, name] of [[0, 'To'], [1, 'Subject']]) {
-        const field = content.locator('.composerField input').nth(index)
+      for (const name of ['To', 'Subject']) {
+        const field = content.getByLabel(name, { exact: true })
         await field.click()
         await page.keyboard.type('menu')
         await editMenu('Undo')
@@ -5718,8 +5720,9 @@ try {
     )
     await page.keyboard.press(KEYS.selectAll)
     await page.keyboard.press('Delete')
-    await page.keyboard.type('ab')
+    await page.keyboard.type('a')
     const boldStart = Date.now()
+    await page.keyboard.type('b')
     await button('Bold').click()
     await page.keyboard.type('c')
     const boldGap = Date.now() - boldStart
@@ -5767,6 +5770,7 @@ try {
       await editor.press('ArrowLeft')
       await editor.press('ArrowRight')
     }
+    const largeText = await editor.evaluate((el) => el.textContent)
     let largeUndos = 0
     for (let i = 0; i < largeSteps + 5; i++) {
       const before = await editor.evaluate((el) => el.textContent)
@@ -5787,7 +5791,9 @@ try {
       largeRedos++
     }
     assert(
-      largeRedos === largeUndos && (await editor.locator('img').count()) === 1,
+      largeRedos === largeUndos &&
+        (await editor.evaluate((el) => el.textContent)) === largeText &&
+        (await editor.locator('img').count()) === 1,
       'Redo after undoing a large inline image holds no more steps than Undo did',
       `Redo replayed ${largeRedos} steps after ${largeUndos} undos`
     )
