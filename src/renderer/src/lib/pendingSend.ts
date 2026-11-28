@@ -18,7 +18,7 @@ export function holdSend(
   }
 }
 
-export type LeftSendPhase = 'preparing' | 'waiting' | 'sending' | 'failed'
+export type LeftSendPhase = 'preparing' | 'waiting' | 'sending' | 'failed' | 'undone'
 export type LeftSend = {
   id: number
   phase: LeftSendPhase

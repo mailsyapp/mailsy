@@ -46,8 +46,13 @@ export function useUndoSend(sessionSignal: AbortSignal): {
     const attempt: SendAttempt = {
       undo: () => {
         if (!cancel?.()) return false
-        settle()
-        if (leftId === null) autosave.resume()
+        if (leftId === null) {
+          settle()
+          autosave.resume()
+        } else {
+          settled = true
+          leftSends.update(leftId, { phase: 'undone' })
+        }
         return true
       },
       leave: () => {
@@ -64,14 +69,16 @@ export function useUndoSend(sessionSignal: AbortSignal): {
     function settle(failure?: unknown): void {
       if (settled) return
       settled = true
-      sessionSignal.removeEventListener('abort', abandon)
       if (mounted()) {
+        sessionSignal.removeEventListener('abort', abandon)
         active.current = null
         setPhase('idle')
         if (failure !== undefined) setError(errorMessage(failure))
       } else if (leftId !== null) {
-        if (failure === undefined) leftSends.remove(leftId)
-        else
+        if (failure === undefined) {
+          sessionSignal.removeEventListener('abort', abandon)
+          leftSends.remove(leftId)
+        } else
           leftSends.update(leftId, {
             phase: 'failed',
             error: errorMessage(failure),
@@ -80,7 +87,7 @@ export function useUndoSend(sessionSignal: AbortSignal): {
       }
     }
     function abandon(): void {
-      if (current === 'sending') return
+      if (current === 'sending' && !settled) return
       cancel?.()
       settled = true
       if (leftId !== null) leftSends.remove(leftId)

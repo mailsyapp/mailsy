@@ -984,6 +984,13 @@ try {
     await hold()
     await page.getByRole('button', { name: 'Drafts', exact: true }).click()
     await outgoingUndo.click({ timeout: 5000 })
+    await outgoing.getByText('Sending undone. The message is in Drafts.').waitFor({ timeout: 5000 })
+    assert(
+      (await subject.count()) === 0 && (await outbox()).length === 0,
+      'app-wide Undo cancels without replacing the current view',
+      'app-wide Undo navigated away or sent the message'
+    )
+    await outgoing.getByRole('button', { name: 'Open draft', exact: true }).click()
     await subject.waitFor({ timeout: 5000 })
     await page.clock.fastForward(5500)
     assert(
@@ -1023,6 +1030,7 @@ try {
     await inbox.getByText('Standup notes', { exact: true }).click()
     await page.getByRole('heading', { name: 'Standup notes' }).waitFor({ timeout: 5000 })
     await outgoingUndo.click({ timeout: 5000 })
+    await outgoing.getByRole('button', { name: 'Open draft', exact: true }).click({ timeout: 5000 })
     await subject.waitFor({ timeout: 5000 })
     await page.clock.fastForward(5500)
     assert(

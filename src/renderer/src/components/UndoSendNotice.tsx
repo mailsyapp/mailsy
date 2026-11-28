@@ -23,19 +23,16 @@ export function LeftSendNotices({
     <div className="leftSendNotices" role="region" aria-label="Outgoing messages">
       {sends.map((send) => {
         if (send.phase === 'waiting') {
-          return (
-            <UndoSendNotice
-              key={send.id}
-              onUndo={() => {
-                if (send.undo() && send.draftId) onOpenDraft(send.draftId)
-              }}
-            />
-          )
+          return <UndoSendNotice key={send.id} onUndo={send.undo} />
         }
-        if (send.phase === 'failed') {
+        if (send.phase === 'failed' || send.phase === 'undone') {
           return (
             <div className="undoSendNotice" key={send.id}>
-              <span role="alert">Message not sent: {send.error}</span>
+              {send.phase === 'failed' ? (
+                <span role="alert">Message not sent: {send.error}</span>
+              ) : (
+                <span role="status">Sending undone. The message is in Drafts.</span>
+              )}
               {send.draftId && (
                 <button
                   type="button"
