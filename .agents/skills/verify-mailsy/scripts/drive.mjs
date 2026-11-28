@@ -5255,9 +5255,34 @@ try {
     const content = page.getByRole('region', { name: 'Email content' })
     const toolbar = content.getByRole('toolbar', { name: 'Formatting options' })
     const button = (name) => toolbar.getByRole('button', { name, exact: true })
+    const editMenu = (label) => browser.evaluate(({ Menu }, label) => {
+      const edit = Menu.getApplicationMenu().items.find((item) => item.label === 'Edit')
+      edit.submenu.items.find((item) => item.label === label).click()
+    }, label)
+    const settleTo = async (read, done, ok, fail) => {
+      let value = await read()
+      for (let i = 0; i < 30 && !done(value); i++) {
+        await page.waitForTimeout(100)
+        value = await read()
+      }
+      assert(done(value), ok, `${fail}: ${JSON.stringify(value)}`)
+    }
 
     await page.getByRole('button', { name: 'Compose', exact: true }).click()
     await content.getByRole('heading', { name: 'New email' }).waitFor({ timeout: 10000 })
+    if (EXECUTABLE) {
+      for (const [index, name] of [[0, 'To'], [1, 'Subject']]) {
+        const field = content.locator('.composerField input').nth(index)
+        await field.click()
+        await page.keyboard.type('menu')
+        await editMenu('Undo')
+        await settleTo(() => field.inputValue(), (value) => value === '',
+          `Edit > Undo falls back to native undo in ${name}`, `Edit > Undo did nothing in ${name}`)
+        await editMenu('Redo')
+        await settleTo(() => field.inputValue(), (value) => value === 'menu',
+          `Edit > Redo falls back to native redo in ${name}`, `Edit > Redo did nothing in ${name}`)
+      }
+    }
     await content.locator('.composerField input').first().fill('ada@example.com')
     await content.locator('.composerField input').nth(1).fill('Formatted compose')
     const composeHtml = await formatRichBody(page, content, 'Compose')
@@ -5694,8 +5719,16 @@ try {
     await page.keyboard.press(KEYS.selectAll)
     await page.keyboard.press('Delete')
     await page.keyboard.type('ab')
+    const boldStart = Date.now()
     await button('Bold').click()
-    await page.keyboard.type('cd')
+    await page.keyboard.type('c')
+    const boldGap = Date.now() - boldStart
+    await page.keyboard.type('d')
+    assert(
+      boldGap < 1000,
+      'the Bold toggle lands inside the 1s typing window',
+      `the Bold toggle took ${boldGap}ms, so the undo check below would pass on timing alone`
+    )
     await page.keyboard.press('Control+z')
     assert(
       (await editor.innerText()).trim() === 'ab',
@@ -5746,7 +5779,45 @@ try {
       'undo history with a large inline image is capped by size, not only by step count',
       `undo history kept ${largeUndos} snapshots of a 4 MB image`
     )
+    let largeRedos = 0
+    for (let i = 0; i < largeSteps + 5; i++) {
+      const before = await editor.evaluate((el) => el.textContent)
+      await page.keyboard.press('Control+Shift+z')
+      if ((await editor.evaluate((el) => el.textContent)) === before) break
+      largeRedos++
+    }
+    assert(
+      largeRedos === largeUndos && (await editor.locator('img').count()) === 1,
+      'Redo after undoing a large inline image holds no more steps than Undo did',
+      `Redo replayed ${largeRedos} steps after ${largeUndos} undos`
+    )
+
+    if (EXECUTABLE) {
+      const before = await editor.evaluate((el) => el.textContent)
+      await editor.press(KEYS.docEnd)
+      await page.keyboard.type('menu')
+      await editMenu('Undo')
+      await settleTo(() => editor.evaluate((el) => el.textContent), (text) => text === before,
+        'Edit > Undo undoes typing in the body', 'Edit > Undo left the body typing in place')
+      await editMenu('Redo')
+      await settleTo(() => editor.evaluate((el) => el.textContent), (text) => text === `${before}menu`,
+        'Edit > Redo redoes typing in the body', 'Edit > Redo did not bring the body typing back')
+    }
     await content.getByRole('button', { name: 'Close', exact: true }).click().catch(() => {})
+    if (EXECUTABLE) {
+      const search = page.getByRole('searchbox', { name: 'Search emails' })
+      await search.click()
+      await page.keyboard.type('alpha')
+      await editMenu('Undo')
+      await settleTo(() => search.inputValue(), (value) => value !== 'alpha',
+        'Edit > Undo falls back to native undo in the search field', 'Edit > Undo did nothing in the search field')
+      await editMenu('Redo')
+      await settleTo(() => search.inputValue(), (value) => value === 'alpha',
+        'Edit > Redo falls back to native redo in the search field', 'Edit > Redo did nothing in the search field')
+      await search.fill('')
+    } else {
+      log('skip: the Edit menu only exists in the packaged app')
+    }
     return 'rich-text'
   })
   const journey = journeys.get(FEATURE)
