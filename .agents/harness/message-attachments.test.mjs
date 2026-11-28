@@ -56,17 +56,29 @@ test('an explicit image attachment with an unused Content-ID is listed without f
           mimeType: 'text/plain',
           body: { data: Buffer.from('See attached.').toString('base64url') }
         },
-        attachment
+        attachment,
+        {
+          mimeType: 'image/png',
+          filename: 'scan.png',
+          headers: [
+            { name: 'Content-ID', value: '<scan@example.com>' },
+            { name: 'Content-Disposition', value: 'attachment (original); filename="scan.png"' }
+          ],
+          body: { data: imageData, size: 8 }
+        }
       ]
     }
   })
 
-  assert.deepEqual(detail.attachments, [{ filename: 'photo.png', size: 8, attachmentId: 'photo' }])
+  assert.deepEqual(detail.attachments, [
+    { filename: 'photo.png', size: 8, attachmentId: 'photo' },
+    { filename: 'scan.png', size: 8, attachmentId: 'mailsy-part:0.2' }
+  ])
   assert.deepEqual(fetched, [])
   assert.equal(detail.bodyText, 'See attached.')
 })
 
-test('referenced CIDs render inline but only explicit attachments are listed', async () => {
+test('referenced CIDs render inline without duplicating the image as an attachment', async () => {
   const { gmail, fetched } = gmailFixture()
   const html = '<img src="CID:PHOTO%40example.com"><img src="cid:logo@example.com">'
   const detail = await toEmailDetail(gmail, {
@@ -74,8 +86,8 @@ test('referenced CIDs render inline but only explicit attachments are listed', a
     payload: {
       mimeType: 'multipart/related',
       parts: [
-        { mimeType: 'text/html', body: { data: Buffer.from(html).toString('base64url') } },
         { ...attachment, body: { data: imageData, size: 8 } },
+        { mimeType: 'text/html', body: { data: Buffer.from(html).toString('base64url') } },
         {
           mimeType: 'image/png',
           filename: 'logo.png',
@@ -91,8 +103,6 @@ test('referenced CIDs render inline but only explicit attachments are listed', a
 
   const inlineImage = `<img src="data:image/png;base64,${imageData}">`
   assert.equal(detail.bodyHtml, inlineImage.repeat(2))
-  assert.deepEqual(detail.attachments, [
-    { filename: 'photo.png', size: 8, attachmentId: 'mailsy-part:0.1' }
-  ])
+  assert.deepEqual(detail.attachments, [])
   assert.deepEqual(fetched, ['logo'])
 })

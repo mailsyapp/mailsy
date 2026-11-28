@@ -1,10 +1,15 @@
 import type { gmail_v1 } from 'googleapis'
 import type { GmailClient } from '../auth'
 import type { EmailDetail, EmailSummary, ThreadSummary } from '../../shared/types'
-import { collectBodies, decodeBody, normalizeContentId, base64UrlToBuffer } from './mime'
+import {
+  base64UrlToBuffer,
+  CID_REFERENCE,
+  collectBodies,
+  decodeBody,
+  getReferencedContentIds,
+  normalizeContentId
+} from './mime'
 import type { MessageBodies } from './mime'
-
-const CID_REFERENCE = /cid:([^"'\s<>()]+)/gi
 
 function headerOf(headers: gmail_v1.Schema$MessagePartHeader[], name: string): string {
   return headers.find((h) => h.name?.toLowerCase() === name.toLowerCase())?.value ?? ''
@@ -26,9 +31,7 @@ export async function toEmailDetail(
   if (msg.payload) collectBodies(msg.payload, out)
   if (!out.text && !out.html) out.text = decodeBody(msg.payload?.body?.data)
 
-  const referencedIds = new Set(
-    Array.from(out.html.matchAll(CID_REFERENCE), ([, contentId]) => normalizeContentId(contentId))
-  )
+  const referencedIds = getReferencedContentIds(out.html)
   const inlineImageData = new Map<string, string>()
   await Promise.all(
     out.inlineImages.map(async ({ contentId, mimeType, data, attachmentId }) => {

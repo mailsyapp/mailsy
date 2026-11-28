@@ -50,11 +50,31 @@ export interface MessageBodies {
 }
 
 export const INLINE_ATTACHMENT_PREFIX = 'mailsy-part:'
+export const CID_REFERENCE = /cid:([^"'\s<>()]+)/gi
 
-export function collectBodies(
+export function getReferencedContentIds(html: string): Set<string> {
+  return new Set(
+    Array.from(html.matchAll(CID_REFERENCE), ([, contentId]) => normalizeContentId(contentId))
+  )
+}
+
+export function collectBodies(part: gmail_v1.Schema$MessagePart, out: MessageBodies): void {
+  const cidAttachments = new Map<MessageAttachmentRef, string>()
+  collectParts(part, out, cidAttachments, '0')
+  if (!out.html || cidAttachments.size === 0) return
+
+  const referencedIds = getReferencedContentIds(out.html)
+  out.attachments = out.attachments.filter((attachment) => {
+    const cid = cidAttachments.get(attachment)
+    return !cid || !referencedIds.has(normalizeContentId(cid))
+  })
+}
+
+function collectParts(
   part: gmail_v1.Schema$MessagePart,
   out: MessageBodies,
-  path = '0'
+  cidAttachments: Map<MessageAttachmentRef, string>,
+  path: string
 ): void {
   const mime = part.mimeType ?? ''
   if (mime === 'text/plain' && !out.text) out.text = decodeBody(part.body?.data)
@@ -62,11 +82,6 @@ export function collectBodies(
   const inlineCid = mime.startsWith('image/')
     ? part.headers?.find((header) => header.name?.toLowerCase() === 'content-id')?.value
     : undefined
-  const disposition = part.headers
-    ?.find((header) => header.name?.toLowerCase() === 'content-disposition')
-    ?.value?.split(';', 1)[0]
-    ?.trim()
-    .toLowerCase()
   if (inlineCid) {
     out.inlineImages.push({
       contentId: inlineCid,
@@ -76,17 +91,28 @@ export function collectBodies(
     })
   }
   if (
-    (!inlineCid || disposition === 'attachment') &&
     part.filename &&
-    (part.body?.attachmentId || typeof part.body?.data === 'string')
+    (part.body?.attachmentId || typeof part.body?.data === 'string') &&
+    (!inlineCid || hasAttachmentDisposition(part))
   ) {
-    out.attachments.push({
+    const attachment = {
       filename: part.filename,
       size: part.body?.size ?? 0,
       attachmentId: part.body?.attachmentId || `${INLINE_ATTACHMENT_PREFIX}${path}`
-    })
+    }
+    out.attachments.push(attachment)
+    if (inlineCid) cidAttachments.set(attachment, inlineCid)
   }
-  for (const [index, p] of (part.parts ?? []).entries()) collectBodies(p, out, `${path}.${index}`)
+  for (const [index, child] of (part.parts ?? []).entries()) {
+    collectParts(child, out, cidAttachments, `${path}.${index}`)
+  }
+}
+
+function hasAttachmentDisposition(part: gmail_v1.Schema$MessagePart): boolean {
+  const header = part.headers?.find(
+    (header) => header.name?.toLowerCase() === 'content-disposition'
+  )
+  return /^\s*attachment\s*(?:[;(]|$)/i.test(header?.value ?? '')
 }
 
 type RawMessageFields = Pick<
