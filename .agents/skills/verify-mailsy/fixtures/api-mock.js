@@ -531,7 +531,8 @@
       unreadCount: messages.filter((m) => (m.labelIds || []).includes('UNREAD')).length,
       starred: messages.some((m) => (m.labelIds || []).includes('STARRED'))
     }
-    if (last.draftId) row.draftId = last.draftId
+    const draftMessage = messages.findLast((m) => (m.labelIds || []).includes('DRAFT'))
+    if (draftMessage) row.draftMessageId = draftMessage.id
     if (messages.some((m) => (m.labelIds || []).includes(MAILSY_SNOOZE_LABEL))) {
       row.snoozedByMailsy = true
     }
@@ -621,7 +622,7 @@
         const rows = seed
           .filter((m) => m.draftId && !deletedDrafts.includes(m.draftId))
           .filter((m) => matches(m, q))
-          .map((m) => threadRowOf([m]))
+          .map((m) => ({ ...threadRowOf([m]), draftId: m.draftId }))
         return pageSlice(rows, options)
       }
       const label =
@@ -679,9 +680,17 @@
       // does.
       return { attachments: [], ...m }
     },
+    getDraftForMessage: async (messageId) => {
+      ensureSignedIn()
+      const message = byId.get(messageId)
+      if (!message?.draftId || deletedDrafts.includes(message.draftId)) return null
+      return { attachments: [], ...message }
+    },
     getThread: async (threadId) => {
       ensureSignedIn()
-      const messages = seed.filter((m) => m.threadId === threadId).map((m) => ({ attachments: [], ...m }))
+      const messages = seed
+        .filter((m) => m.threadId === threadId && !deletedDrafts.includes(m.draftId))
+        .map((m) => ({ attachments: [], ...m }))
       if (messages.length === 0) throw new Error(`mock: no thread ${threadId}`)
       // The thread's full label id set, deduped, mirroring the boundary
       // contract EmailThread now carries for the labels menu.

@@ -3,7 +3,12 @@ import type { EmailDetail, EmailThread } from '../../shared/types'
 import { toEmailDetail } from './message'
 import { base64UrlToBuffer, INLINE_ATTACHMENT_PREFIX } from './mime'
 import { noteHistoryId } from './sync'
-import { DETAIL_CONCURRENCY, mapWithConcurrency, withQuotaRetry } from './resilience'
+import {
+  DETAIL_CONCURRENCY,
+  isNotFoundError,
+  mapWithConcurrency,
+  withQuotaRetry
+} from './resilience'
 import { getSnoozeUntil } from './snooze'
 export async function fetchMessage(id: string, draftId?: string): Promise<EmailDetail> {
   const gmail = getGmailClient()
@@ -19,6 +24,39 @@ export async function fetchMessage(id: string, draftId?: string): Promise<EmailD
     gmail.users.messages.get({ userId: 'me', id, format: 'full' })
   )
   return toEmailDetail(gmail, msg.data)
+}
+export async function fetchDraftForMessage(messageId: string): Promise<EmailDetail | null> {
+  if (typeof messageId !== 'string' || !messageId.trim()) throw new Error('Message ID is required')
+  const gmail = getGmailClient()
+  const session = getMailSession()
+  let pageToken: string | undefined
+  do {
+    const { data } = await withQuotaRetry(
+      () =>
+        gmail.users.drafts.list({
+          userId: 'me',
+          maxResults: 500,
+          fields: 'drafts(id,message(id)),nextPageToken',
+          pageToken
+        }),
+      session
+    )
+    const draftId = data.drafts?.find((draft) => draft.message?.id === messageId)?.id
+    if (draftId) {
+      const result = await withQuotaRetry(
+        () => gmail.users.drafts.get({ userId: 'me', id: draftId, format: 'full' }),
+        session
+      ).catch((error: unknown) => {
+        if (!isNotFoundError(error)) throw error
+        return null
+      })
+      if (!result) return null
+      if (!result.data.message?.id) throw new Error('Gmail returned no draft message')
+      return { ...(await toEmailDetail(gmail, result.data.message)), draftId }
+    }
+    pageToken = data.nextPageToken ?? undefined
+  } while (pageToken)
+  return null
 }
 export async function fetchAttachment(messageId: string, attachmentId: string): Promise<string> {
   if (!messageId.trim() || !attachmentId.trim()) throw new Error('Attachment ID is required')

@@ -6,7 +6,7 @@ All Mail is the rail entry that lists every thread the account holds regardless 
 
 - `all-mail-entry` shows an `All Mail` rail button that switches the list to the All Mail view.
 - `all-mail-list` lists every thread, archived mail included, grouped like Inbox.
-- `all-mail-select` opens the chosen conversation's detail from the All Mail list.
+- `all-mail-select` opens the chosen conversation or its existing draft from the All Mail list.
 - `all-mail-inbox-exclusion` keeps an archived thread listed in All Mail while the Inbox stays free of it.
 
 ## How to get to it (user POV)
@@ -23,7 +23,8 @@ Preconditions:
 
 - **Archive + list.** Run `node scripts/drive.mjs --feature all-mail --run-id "$RUN_ID" --port "$VERIFY_MAILSY_PORT"`. The journey opens `Deploy window` from the Inbox, archives it (boundary recorded as one thread `modifyLabels` on `thread-deploy` removing `INBOX`), then chooses the `All Mail` rail button. The `All Mail` complementary landmark lists the archived `Deploy window` row, and `Launch checklist` and `Q3 budget draft` stay listed. Selecting `Launch checklist` inside All Mail opens its heading in the `Email content` region.
 - **Inbox exclusion.** The journey round-trips to the Inbox refetch; the archived `Deploy window` row is still absent there.
-- **Proof.** The driver writes `artifacts/<run-id>/all-mail.aria.txt`, `all-mail.png`, and the transcript `all-mail.log` quoting the recorded archive mod.
+- **Send a reply draft.** Seed a reply draft in the archived `Deploy window` conversation, open it from All Mail, and send. The outbox must record the existing draft ID, thread ID and reply headers. The conversation remains in All Mail, and a fresh Drafts listing no longer contains the sent draft.
+- **Proof.** The driver captures the original All Mail journey, the reply send, the reopened conversation, and the Drafts cleanup. The transcript `artifacts/<run-id>/all-mail.log` records both the archive and send requests.
 
 ## Gotchas
 

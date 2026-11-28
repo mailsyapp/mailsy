@@ -2535,6 +2535,51 @@ try {
       'archived thread reappeared in Inbox'
     )
     await snapshot(page, 'all-mail')
+
+    const parent = '<deploy-1@example.com>'
+    const subject = 'Re: Deploy window'
+    const saved = await page.evaluate(
+      ({ parent, subject }) => (window.__packagedFixtureApi ?? window.api).saveDraft({
+        threadId: 'thread-deploy',
+        to: 'alan@example.com',
+        subject,
+        body: 'Thursday is confirmed.',
+        inReplyTo: parent,
+        references: parent
+      }),
+      { parent, subject }
+    )
+    await page.getByRole('button', { name: 'All Mail' }).click()
+    const replyThread = allMail.getByText('Deploy window', { exact: true }).first()
+    await replyThread.click()
+    await content.getByRole('heading', { name: 'Draft', exact: true }).waitFor({ timeout: 10000 })
+    await content.getByRole('button', { name: 'Send', exact: true }).click()
+    const result = content.getByText(/^(Message sent\.|Sent as a new message;)/)
+    await result.waitFor({ timeout: 10000 })
+    await snapshot(page, 'all-mail-reply-draft-send')
+    const [record] = await page.evaluate(() => window.__sent)
+    assert(
+      record?.draftId === saved.draftId &&
+        record.expectedMessageId === saved.messageId &&
+        record.threadId === 'thread-deploy' &&
+        record.inReplyTo === parent &&
+        record.references === parent,
+      `outbox recorded the original reply draft send ${JSON.stringify(record)}`,
+      `All Mail did not send the existing reply draft: ${JSON.stringify(record)}`
+    )
+    await replyThread.click()
+    await content.getByText('2 messages in conversation', { exact: true }).waitFor({ timeout: 10000 })
+    assert(true, 'All Mail still opens the conversation after sending', 'conversation was removed')
+    await snapshot(page, 'all-mail-reply-draft-conversation')
+    await page.getByRole('button', { name: 'Drafts' }).click()
+    const drafts = page.getByRole('complementary', { name: 'Drafts' })
+    await drafts.getByText('Draft: Q4 planning notes', { exact: true }).waitFor({ timeout: 10000 })
+    assert(
+      (await drafts.getByText(subject, { exact: true }).count()) === 0,
+      'refetched Drafts no longer lists the sent reply draft',
+      'the original reply draft was left behind'
+    )
+    await snapshot(page, 'all-mail-reply-draft-cleanup')
     return 'all-mail'
   })
   journeys.set('reply-all', async () => {

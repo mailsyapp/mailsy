@@ -30,7 +30,7 @@ function DraftForm({
   discardError
 }: {
   detail: EmailDetailData
-  draftId?: string
+  draftId: string
   sessionSignal: AbortSignal
   onSent: () => void
   onDraftDiscard: () => void
@@ -48,7 +48,6 @@ function DraftForm({
   const bodyRef = useRef<ComposerBodyHandle | null>(null)
   const [sending, setSending] = useState(false)
   const [sendError, setSendError] = useState<string | null>(null)
-  const [notice, setNotice] = useState<string | null>(null)
   const [sent, setSent] = useState(false)
   const [edited, setEdited] = useState(false)
   const attach = useComposerAttachments(
@@ -68,8 +67,8 @@ function DraftForm({
   })
   const autosave = useDraftAutosave(
     { ...request, ...attach.retained },
-    draftId ? { draftId, messageId: detail.id } : undefined,
-    draftId !== undefined,
+    { draftId, messageId: detail.id },
+    true,
     sessionSignal,
     edited || attach.edited,
     attach.adoptSaved
@@ -79,24 +78,14 @@ function DraftForm({
     if (sending || sent || !attach.ready || !hasRecipient(recipients)) return
     setSending(true)
     setSendError(null)
-    setNotice(null)
     try {
       await autosave.flushPending()
       if (sessionSignal.aborted) return
       autosave.suspend()
       try {
         const target = autosave.currentDraft()
-        if (target) {
-          await window.api.sendDraft({ ...request, ...target })
-        } else {
-          await window.api.sendEmail(
-            composeRequest({ recipients, subject, body, attachments: attach.attachments })
-          )
-          setNotice(
-            'Sent as a new message; the original draft entry was left in place (unknown draft ID).'
-          )
-          return
-        }
+        if (!target) return
+        await window.api.sendDraft({ ...request, ...target })
       } finally {
         autosave.resume()
       }
@@ -150,7 +139,6 @@ function DraftForm({
       />
 
       {sendError && <p role="alert">{sendError}</p>}
-      {notice && <p role="status">{notice}</p>}
       {autosave.error && (
         <p role="alert">
           {autosave.refsStale ? 'Attachment refresh required: ' : 'Draft not saved: '}
@@ -186,7 +174,7 @@ export function DraftEditor({
   onDraftDiscard,
   discardError
 }: DraftEditorProps): React.JSX.Element {
-  if (detailLoading || !detail) {
+  if (detailLoading || !detail?.draftId) {
     return (
       <div>
         <h2>{row.subject}</h2>
@@ -198,7 +186,7 @@ export function DraftEditor({
     <DraftForm
       key={detail.id}
       detail={detail}
-      draftId={row.draftId}
+      draftId={detail.draftId}
       sessionSignal={sessionSignal}
       onSent={onSent}
       onDraftDiscard={onDraftDiscard}

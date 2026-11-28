@@ -68,7 +68,7 @@ function App(): React.JSX.Element {
   const sessionAbortRef = useRef(new AbortController())
   const selectedDraftRef = useRef<{
     key: string
-    id: string
+    id: string | undefined
     threadId: string
   } | null>(null)
   const selectedSnoozedByMailsyRef = useRef(false)
@@ -193,9 +193,7 @@ function App(): React.JSX.Element {
       : displayedThreads
   const selectedThread =
     selectionRows.find((e) => listRowKey(e) === selectedKey) ??
-    (isSearchActive && opened?.query === committedQuery && (!selectedIsDraft || opened.row.draftId)
-      ? opened.row
-      : null)
+    (isSearchActive && opened?.query === committedQuery ? opened.row : null)
   function handleSelect(row: ThreadSummary): void {
     closeEmail()
     const rowKey = listRowKey(row)
@@ -203,19 +201,27 @@ function App(): React.JSX.Element {
     setOpened({ row, query: committedQuery })
     selectedSnoozedByMailsyRef.current = row.snoozedByMailsy === true
     setError(null)
-    const draftsFolder = activeFolder === 'drafts'
-    const draftHere = draftsFolder || (activeFolder === 'all' && row.hasDraft === true)
-    setSelectedIsDraft(draftHere)
-    if (!draftHere) return
-    const draft = row.draftId ? { key: rowKey, id: row.draftId, threadId: row.id } : null
+    const draftMessageId = activeFolder === 'all' ? row.draftMessageId : undefined
+    if (!row.draftId && !draftMessageId) return
+    setSelectedIsDraft(true)
+    const draft = { key: rowKey, id: row.draftId, threadId: row.id }
     selectedDraftRef.current = draft
     const stillSelected = (): boolean =>
       selectionRef.current === rowKey && selectedDraftRef.current === draft
     setDraftDetailLoading(true)
-    window.api
-      .getMessage(row.messageIds[row.messageIds.length - 1], row.draftId)
+    const request = draftMessageId
+      ? window.api.getDraftForMessage(draftMessageId)
+      : window.api.getMessage(row.messageIds[row.messageIds.length - 1], row.draftId)
+    request
       .then((detail) => {
-        if (stillSelected()) setDraftDetail(detail)
+        if (!stillSelected()) return
+        const draftId = detail?.draftId ?? row.draftId
+        if (!detail || !draftId) {
+          setSelectedIsDraft(false)
+          return
+        }
+        draft.id = draftId
+        setDraftDetail({ ...detail, draftId })
       })
       .catch((e: unknown) => {
         if (stillSelected()) recordError(e)
@@ -286,27 +292,42 @@ function App(): React.JSX.Element {
   function handleSearchSubmit(): void {
     setCommittedQuery(searchInput.trim())
   }
-  function handleDraftSent(rowKey: string): void {
+  function handleDraftSent(row: ThreadSummary): void {
+    const rowKey = listRowKey(row)
     if (draftPruneTimers.isPending(rowKey)) return
     invalidatePageCursor()
+    if (!row.draftId) {
+      if (selectionRef.current !== rowKey) return
+      const selection = selectedDraftRef.current
+      loadFirstPage('recheck')
+      draftPruneTimers.start(rowKey, DRAFT_PRUNE_DELAY_MS, () => {
+        if (selectedDraftRef.current === selection) closeEmail()
+      })
+      return
+    }
     draftPruneTimers.start(rowKey, DRAFT_PRUNE_DELAY_MS, () => removeListRow(rowKey))
   }
-  function handleDraftDiscard(row: ThreadSummary): void {
+  function handleDraftDiscard(row: ThreadSummary, draftId = row.draftId): void {
+    if (!draftId) return
     const confirmed = window.confirm(
       `Delete draft “${row.subject || '(no subject)'}”? This permanently discards it; not even Trash keeps a copy.`
     )
     if (!confirmed) return
-    if (!row.draftId) return
     const sessionSignal = sessionAbortRef.current.signal
     const rowKey = listRowKey(row)
+    const selection = selectedDraftRef.current
     setDraftDiscard({ rowKey, error: null })
     window.api
-      .discardDraft(row.draftId)
+      .discardDraft(draftId)
       .then(() => {
         if (sessionSignal.aborted) return
         setDraftDiscard(null)
         invalidatePageCursor()
-        removeListRow(rowKey)
+        if (row.draftId) removeListRow(rowKey)
+        else if (selectedDraftRef.current === selection) {
+          closeEmail()
+          loadFirstPage('recheck')
+        }
       })
       .catch((e: unknown) => {
         if (sessionSignal.aborted) return
@@ -643,7 +664,7 @@ function App(): React.JSX.Element {
         const rows = [...incoming.values()]
         setThreads((prev) => mergeIncoming(prev, rows, false, null))
         const draft = selectedDraftRef.current
-        if (draft && !incoming.has(draft.key) && !draftPruneTimers.isPending(draft.key)) {
+        if (draft?.id && !incoming.has(draft.key) && !draftPruneTimers.isPending(draft.key)) {
           const stillSelected = (): boolean =>
             requestIdRef.current === requestId &&
             selectedDraftRef.current === draft &&
@@ -988,8 +1009,8 @@ function App(): React.JSX.Element {
                 detail={draftDetail}
                 detailLoading={draftDetailLoading}
                 sessionSignal={sessionAbortRef.current.signal}
-                onSent={() => handleDraftSent(listRowKey(selectedThread))}
-                onDraftDiscard={() => handleDraftDiscard(selectedThread)}
+                onSent={() => handleDraftSent(selectedThread)}
+                onDraftDiscard={() => handleDraftDiscard(selectedThread, draftDetail?.draftId)}
                 discardError={
                   draftDiscard && draftDiscard.rowKey === selectedKey ? draftDiscard.error : null
                 }

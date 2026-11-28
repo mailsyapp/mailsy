@@ -61,7 +61,7 @@ export interface ThreadSummary {
   unreadCount: number
   starred: boolean
   draftId?: string
-  hasDraft?: boolean
+  draftMessageId?: string
   snoozedByMailsy?: boolean
 }
 export interface ListFolderOptions {
