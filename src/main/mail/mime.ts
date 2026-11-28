@@ -62,6 +62,11 @@ export function collectBodies(
   const inlineCid = mime.startsWith('image/')
     ? part.headers?.find((header) => header.name?.toLowerCase() === 'content-id')?.value
     : undefined
+  const disposition = part.headers
+    ?.find((header) => header.name?.toLowerCase() === 'content-disposition')
+    ?.value?.split(';', 1)[0]
+    ?.trim()
+    .toLowerCase()
   if (inlineCid) {
     out.inlineImages.push({
       contentId: inlineCid,
@@ -69,7 +74,12 @@ export function collectBodies(
       data: part.body?.data,
       attachmentId: part.body?.attachmentId
     })
-  } else if (part.filename && (part.body?.attachmentId || typeof part.body?.data === 'string')) {
+  }
+  if (
+    (!inlineCid || disposition === 'attachment') &&
+    part.filename &&
+    (part.body?.attachmentId || typeof part.body?.data === 'string')
+  ) {
     out.attachments.push({
       filename: part.filename,
       size: part.body?.size ?? 0,

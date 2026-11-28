@@ -4,6 +4,8 @@ import type { EmailDetail, EmailSummary, ThreadSummary } from '../../shared/type
 import { collectBodies, decodeBody, normalizeContentId, base64UrlToBuffer } from './mime'
 import type { MessageBodies } from './mime'
 
+const CID_REFERENCE = /cid:([^"'\s<>()]+)/gi
+
 function headerOf(headers: gmail_v1.Schema$MessagePartHeader[], name: string): string {
   return headers.find((h) => h.name?.toLowerCase() === name.toLowerCase())?.value ?? ''
 }
@@ -24,9 +26,14 @@ export async function toEmailDetail(
   if (msg.payload) collectBodies(msg.payload, out)
   if (!out.text && !out.html) out.text = decodeBody(msg.payload?.body?.data)
 
+  const referencedIds = new Set(
+    Array.from(out.html.matchAll(CID_REFERENCE), ([, contentId]) => normalizeContentId(contentId))
+  )
   const inlineImageData = new Map<string, string>()
   await Promise.all(
     out.inlineImages.map(async ({ contentId, mimeType, data, attachmentId }) => {
+      const normalizedId = normalizeContentId(contentId)
+      if (!referencedIds.has(normalizedId)) return
       const encodedData =
         data ||
         (attachmentId
@@ -40,11 +47,11 @@ export async function toEmailDetail(
           : undefined)
       if (!encodedData) return
       const base64Data = base64UrlToBuffer(encodedData).toString('base64')
-      inlineImageData.set(normalizeContentId(contentId), `data:${mimeType};base64,${base64Data}`)
+      inlineImageData.set(normalizedId, `data:${mimeType};base64,${base64Data}`)
     })
   )
 
-  const bodyHtml = out.html.replace(/cid:([^"'\s<>()]+)/gi, (reference, contentId: string) => {
+  const bodyHtml = out.html.replace(CID_REFERENCE, (reference, contentId: string) => {
     return inlineImageData.get(normalizeContentId(contentId)) ?? reference
   })
 
