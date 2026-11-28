@@ -4,6 +4,8 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 function isQuotaError(e: unknown): boolean {
+  const error = e as { code?: unknown; response?: { status?: unknown } } | null
+  if (error?.code === 429 || error?.response?.status === 429) return true
   const message = e instanceof Error ? e.message : String(e)
   return /quota|rate.?limit|429|userRateLimitExceeded/i.test(message)
 }
@@ -24,22 +26,22 @@ export function rethrowDeadGrant(e: unknown): void {
   invalidateStoredGrant()
   throw new Error(SESSION_EXPIRED_ERROR)
 }
+export function assertMailSession(session: symbol): void {
+  if (getMailSession() !== session) {
+    throw new Error(isSignedIn() ? 'Mail account changed' : 'Not signed in yet')
+  }
+}
 export async function withQuotaRetry<T>(
   fn: () => Promise<T>,
   session = getMailSession()
 ): Promise<T> {
-  function assertCurrentSession(): void {
-    if (getMailSession() !== session) {
-      throw new Error(isSignedIn() ? 'Mail account changed' : 'Not signed in yet')
-    }
-  }
   let attempt = 0
   for (;;) {
-    assertCurrentSession()
+    assertMailSession(session)
     try {
       return await fn()
     } catch (e) {
-      assertCurrentSession()
+      assertMailSession(session)
       rethrowDeadGrant(e)
       if (!isQuotaError(e) || attempt >= QUOTA_MAX_RETRIES) throw e
       await sleep(1000 * 2 ** attempt)

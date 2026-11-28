@@ -64,7 +64,7 @@ const compiled = await build({
   ]
 })
 
-function loadThreadGetter(attachmentError, { switchAccount = false } = {}) {
+function loadReaders(attachmentError, { switchAccountDuring } = {}) {
   let session = Symbol()
   let signedIn = true
   const requests = []
@@ -72,11 +72,13 @@ function loadThreadGetter(attachmentError, { switchAccount = false } = {}) {
     users: {
       threads: {
         get: async () => {
-          if (switchAccount) session = Symbol()
+          if (switchAccountDuring === 'thread') session = Symbol()
           return { data: thread }
         }
       },
+      drafts: { get: async () => ({ data: { message: thread.messages[1] } }) },
       messages: {
+        get: async () => ({ data: thread.messages[1] }),
         attachments: {
           get: async ({ id, messageId, userId }) => {
             assert.equal(userId, 'me')
@@ -85,6 +87,10 @@ function loadThreadGetter(attachmentError, { switchAccount = false } = {}) {
             if (id === 'optional') {
               const error = attachmentError(requests.filter((id) => id === 'optional').length)
               if (error) throw error
+              if (switchAccountDuring === 'attachment') {
+                await Promise.resolve()
+                session = Symbol()
+              }
             }
             return { data: { data: encodedPng } }
           }
@@ -108,11 +114,13 @@ function loadThreadGetter(attachmentError, { switchAccount = false } = {}) {
     module,
     fixture
   )
-  return { fetchThread: module.exports.fetchThread, requests, isSignedIn: fixture.isSignedIn }
+  return { ...module.exports, requests, isSignedIn: fixture.isSignedIn }
 }
 
 test('reads both messages and keeps the other image when one inline attachment keeps returning 429', async () => {
-  const { fetchThread, requests } = loadThreadGetter(() => new Error('429 Too Many Requests'))
+  const { fetchThread, requests } = loadReaders(() =>
+    Object.assign(new Error('Too Many Requests'), { response: { status: 429 } })
+  )
   const { messages } = await fetchThread('thread')
 
   assert.deepEqual(
@@ -125,8 +133,8 @@ test('reads both messages and keeps the other image when one inline attachment k
 })
 
 test('embeds an inline attachment that succeeds after a quota retry', async () => {
-  const { fetchThread, requests } = loadThreadGetter((attempt) =>
-    attempt === 1 ? new Error('429 Too Many Requests') : undefined
+  const { fetchThread, requests } = loadReaders((attempt) =>
+    attempt === 1 ? Object.assign(new Error('Too Many Requests'), { code: 429 }) : undefined
   )
   const { messages } = await fetchThread('thread')
 
@@ -135,15 +143,32 @@ test('embeds an inline attachment that succeeds after a quota retry', async () =
 })
 
 test('an expired Gmail grant still rejects the thread', async () => {
-  const { fetchThread, isSignedIn } = loadThreadGetter(() => new Error('invalid_grant'))
+  const { fetchThread, isSignedIn } = loadReaders(() => new Error('invalid_grant'))
 
   await assert.rejects(fetchThread('thread'), /your google session has expired/i)
   assert.equal(isSignedIn(), false)
 })
 
 test('an account change prevents fetching inline attachments for the previous account', async () => {
-  const { fetchThread, requests } = loadThreadGetter(() => undefined, { switchAccount: true })
+  const { fetchThread, requests } = loadReaders(() => undefined, { switchAccountDuring: 'thread' })
 
   await assert.rejects(fetchThread('thread'), /mail account changed/i)
   assert.deepEqual(requests, [])
+})
+
+test('an account change during a successful image download rejects the stale thread', async () => {
+  const { fetchThread, requests } = loadReaders(() => undefined, {
+    switchAccountDuring: 'attachment'
+  })
+
+  await assert.rejects(fetchThread('thread'), /mail account changed/i)
+  assert.deepEqual(requests, ['optional', 'other'])
+})
+
+test('a message opened for editing still rejects when an inline image is unavailable', async () => {
+  const missingImage = new Error('Attachment unavailable')
+  const { fetchMessage } = loadReaders(() => missingImage)
+
+  await assert.rejects(fetchMessage('latest', 'draft'), missingImage)
+  await assert.rejects(fetchMessage('latest'), missingImage)
 })

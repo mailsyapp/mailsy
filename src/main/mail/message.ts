@@ -12,7 +12,8 @@ function headerOf(headers: gmail_v1.Schema$MessagePartHeader[], name: string): s
 export async function toEmailDetail(
   gmail: GmailClient,
   msg: gmail_v1.Schema$Message,
-  session: symbol
+  session: symbol,
+  { allowMissingInlineImages = false } = {}
 ): Promise<EmailDetail> {
   const id = msg.id ?? ''
   const headers = msg.payload?.headers ?? []
@@ -43,7 +44,7 @@ export async function toEmailDetail(
           )
           encodedData = attachment.data.data
         } catch (error) {
-          if (getMailSession() !== session) throw error
+          if (!allowMissingInlineImages || getMailSession() !== session) throw error
           return
         }
       }

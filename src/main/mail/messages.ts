@@ -3,7 +3,12 @@ import type { EmailDetail, EmailThread } from '../../shared/types'
 import { toEmailDetail } from './message'
 import { base64UrlToBuffer, INLINE_ATTACHMENT_PREFIX } from './mime'
 import { noteHistoryId } from './sync'
-import { DETAIL_CONCURRENCY, mapWithConcurrency, withQuotaRetry } from './resilience'
+import {
+  assertMailSession,
+  DETAIL_CONCURRENCY,
+  mapWithConcurrency,
+  withQuotaRetry
+} from './resilience'
 import { getSnoozeUntil } from './snooze'
 export async function fetchMessage(id: string, draftId?: string): Promise<EmailDetail> {
   const gmail = getGmailClient()
@@ -57,10 +62,11 @@ export async function fetchThread(threadId: string): Promise<EmailThread> {
   noteHistoryId(thread.data.historyId, session)
   const [messages, userEmail] = await Promise.all([
     mapWithConcurrency(thread.data.messages ?? [], DETAIL_CONCURRENCY, (msg) =>
-      toEmailDetail(gmail, msg, session)
+      toEmailDetail(gmail, msg, session, { allowMissingInlineImages: true })
     ),
     getAccountEmail().catch(() => '')
   ])
+  assertMailSession(session)
   const labelIds = new Set<string>()
   for (const msg of thread.data.messages ?? []) {
     for (const labelId of msg.labelIds ?? []) labelIds.add(labelId)
