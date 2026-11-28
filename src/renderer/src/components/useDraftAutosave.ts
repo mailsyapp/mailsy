@@ -162,6 +162,11 @@ export function useDraftAutosave(
     },
     resume: (): void => {
       suspendedRef.current = false
+      if (sessionSignal.aborted || !enabledRef.current || retiredRef.current) return
+      if (JSON.stringify(fieldsRef.current) === lastSavedRef.current) return
+      timers.start('autosave', AUTOSAVE_DEBOUNCE_MS, () => {
+        if (JSON.stringify(fieldsRef.current) !== lastSavedRef.current) void save()
+      })
     },
     currentDraft,
     status,

@@ -942,6 +942,40 @@ try {
     assert((await to.inputValue()) === 'undo@example.com', 'Undo restores the recipient', 'recipient lost')
     await snapshot(page, 'undo-send-restored')
 
+    await page.evaluate(() => {
+      const original = File.prototype.arrayBuffer
+      File.prototype.arrayBuffer = function () {
+        return new Promise((resolve) => {
+          window.__releaseSlowFile = () => {
+            File.prototype.arrayBuffer = original
+            resolve(original.call(this))
+          }
+        })
+      }
+    })
+    await page.locator('form.composer').evaluate((form) => {
+      const dataTransfer = new DataTransfer()
+      dataTransfer.items.add(new File(['slow'], 'slow-drop.txt', { type: 'text/plain' }))
+      for (const type of ['dragenter', 'dragover', 'drop']) {
+        form.dispatchEvent(new DragEvent(type, { dataTransfer, bubbles: true, cancelable: true }))
+      }
+    })
+    await hold()
+    await page.evaluate(() => window.__releaseSlowFile())
+    await content.getByText('slow-drop.txt').first().waitFor({ timeout: 5000 })
+    await page.clock.fastForward(2000)
+    await undo.click({ timeout: 5000 })
+    await send.waitFor({ timeout: 5000 })
+    await page.clock.fastForward(2000)
+    await page.waitForFunction(() =>
+      window.__draftSaves.at(-1)?.attachments?.some((a) => a.filename === 'slow-drop.txt')
+    , null, { timeout: 5000 })
+    assert(
+      (await outbox()).length === 0,
+      'an attachment that finishes loading during the hold is saved to the draft after Undo',
+      'the late attachment was sent or never saved'
+    )
+
     await hold()
     await page.getByRole('button', { name: 'Drafts', exact: true }).click()
     const reopened = drafts.getByText('Undo a new message', { exact: true })
