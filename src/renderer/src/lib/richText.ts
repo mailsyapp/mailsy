@@ -405,7 +405,9 @@ const UNRENDERED_WHITESPACE_PARENTS = new Set([
 function isUnrenderedWhitespace(text: Text): boolean {
   const parent = text.parentElement
   return (
-    parent !== null && UNRENDERED_WHITESPACE_PARENTS.has(parent.tagName) && text.data.trim() === ''
+    parent !== null &&
+    UNRENDERED_WHITESPACE_PARENTS.has(parent.tagName) &&
+    /^[ \t\n\f\r]*$/.test(text.data)
   )
 }
 
