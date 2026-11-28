@@ -658,6 +658,7 @@ button {
 }
 
 .actions:has(.leftSendNotices) {
+  flex-wrap: wrap;
   position: sticky;
   top: 0;
   z-index: 10;
@@ -670,6 +671,13 @@ button {
   flex-wrap: wrap;
   gap: 8px;
   margin-left: auto;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.leftSendNotices .undoSendNotice {
+  flex-wrap: wrap;
+  min-width: 0;
 }
 
 .undoSendNotice button {
