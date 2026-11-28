@@ -91,6 +91,19 @@ export class EditorHistory {
     if (coalesce) return
     const snapshot = capture(editor, fallback)
     if (this.undoStack.at(-1)?.html === snapshot.html && this.redoStack.length === 0) return
+    this.push(snapshot)
+  }
+
+  change(editor: HTMLElement, apply: () => void): void {
+    const snapshot = capture(editor)
+    apply()
+    if (editor.innerHTML === snapshot.html) return
+    this.lastKind = null
+    this.lastAt = Date.now()
+    this.push(snapshot)
+  }
+
+  private push(snapshot: Snapshot): void {
     this.undoStack.push(snapshot)
     if (this.undoStack.length > HISTORY_LIMIT) this.undoStack.shift()
     this.redoStack = []

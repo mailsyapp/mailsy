@@ -219,8 +219,7 @@ function runFormat(
   onFormatState: FormatStateListener
 ): void {
   if (!selectionRangeIn(editor)) restoreRange(editor, savedRange)
-  history.record(editor)
-  applyFormat(editor, command)
+  history.change(editor, () => applyFormat(editor, command))
   reportNow(editor, onChange)
   reportFormatState(editor, onFormatState)
 }
