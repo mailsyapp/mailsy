@@ -46,7 +46,7 @@ export function ThreadReplyForm({
 
   function handleSend(event: React.FormEvent<HTMLFormElement>): void {
     event.preventDefault()
-    if (!attach.ready || !hasRecipient(draft)) return
+    if (!attach.ready || attach.adding || !hasRecipient(draft)) return
     setKeepDraft(true)
     void send.start(request, autosave, onSent)
   }
@@ -97,7 +97,10 @@ export function ThreadReplyForm({
         <button type="button" onClick={handleCancel} disabled={send.busy}>
           Cancel
         </button>
-        <button type="submit" disabled={send.busy || !attach.ready || !hasRecipient(draft)}>
+        <button
+          type="submit"
+          disabled={send.busy || !attach.ready || attach.adding || !hasRecipient(draft)}
+        >
           {send.buttonLabel}
         </button>
       </div>

@@ -960,20 +960,21 @@ try {
         form.dispatchEvent(new DragEvent(type, { dataTransfer, bubbles: true, cancelable: true }))
       }
     })
-    await hold()
+    assert(
+      await send.isDisabled(),
+      'Send waits while a dropped attachment is still loading',
+      'Send was enabled before the dropped attachment loaded'
+    )
     await page.evaluate(() => window.__releaseSlowFile())
     await content.getByText('slow-drop.txt').first().waitFor({ timeout: 5000 })
-    await page.clock.fastForward(2000)
-    await undo.click({ timeout: 5000 })
-    await send.waitFor({ timeout: 5000 })
     await page.clock.fastForward(2000)
     await page.waitForFunction(() =>
       window.__draftSaves.at(-1)?.attachments?.some((a) => a.filename === 'slow-drop.txt')
     , null, { timeout: 5000 })
     assert(
-      (await outbox()).length === 0,
-      'an attachment that finishes loading during the hold is saved to the draft after Undo',
-      'the late attachment was sent or never saved'
+      (await outbox()).length === 0 && (await send.isEnabled()),
+      'Send re-enables once the attachment loads and the draft keeps it',
+      'the loaded attachment was sent or left Send disabled'
     )
 
     await hold()

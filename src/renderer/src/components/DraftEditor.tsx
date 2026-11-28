@@ -75,7 +75,7 @@ function DraftForm({
   const send = useUndoSend(sessionSignal)
   function handleSend(event: React.FormEvent<HTMLFormElement>): void {
     event.preventDefault()
-    if (sent || !attach.ready || !hasRecipient(recipients)) return
+    if (sent || !attach.ready || attach.adding || !hasRecipient(recipients)) return
     const snapshot = draftId
       ? request
       : composeRequest({ recipients, subject, body, attachments: attach.attachments })
@@ -144,7 +144,9 @@ function DraftForm({
 
         <button
           type="submit"
-          disabled={send.busy || sent || !attach.ready || !hasRecipient(recipients)}
+          disabled={
+            send.busy || sent || !attach.ready || attach.adding || !hasRecipient(recipients)
+          }
         >
           {sent ? 'Sent' : send.buttonLabel}
         </button>

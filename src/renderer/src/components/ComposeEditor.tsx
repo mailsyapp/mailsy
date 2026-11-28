@@ -35,7 +35,7 @@ export function ComposeEditor({ onClose, sessionSignal }: ComposeEditorProps): R
   }
   function handleSend(event: React.FormEvent<HTMLFormElement>): void {
     event.preventDefault()
-    if (sent || !hasRecipient(recipients)) return
+    if (sent || attach.adding || !hasRecipient(recipients)) return
     void send.start(request, autosave, () => setSent(true))
   }
   return (
@@ -72,7 +72,10 @@ export function ComposeEditor({ onClose, sessionSignal }: ComposeEditorProps): R
         <button type="button" onClick={handleCancel} disabled={send.busy}>
           {sent ? 'Close' : 'Cancel'}
         </button>
-        <button type="submit" disabled={send.busy || sent || !hasRecipient(recipients)}>
+        <button
+          type="submit"
+          disabled={send.busy || sent || attach.adding || !hasRecipient(recipients)}
+        >
           {sent ? 'Sent' : send.buttonLabel}
         </button>
       </div>
