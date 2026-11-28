@@ -16,6 +16,8 @@ type DraftEditorProps = {
   row: ThreadSummary
   detail: EmailDetailData | null
   detailLoading: boolean
+  detailError: string | null
+  onRetry: () => void
   sessionSignal: AbortSignal
   onSent: () => void
   onDraftDiscard: () => void
@@ -181,16 +183,31 @@ export function DraftEditor({
   row,
   detail,
   detailLoading,
+  detailError,
+  onRetry,
   sessionSignal,
   onSent,
   onDraftDiscard,
   discardError
 }: DraftEditorProps): React.JSX.Element {
-  if (detailLoading || !detail) {
+  if (detailLoading) {
     return (
       <div>
         <h2>{row.subject}</h2>
         <p>Loading draft...</p>
+      </div>
+    )
+  }
+  if (detailError || !detail) {
+    return (
+      <div>
+        <h2>{row.subject}</h2>
+        <p className="error" role="alert">
+          {detailError ?? 'Failed to load draft.'}
+        </p>
+        <button type="button" onClick={onRetry}>
+          Retry
+        </button>
       </div>
     )
   }

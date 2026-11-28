@@ -672,6 +672,7 @@
     },
     getMessage: async (id, draftId) => {
       ensureSignedIn()
+      if (window.__getMessageError) throw new Error(window.__getMessageError)
       const m = draftId ? findDraft(draftId) : byId.get(id)
       if (!m) throw new Error(`mock: no message ${id}`)
       // The attachment ref list is a boundary contract now: the detail

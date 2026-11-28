@@ -1872,15 +1872,35 @@ try {
     const draftRow = drafts.getByText('Draft: Q4 planning notes')
     await draftRow.first().waitFor({ timeout: 10000 })
     assert(true, 'drafts folder lists the seeded draft', 'draft row missing')
-    await draftRow.first().click()
     const content = page.getByRole('region', { name: 'Email content' })
+    const loadFailure = 'Draft request failed: temporary upstream error'
+    await page.evaluate((message) => {
+      window.__getMessageError = message
+    }, loadFailure)
+    await draftRow.first().click()
+    await page.getByText(loadFailure).waitFor({ timeout: 5000 })
+    await snapshot(page, 'drafts-load-error')
+    const paneAlert = content.getByRole('alert').filter({ hasText: loadFailure })
+    const retryButton = content.getByRole('button', { name: 'Retry', exact: true })
+    assert(
+      (await paneAlert.count()) === 1 &&
+        (await content.getByText('Loading draft...').count()) === 0 &&
+        (await retryButton.count()) === 1,
+      'failed draft load shows an error alert and Retry button instead of Loading draft...',
+      'failed draft load left the pane stuck on Loading draft... without an in-pane error or Retry button'
+    )
+    await page.evaluate(() => {
+      window.__getMessageError = null
+    })
+    await retryButton.click()
     await content.getByRole('heading', { name: 'Draft', exact: true }).waitFor({ timeout: 10000 })
     const toValue = await content.locator('.composerField input').first().inputValue()
     assert(
-      toValue.includes('team@example.com'),
-      `draft To prefilled (${toValue})`,
-      'draft To not prefilled'
+      toValue.includes('team@example.com') && (await paneAlert.count()) === 0,
+      `Retry recovered the draft editor (${toValue})`,
+      'Retry did not load the draft editor cleanly'
     )
+    await snapshot(page, 'drafts-load-recovered')
     await content.getByRole('button', { name: 'Send', exact: true }).click()
     await content.getByText('Message sent.').waitFor({ timeout: 10000 })
     const sent = await page.evaluate(() => window.__sent)

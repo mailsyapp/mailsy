@@ -52,6 +52,7 @@ function App(): React.JSX.Element {
   const [error, setError] = useState<string | null>(null)
   const [draftDetail, setDraftDetail] = useState<EmailDetailData | null>(null)
   const [draftDetailLoading, setDraftDetailLoading] = useState(false)
+  const [draftDetailError, setDraftDetailError] = useState<string | null>(null)
   const [selectedIsDraft, setSelectedIsDraft] = useState(false)
   const [signedIn, setSignedIn] = useState<boolean | null>(null)
   const [searchInput, setSearchInput] = useState('')
@@ -71,6 +72,7 @@ function App(): React.JSX.Element {
     id: string
     threadId: string
   } | null>(null)
+  const draftRequestRef = useRef(0)
   const selectedSnoozedByMailsyRef = useRef(false)
   const sentinelRef = useRef<HTMLDivElement | null>(null)
   const sidebarRef = useRef<HTMLElement | null>(null)
@@ -144,8 +146,10 @@ function App(): React.JSX.Element {
     selectedDraftRef.current = null
     setOpened(null)
     selectedSnoozedByMailsyRef.current = false
+    draftRequestRef.current += 1
     setDraftDetail(null)
     setDraftDetailLoading(false)
+    setDraftDetailError(null)
     setComposing(false)
     setSelectedIsDraft(false)
     setDraftDiscard(null)
@@ -196,6 +200,46 @@ function App(): React.JSX.Element {
     (isSearchActive && opened?.query === committedQuery && (!selectedIsDraft || opened.row.draftId)
       ? opened.row
       : null)
+  function loadDraftDetail(
+    row: ThreadSummary,
+    rowKey: string,
+    draft: { key: string; id: string; threadId: string } | null
+  ): void {
+    const requestId = ++draftRequestRef.current
+    const stillCurrent = (): boolean =>
+      draftRequestRef.current === requestId &&
+      selectionRef.current === rowKey &&
+      selectedDraftRef.current === draft
+    setDraftDetail(null)
+    setDraftDetailError(null)
+    setDraftDetailLoading(true)
+    window.api
+      .getMessage(row.messageIds[row.messageIds.length - 1], row.draftId)
+      .then((detail) => {
+        if (stillCurrent()) setDraftDetail(detail)
+      })
+      .catch((e: unknown) => {
+        if (!stillCurrent()) return
+        if (isDeadGrantError(e)) {
+          recordError(e)
+          return
+        }
+        setDraftDetailError(errorMessage(e))
+      })
+      .finally(() => {
+        if (stillCurrent()) setDraftDetailLoading(false)
+      })
+  }
+  function handleRetryDraft(row: ThreadSummary): void {
+    const rowKey = listRowKey(row)
+    if (selectionRef.current !== rowKey) return
+    const draftHere = activeFolder === 'drafts' || (activeFolder === 'all' && row.hasDraft === true)
+    if (!draftHere) {
+      handleSelect(row)
+      return
+    }
+    loadDraftDetail(row, rowKey, selectedDraftRef.current)
+  }
   function handleSelect(row: ThreadSummary): void {
     closeEmail()
     const rowKey = listRowKey(row)
@@ -209,20 +253,7 @@ function App(): React.JSX.Element {
     if (!draftHere) return
     const draft = row.draftId ? { key: rowKey, id: row.draftId, threadId: row.id } : null
     selectedDraftRef.current = draft
-    const stillSelected = (): boolean =>
-      selectionRef.current === rowKey && selectedDraftRef.current === draft
-    setDraftDetailLoading(true)
-    window.api
-      .getMessage(row.messageIds[row.messageIds.length - 1], row.draftId)
-      .then((detail) => {
-        if (stillSelected()) setDraftDetail(detail)
-      })
-      .catch((e: unknown) => {
-        if (stillSelected()) recordError(e)
-      })
-      .finally(() => {
-        if (stillSelected()) setDraftDetailLoading(false)
-      })
+    loadDraftDetail(row, rowKey, draft)
   }
   const [showCredentialsSetup, setShowCredentialsSetup] = useState(false)
   async function completeSignIn(): Promise<void> {
@@ -987,6 +1018,8 @@ function App(): React.JSX.Element {
                 row={selectedThread}
                 detail={draftDetail}
                 detailLoading={draftDetailLoading}
+                detailError={draftDetailError}
+                onRetry={() => handleRetryDraft(selectedThread)}
                 sessionSignal={sessionAbortRef.current.signal}
                 onSent={() => handleDraftSent(listRowKey(selectedThread))}
                 onDraftDiscard={() => handleDraftDiscard(selectedThread)}
