@@ -3,6 +3,12 @@ import type { GmailClient } from '../auth'
 import type { EmailDetail, EmailSummary, ThreadSummary } from '../../shared/types'
 import { collectBodies, decodeBody, normalizeContentId, base64UrlToBuffer } from './mime'
 import type { MessageBodies } from './mime'
+import { decodeHtmlEntities } from './entities'
+
+function snippetOf(...messages: { snippet?: string | null }[]): string {
+  for (const message of messages) if (message.snippet) return decodeHtmlEntities(message.snippet)
+  return ''
+}
 
 function headerOf(headers: gmail_v1.Schema$MessagePartHeader[], name: string): string {
   return headers.find((h) => h.name?.toLowerCase() === name.toLowerCase())?.value ?? ''
@@ -61,7 +67,7 @@ export async function toEmailDetail(
     references: headerOf(headers, 'References'),
     subject: headerOf(headers, 'Subject') || '(no subject)',
     date: headerOf(headers, 'Date'),
-    snippet: msg.snippet ?? '',
+    snippet: snippetOf(msg),
     unread: (msg.labelIds ?? []).includes('UNREAD'),
     starred: (msg.labelIds ?? []).includes('STARRED'),
     bodyText: out.text,
@@ -83,7 +89,7 @@ export function toEmailSummary(
     from: headerOf(headers, 'From'),
     subject: headerOf(headers, 'Subject') || '(no subject)',
     date: headerOf(headers, 'Date'),
-    snippet: msg.snippet ?? '',
+    snippet: snippetOf(msg),
     unread: (msg.labelIds ?? []).includes('UNREAD'),
     starred: (msg.labelIds ?? []).includes('STARRED'),
     ...(draftId ? { draftId } : {})
@@ -114,7 +120,7 @@ export function threadToSummary(
       headerOf(headersOf(first), 'Subject') ||
       headerOf(headersOf(last), 'Subject') ||
       '(no subject)',
-    snippet: last.snippet ?? thread.snippet ?? '',
+    snippet: snippetOf(last, thread),
     participants,
     date: headerOf(headersOf(last), 'Date'),
     messageIds: ids,
