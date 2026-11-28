@@ -1,8 +1,9 @@
 import type { gmail_v1 } from 'googleapis'
-import type { GmailClient } from '../auth'
+import { getMailSession, type GmailClient } from '../auth'
 import type { EmailDetail, EmailSummary, ThreadSummary } from '../../shared/types'
 import { collectBodies, decodeBody, normalizeContentId, base64UrlToBuffer } from './mime'
 import type { MessageBodies } from './mime'
+import { withQuotaRetry } from './resilience'
 
 function headerOf(headers: gmail_v1.Schema$MessagePartHeader[], name: string): string {
   return headers.find((h) => h.name?.toLowerCase() === name.toLowerCase())?.value ?? ''
@@ -10,7 +11,8 @@ function headerOf(headers: gmail_v1.Schema$MessagePartHeader[], name: string): s
 
 export async function toEmailDetail(
   gmail: GmailClient,
-  msg: gmail_v1.Schema$Message
+  msg: gmail_v1.Schema$Message,
+  session: symbol
 ): Promise<EmailDetail> {
   const id = msg.id ?? ''
   const headers = msg.payload?.headers ?? []
@@ -27,17 +29,24 @@ export async function toEmailDetail(
   const inlineImageData = new Map<string, string>()
   await Promise.all(
     out.inlineImages.map(async ({ contentId, mimeType, data, attachmentId }) => {
-      const encodedData =
-        data ||
-        (attachmentId
-          ? (
-              await gmail.users.messages.attachments.get({
+      let encodedData = data
+      if (!encodedData && attachmentId) {
+        try {
+          const attachment = await withQuotaRetry(
+            () =>
+              gmail.users.messages.attachments.get({
                 userId: 'me',
                 messageId: id,
                 id: attachmentId
-              })
-            ).data.data
-          : undefined)
+              }),
+            session
+          )
+          encodedData = attachment.data.data
+        } catch (error) {
+          if (getMailSession() !== session) throw error
+          return
+        }
+      }
       if (!encodedData) return
       const base64Data = base64UrlToBuffer(encodedData).toString('base64')
       inlineImageData.set(normalizeContentId(contentId), `data:${mimeType};base64,${base64Data}`)
