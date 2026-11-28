@@ -617,6 +617,7 @@ button {
 .composer-fill {
   flex: 1;
   min-height: 0;
+  overflow-y: auto;
   margin-top: 0;
   display: flex;
   flex-direction: column;
@@ -624,7 +625,7 @@ button {
 
 .composer-fill .composerField-grow {
   flex: 1;
-  min-height: 0;
+  min-height: 8rem;
   display: flex;
   align-items: stretch;
   gap: 8px;
@@ -833,6 +834,106 @@ button {
   max-width: 100%;
   max-height: 420px;
   border-radius: 4px;
+}
+
+/* Rich-text formatting: the toolbar sits over the Message row, aligned
+   with the field column; pressed buttons mirror the caret's formatting. */
+.formattingBar {
+  display: grid;
+  gap: 6px;
+  padding-left: 64px;
+}
+
+.formattingToolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+}
+
+.formattingToolbar button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: none;
+  color: #444746;
+  cursor: pointer;
+}
+
+.formattingToolbar button:hover {
+  background: #f1f3f4;
+}
+
+.formattingToolbar button[aria-pressed='true'] {
+  background: #e8f0fe;
+  border-color: #d2e3fc;
+  color: #1a73e8;
+}
+
+.linkEdit {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 6px 8px;
+  padding: 8px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  background: #f8f9fa;
+}
+
+.linkEdit label {
+  font-size: 12px;
+  color: #5f6368;
+}
+
+.linkEdit-error {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: 12px;
+  color: #c5221f;
+}
+
+.linkEdit-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.linkEdit-actions button {
+  font: inherit;
+  cursor: pointer;
+}
+
+.body-editor ul,
+.body-editor ol {
+  margin: 0;
+  padding-left: 2em;
+  white-space: normal;
+}
+
+.body-editor ul {
+  list-style: disc;
+}
+
+.body-editor ol {
+  list-style: decimal;
+}
+
+.body-editor li {
+  white-space: pre-wrap;
+}
+
+.body-editor blockquote {
+  margin: 0 0 0 0.8ex;
+}
+
+.body-editor a {
+  color: #1a73e8;
 }
 
 /* Fill mode (fresh compose, draft editor): the Message row owns exactly

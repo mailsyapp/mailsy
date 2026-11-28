@@ -3,6 +3,8 @@ import { useReaction } from '../hooks/useReaction'
 import { BodyEditor, type BodyEditorHandle } from './BodyEditor'
 import { AttachmentChips } from './AttachmentChips'
 import { SignatureBar } from './SignatureBar'
+import { FormattingToolbar, type LinkEditorState } from './FormattingToolbar'
+import { EMPTY_FORMAT_STATE, sameFormatState, type FormatState } from '../lib/richText'
 import { loadSignature } from '../lib/signature'
 import { plainTextToHtml } from '../lib/emailHtml'
 import type { ComposerAttachments } from './useComposerAttachments'
@@ -22,6 +24,18 @@ export const ComposerBody = forwardRef<ComposerBodyHandle, ComposerBodyProps>(fu
 ) {
   const editorRef = useRef<BodyEditorHandle | null>(null)
   const [signaturePresent, setSignaturePresent] = useState(false)
+  const [formatState, setFormatState] = useState<FormatState>(EMPTY_FORMAT_STATE)
+  const [linkEditor, setLinkEditor] = useState<LinkEditorState | null>(null)
+  const [linkEditorKey, setLinkEditorKey] = useState(0)
+  const handleFormatState = useCallback((next: FormatState) => {
+    setFormatState((prev) => (sameFormatState(prev, next) ? prev : next))
+  }, [])
+  const openLinkEditor = useCallback(() => {
+    const selection = editorRef.current?.captureLinkSelection()
+    if (!selection) return
+    setLinkEditor(selection)
+    setLinkEditorKey((key) => key + 1)
+  }, [])
   useImperativeHandle(
     ref,
     () => ({
@@ -51,6 +65,14 @@ export const ComposerBody = forwardRef<ComposerBodyHandle, ComposerBodyProps>(fu
   })
   return (
     <>
+      <FormattingToolbar
+        editor={editorRef}
+        state={formatState}
+        link={linkEditor}
+        linkKey={linkEditorKey}
+        onOpenLink={openLinkEditor}
+        onCloseLink={() => setLinkEditor(null)}
+      />
       <label className="composerField composerField-grow">
         <span>Message</span>
         <BodyEditor
@@ -60,6 +82,8 @@ export const ComposerBody = forwardRef<ComposerBodyHandle, ComposerBodyProps>(fu
           placeholder="Type your message..."
           onNonImageFiles={(files) => void attach.addFiles(files)}
           onChange={handleBodyChange}
+          onFormatState={handleFormatState}
+          onRequestLink={openLinkEditor}
         />
       </label>
       <SignatureBar editor={editorRef} present={signaturePresent} />

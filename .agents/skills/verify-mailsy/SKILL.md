@@ -63,7 +63,7 @@ node scripts/drive.mjs --feature inbox --run-id "$RUN_ID" --port "$VERIFY_MAILSY
 node scripts/drive.mjs --feature search --run-id "$RUN_ID" --port "$VERIFY_MAILSY_PORT"
 ```
 
-Available `--feature` values mirror the map: `sign-in`, `sign-out`, `inbox`, `search`, `search-state`, `read-thread`, `compose-send`, `compose-new`, `drafts`, `draft-autosave`, `draft-attachments-safe`, `forward-attachments`, `delete-draft`, `delete-to-trash`, `archive`, `mark-read`, `starred`, `all-mail`, `reply-all`, `cc-bcc`, `spam`, `snooze`, `snooze-emulation`, `snooze-wake`, `category-views`, `unread-bold`, `sidebar`, `sidebar-expanded`, `labels`, `refresh`, `pagination`, `background-work`, `attachments`, `inline-images`, `signature`. Each journey uses stable handles only — ARIA roles and accessible names (`Search emails` searchbox, `Inbox`/`Drafts` complementary landmarks, `Clear search` button, `reply`/`forward` buttons, `Send` button, `Compose email`/`Draft` headings, `Email content` region). No coordinates, no tab order.
+Available `--feature` values mirror the map: `sign-in`, `sign-out`, `inbox`, `search`, `search-state`, `read-thread`, `compose-send`, `compose-new`, `drafts`, `draft-autosave`, `draft-attachments-safe`, `forward-attachments`, `delete-draft`, `delete-to-trash`, `archive`, `mark-read`, `starred`, `all-mail`, `reply-all`, `cc-bcc`, `spam`, `snooze`, `snooze-emulation`, `snooze-wake`, `category-views`, `unread-bold`, `sidebar`, `sidebar-expanded`, `labels`, `refresh`, `pagination`, `background-work`, `attachments`, `inline-images`, `signature`, `rich-text`, `implicit-submit`. Each journey uses stable handles only — ARIA roles and accessible names (`Search emails` searchbox, `Inbox`/`Drafts` complementary landmarks, `Clear search` button, `reply`/`forward` buttons, `Send` button, `Compose email`/`Draft` headings, `Email content` region). No coordinates, no tab order.
 
 Proof standards (every run):
 
@@ -111,7 +111,7 @@ node .agents/skills/verify-mailsy/scripts/drive.mjs --feature signature \
   --run-id packaged-signature --executable "$PWD/dist/linux-unpacked/mailsy"
 ```
 
-All 35 mapped features are supported, including `sign-in --signed-out`.
+All 37 mapped features are supported, including `sign-in --signed-out`.
 `drive.mjs` registers each feature's journey by ID and checks the executed
 journey's ID against the request; unknown IDs and mismatches fail the run.
 Run each with its own run ID. Their journey assertions and

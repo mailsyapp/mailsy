@@ -189,6 +189,34 @@
       { filename: 'second.bin', size: 6, attachmentId: 'rotate-b' }
     ]
   })
+  // Rich-text draft: a stored draft whose html already carries every
+  // composer format, so reopening it proves the editor and toolbar read
+  // formatted html back instead of flattening it.
+  seed.push({
+    id: 'msg-draft-rich',
+    threadId: 'thread-draft-rich',
+    from: 'me@example.com',
+    subject: 'Draft: formatted launch notes',
+    date: 'Mon, 12 Oct 2026 08:00:00 +0000',
+    snippet: 'Launch is go. Owners and steps below.',
+    to: 'team@example.com',
+    cc: '',
+    bcc: '',
+    replyTo: '',
+    messageId: '<draft-rich@example.com>',
+    inReplyTo: '',
+    references: '',
+    bodyText: 'Launch notes:\nLaunch is go.\nOwners below.\nFrontend\nBackend\nFreeze\nShip\nRunbook\nNo late merges.',
+    bodyHtml:
+      'Launch notes:<br><b>Launch is go.</b><br><i>Owners</i> <u>below</u>.' +
+      '<ul>\n<li>Frontend</li>\n<li>Backend</li>\n</ul>' +
+      '<ol>\n<li>Freeze</li>\n<li>Ship</li>\n</ol>' +
+      '<a href="https://example.com/runbook">Runbook</a>' +
+      '<blockquote style="margin:0px 0px 0px 0.8ex;border-left:1px solid rgb(204,204,204);padding-left:1ex">No late merges.</blockquote>',
+    folder: 'drafts',
+    labelIds: ['DRAFT'],
+    draftId: 'draft-rich'
+  })
   // Spam fixture: one message carrying only the SPAM label, so the Spam
   // view lists it while every other folder including All Mail excludes it.
   // Not UNREAD, so opening it never adds a stray auto-read modify call.

@@ -46,4 +46,5 @@ Run `node scripts/drive.mjs --feature signature --run-id "$RUN_ID" --port "$VERI
 - Every `Signature` name lookup needs `exact: true` — `Edit signature` and `Save signature` substring-match it otherwise.
 - The pressed state is derived from the editor's DOM on every content report, not tracked by the toggle: a stale state self-corrects on the next report, and the mount report re-derives it on draft reopen.
 - Storage is per-context: a drive run never sees a previous run's signature, which is what keeps the empty-storage step deterministic.
+- Caret-navigation presses in `drive.mjs` go through the `KEYS` map, never a literal key name, because on darwin Playwright maps `Home`/`End`/`Shift+Home`/`Shift+End`/`Control+Home`/`Control+End`/`Control+A` to Mac editing commands (scroll, document-wide selection, Emacs moves) instead of Linux-style caret moves. The keystrokes stay real — they exercise the caret-move `history.seal()` path — only the key name switches to the `Meta+Arrow…`/`Meta+A` equivalent on macOS.
 - Manual tier only: the Electron shell persists localStorage per profile, so a real restart keeping the text is manual evidence (`manual-signature.png`).

@@ -55,6 +55,22 @@ function assert(cond, okMsg, failMsg) {
   log(`pass: ${okMsg}`)
 }
 
+// Caret navigation still goes through real keystrokes (the editor's
+// caret-move history.seal() path listens for them), but the keys differ by
+// platform: on darwin Playwright maps Home/End to scroll-to-document and
+// Shift+Home/Shift+End to document-wide selection, while Control+Home/End
+// and Control+A are unmapped no-ops / Emacs bindings there.
+const MAC = process.platform === 'darwin'
+const KEYS = {
+  docStart: MAC ? 'Meta+ArrowUp' : 'Control+Home',
+  docEnd: MAC ? 'Meta+ArrowDown' : 'Control+End',
+  lineStart: MAC ? 'Meta+ArrowLeft' : 'Home',
+  lineEnd: MAC ? 'Meta+ArrowRight' : 'End',
+  selectLineStart: MAC ? 'Shift+Meta+ArrowLeft' : 'Shift+Home',
+  selectLineEnd: MAC ? 'Shift+Meta+ArrowRight' : 'Shift+End',
+  selectAll: MAC ? 'Meta+a' : 'Control+a'
+}
+
 // Checkbox state flips asynchronously after the boundary write resolves
 // (the menu re-derives from the thread's own label list), so a click is
 // followed by this bounded wait instead of an instant read.
@@ -118,6 +134,164 @@ async function typeAtEnd(editor, text) {
 // not an input value — a contenteditable has none.
 async function bodyTextOf(editor) {
   return (await editor.evaluate((el) => el.innerText)) ?? ''
+}
+
+// Rich-text formatting is one shared toolbar over every composer body, so
+// one routine drives it identically on each surface: each command through
+// its real button or shortcut, with the toolbar's pressed state read back.
+async function caretAtBodyStart(editor) {
+  await editor.evaluate((el) => {
+    el.focus()
+    const sel = window.getSelection()
+    sel.removeAllRanges()
+    const range = document.createRange()
+    range.selectNodeContents(el)
+    range.collapse(true)
+    sel.addRange(range)
+  })
+}
+
+async function formatRichBody(page, content, marker) {
+  const editor = content.locator('.body-editor')
+  const toolbar = content.getByRole('toolbar', { name: 'Formatting options' })
+  const button = (name) => toolbar.getByRole('button', { name, exact: true })
+  // An empty first line of its own, so existing body content (a stored
+  // draft's first line, a reply quote) never joins the formatted lines.
+  await caretAtBodyStart(editor)
+  await editor.press('Enter')
+  await caretAtBodyStart(editor)
+  await button('Bold').click()
+  await waitForPressed(button('Bold'), 'true', `${marker}: Bold turns on at the caret`, `${marker}: Bold did not press`)
+  await editor.pressSequentially(`${marker} cleared`)
+  await editor.press(KEYS.selectLineStart)
+  await button('Remove formatting').click()
+  await waitForPressed(button('Bold'), 'false', `${marker}: Remove formatting clears bold from the selection`, `${marker}: Remove formatting left Bold pressed`)
+  await editor.press('ArrowRight')
+  await editor.press('Enter')
+  await button('Bold').click()
+  await editor.pressSequentially(`${marker} bold`)
+  await button('Bold').click()
+  await waitForPressed(button('Bold'), 'false', `${marker}: Bold toggles back off`, `${marker}: Bold stuck on`)
+  await editor.press('Control+i')
+  await waitForPressed(button('Italic'), 'true', `${marker}: Ctrl+I presses Italic`, `${marker}: Ctrl+I did not italicize`)
+  await editor.pressSequentially(' italic')
+  await editor.press('Control+i')
+  await button('Underline').click()
+  await waitForPressed(button('Underline'), 'true', `${marker}: Underline turns on`, `${marker}: Underline did not press`)
+  await editor.pressSequentially(' underline')
+  await button('Underline').click()
+  await editor.pressSequentially(' ')
+  await button('Link').click()
+  const linkEditor = content.getByRole('group', { name: 'Edit link' })
+  await linkEditor.waitFor({ timeout: 5000 })
+  await linkEditor.getByLabel('Text to display').fill(`${marker} link`)
+  await linkEditor.getByLabel('Web address').fill('javascript:alert(1)')
+  await linkEditor.getByRole('button', { name: 'Apply link' }).click()
+  await linkEditor.getByRole('alert').filter({ hasText: 'Enter a valid web address or email.' }).waitFor({ timeout: 5000 })
+  assert(true, `${marker}: an unsafe link scheme is refused`, `${marker}: javascript: link accepted`)
+  await linkEditor.getByLabel('Web address').fill('mailsy.example/docs')
+  await linkEditor.getByLabel('Web address').press('Enter')
+  await linkEditor.waitFor({ state: 'detached', timeout: 5000 })
+  await editor.press('Enter')
+  await button('Bulleted list').click()
+  await waitForPressed(button('Bulleted list'), 'true', `${marker}: Bulleted list presses inside the list`, `${marker}: no bulleted list at the caret`)
+  await editor.pressSequentially('Bullet one')
+  await editor.press('Enter')
+  await editor.pressSequentially('Bullet two')
+  await editor.press('Enter')
+  await editor.press('Enter')
+  await waitForPressed(button('Bulleted list'), 'false', `${marker}: a second Enter leaves the bulleted list`, `${marker}: Enter did not leave the list`)
+  await editor.press('Control+Shift+7')
+  await waitForPressed(button('Numbered list'), 'true', `${marker}: Ctrl+Shift+7 starts a numbered list`, `${marker}: no numbered list at the caret`)
+  await editor.pressSequentially('Step one')
+  await editor.press('Enter')
+  await editor.pressSequentially('Step two')
+  await editor.press('Enter')
+  await editor.press('Enter')
+  await button('Quote').click()
+  await waitForPressed(button('Quote'), 'true', `${marker}: Quote presses inside the new block quote`, `${marker}: no block quote at the caret`)
+  await editor.pressSequentially(`${marker} quoted note`)
+  await editor.locator('a', { hasText: `${marker} link` }).click()
+  await waitForPressed(button('Link'), 'true', `${marker}: the caret lands inside the link`, `${marker}: Link not pressed inside the link`)
+  await waitForPressed(button('Underline'), 'false', `${marker}: a link's own underline does not press Underline`, `${marker}: Underline pressed inside a plain link`)
+  await editor.locator('a', { hasText: `${marker} link` }).selectText()
+  await button('Underline').click()
+  await waitForPressed(button('Underline'), 'true', `${marker}: Underline applies inside a link`, `${marker}: Underline did nothing inside a link`)
+  const underlinedLink = await editor.evaluate((el) => el.innerHTML)
+  if (!underlinedLink.includes(`<a href="https://mailsy.example/docs"><u>${marker} link</u></a>`))
+    throw new Error(`${marker}: the link was not explicitly underlined: ${underlinedLink}`)
+  await button('Underline').click()
+  await waitForPressed(button('Underline'), 'false', `${marker}: Underline toggles back off inside a link`, `${marker}: Underline stuck on inside a link`)
+  return editor.evaluate((el) => el.innerHTML)
+}
+
+function richHtmlProblems(html, marker) {
+  const problems = []
+  const need = (ok, what) => { if (!ok) problems.push(what) }
+  need(html.includes(`${marker} cleared`) && !new RegExp(`<b>[^<]*${marker} cleared`).test(html), 'cleared text still bold')
+  need(new RegExp(`<b>${marker} bold</b>`).test(html), 'bold')
+  need(/<i>\s?italic<\/i>/.test(html), 'italic')
+  need(/<u>\s?underline<\/u>/.test(html), 'underline')
+  need(html.includes(`<a href="https://mailsy.example/docs">${marker} link</a>`), 'link')
+  need(!html.includes('javascript:'), 'unsafe href')
+  need(!/\n<br><(ul|ol|blockquote)[\s>]/.test(html), 'blank line inserted above a list or quote')
+  need(/<ul><li>Bullet one<\/li><li>Bullet two<\/li><\/ul>/.test(html), 'bulleted list')
+  need(/<ol><li>Step one<\/li><li>Step two<\/li><\/ol>/.test(html), 'numbered list')
+  need(new RegExp(`<blockquote style="margin:0px 0px 0px 0.8ex;border-left:1px solid rgb\\(204,204,204\\);padding-left:1ex">${marker} quoted note`).test(html), 'block quote')
+  return problems
+}
+
+function assertRichHtml(html, marker, where) {
+  const problems = richHtmlProblems(String(html ?? ''), marker)
+  assert(
+    problems.length === 0,
+    `${where} carries every format (${String(html).slice(0, 120)}…)`,
+    `${where} lost ${problems.join(', ')}: ${String(html).slice(0, 600)}`
+  )
+}
+
+// The editor keeps pre-wrap text nodes with raw "\n" for typed Enters;
+// readContent serializes them to <br> for the wire. A raw newline is only
+// legitimate inside the native reply quote, the signature block and <pre>,
+// whose source html stays byte-identical.
+async function assertSerializedLines(page, html, marker, where) {
+  const parsed = await page.evaluate((raw) => {
+    const host = document.createElement('div')
+    host.innerHTML = String(raw ?? '')
+    const quote = host.querySelector('.gmail_quote_container')
+    const quoteHtml = quote ? quote.innerHTML : null
+    for (const node of host.querySelectorAll('.gmail_quote_container, .mailsy-signature, pre'))
+      node.remove()
+    return { rest: host.innerHTML, quoteHtml }
+  }, html)
+  assert(
+    parsed.rest.includes(`${marker} cleared<br>`) && !parsed.rest.includes('\n'),
+    `${where}: a typed Enter serializes as <br> with no raw newlines outside quote/signature/pre`,
+    `${where}: serialization left raw newlines or lost the break: ${parsed.rest.slice(0, 240)}`
+  )
+  return parsed.quoteHtml
+}
+
+async function waitForRichSave(page, marker, draftId) {
+  await page.waitForFunction(
+    ({ marker, draftId }) =>
+      (window.__draftSaves ?? []).some(
+        (save) =>
+          (draftId === undefined || save.draftId === draftId) &&
+          String(save.bodyHtml ?? '').includes(`${marker} quoted note`)
+      ),
+    { marker, draftId },
+    { timeout: 10000 }
+  )
+  return page.evaluate(
+    ({ marker, draftId }) =>
+      window.__draftSaves.filter(
+        (save) =>
+          (draftId === undefined || save.draftId === draftId) &&
+          String(save.bodyHtml ?? '').includes(`${marker} quoted note`)
+      ).at(-1),
+    { marker, draftId }
+  )
 }
 
 async function snapshot(page, name) {
@@ -4387,7 +4561,7 @@ try {
     )
     // Typing above the signature leaves the block alone at the end.
     await content.locator('.body-editor').click()
-    await content.locator('.body-editor').press('Control+Home')
+    await content.locator('.body-editor').press(KEYS.docStart)
     await content.locator('.body-editor').pressSequentially('Hello from Mailsy.')
     const freshBody = await bodyTextOf(content.locator('.body-editor'))
     assert(
@@ -4400,7 +4574,7 @@ try {
     assert(
       (await bodyTextOf(content.locator('.body-editor'))).includes('Hello from Mailsy.') &&
         !(await bodyTextOf(content.locator('.body-editor'))).includes('Analytical Engine Dept.'),
-      'Ctrl+Home body text survives signature removal',
+      'typed-above body text survives signature removal',
       'signature removal deleted the body text or retained the signature'
     )
     await snapshot(page, 'signature-removed')
@@ -4596,7 +4770,7 @@ try {
         editor.replaceChildren(document.createTextNode('Line start'))
         editor.dispatchEvent(new InputEvent('input', { bubbles: true }))
       })
-      await autoBody.press('Control+End')
+      await autoBody.press(KEYS.docEnd)
       for (let i = 0; i < enters; i++) await autoBody.press('Enter')
       await toggle.click()
       await autoBody.pressSequentially('Line continuation.')
@@ -4678,7 +4852,7 @@ try {
         editor.replaceChildren(document.createTextNode('Before image.'))
         editor.dispatchEvent(new InputEvent('input', { bubbles: true }))
       })
-      await autoBody.press('Control+End')
+      await autoBody.press(KEYS.docEnd)
       await pasteSignatureImage()
       await autoBody.locator(':scope > img').waitFor({ timeout: 10000 })
       assert(
@@ -5001,6 +5175,656 @@ try {
     )
     await snapshot(page, 'background-work')
     return 'background-work'
+  })
+  journeys.set('implicit-submit', async () => {
+    // Enter inside a single-line composer input must not submit the form:
+    // implicit submission fires onSubmit={handleSend} straight out of the
+    // To/Subject fields. The shared keydown guard swallows it on every
+    // surface, while clicking Send still submits.
+    const inbox = page.getByRole('complementary', { name: 'Inbox' })
+    await inbox.waitFor({ timeout: 10000 })
+    const content = page.getByRole('region', { name: 'Email content' })
+    const toField = () => content.getByLabel('To', { exact: true })
+    const subjectField = () => content.getByRole('textbox', { name: 'Subject' })
+    const sentCount = () => page.evaluate(() => (window.__sent ?? []).length)
+
+    const enterKeepsComposer = async (surface, heading, proofName) => {
+      const toValue = await toField().inputValue()
+      const subjectValue = await subjectField().inputValue()
+      const before = await sentCount()
+      await toField().press('Enter')
+      await subjectField().press('Enter')
+      assert(
+        (await sentCount()) === before &&
+          (await content.getByRole('heading', { name: heading, exact: true }).count()) === 1 &&
+          (await toField().inputValue()) === toValue &&
+          (await subjectField().inputValue()) === subjectValue,
+        `${surface}: Enter in the To/Subject inputs sends nothing and keeps the composer`,
+        `${surface}: Enter submitted the composer or lost field contents`
+      )
+      await snapshot(page, proofName)
+      await content.getByRole('button', { name: 'Send', exact: true }).click()
+      await page.getByRole('status').getByText('Message sent.').waitFor({ timeout: 10000 })
+      const sent = await page.evaluate(() => window.__sent)
+      assert(
+        sent.length === before + 1 && sent.at(-1).subject === subjectValue,
+        `${surface}: clicking Send still sends exactly once (${JSON.stringify(sent.at(-1)).slice(0, 160)})`,
+        `${surface}: Send recorded ${sent.length - before} sends or a wrong subject: ${JSON.stringify(sent.at(-1)).slice(0, 200)}`
+      )
+    }
+
+    await page.getByRole('button', { name: 'Compose', exact: true }).click()
+    await content.getByRole('heading', { name: 'New email' }).waitFor({ timeout: 10000 })
+    await toField().pressSequentially('ada@example.com')
+    await subjectField().pressSequentially('Enter-safe compose')
+    await enterKeepsComposer('new compose', 'New email', 'implicit-submit-compose')
+    await content.getByRole('button', { name: 'Close', exact: true }).click()
+
+    await page.getByRole('button', { name: 'Drafts' }).click()
+    const drafts = page.getByRole('complementary', { name: 'Drafts' })
+    await drafts.getByText('Draft: Q4 planning notes').first().click()
+    await content.getByRole('heading', { name: 'Draft', exact: true }).waitFor({ timeout: 10000 })
+    await toField().pressSequentially(' hops')
+    await subjectField().pressSequentially(' plus Enter-safe')
+    await enterKeepsComposer('draft editor', 'Draft', 'implicit-submit-draft')
+
+    await page.getByRole('button', { name: 'Inbox', exact: true }).click()
+    await inbox.waitFor({ timeout: 10000 })
+    await inbox.getByText('Launch checklist').first().click()
+    await content.getByRole('button', { name: 'reply', exact: true }).click()
+    await content.getByRole('heading', { name: 'Compose email' }).waitFor({ timeout: 10000 })
+    await toField().pressSequentially(' hops')
+    await subjectField().pressSequentially(' plus Enter-safe')
+    await enterKeepsComposer('reply', 'Compose email', 'implicit-submit-reply')
+
+    await content.getByRole('button', { name: 'forward', exact: true }).click()
+    await content.getByRole('heading', { name: 'Compose email' }).waitFor({ timeout: 10000 })
+    await toField().pressSequentially('ada@example.com')
+    await subjectField().pressSequentially(' plus Enter-safe')
+    await enterKeepsComposer('forward', 'Compose email', 'implicit-submit-forward')
+
+    assert((await sentCount()) === 4, 'one send per surface, four total', 'unexpected outbox size')
+    return 'implicit-submit'
+  })
+  journeys.set('rich-text', async () => {
+    // Gmail-style formatting on all three composer surfaces: the shared
+    // toolbar's commands land as html in the body, the toolbar mirrors the
+    // caret, and the html rides draft autosave and the send on each one.
+    const inbox = page.getByRole('complementary', { name: 'Inbox' })
+    await inbox.waitFor({ timeout: 10000 })
+    const content = page.getByRole('region', { name: 'Email content' })
+    const toolbar = content.getByRole('toolbar', { name: 'Formatting options' })
+    const button = (name) => toolbar.getByRole('button', { name, exact: true })
+    const editMenu = (label) => browser.evaluate(({ Menu }, label) => {
+      const edit = Menu.getApplicationMenu().items.find((item) => item.label === 'Edit')
+      const item = edit.submenu.items.find((entry) => entry.label === label)
+      if (!item.enabled || !item.visible) throw new Error(`Edit > ${label} is disabled or hidden`)
+      item.click()
+    }, label)
+    const settleTo = async (read, done, ok, fail) => {
+      let value = await read()
+      for (let i = 0; i < 30 && !done(value); i++) {
+        await page.waitForTimeout(100)
+        value = await read()
+      }
+      assert(done(value), ok, `${fail}: ${JSON.stringify(value)}`)
+    }
+
+    await page.getByRole('button', { name: 'Compose', exact: true }).click()
+    await content.getByRole('heading', { name: 'New email' }).waitFor({ timeout: 10000 })
+    if (EXECUTABLE) {
+      for (const name of ['To', 'Subject']) {
+        const field = content.getByLabel(name, { exact: true })
+        await field.click()
+        await page.keyboard.type('menu')
+        await editMenu('Undo')
+        await settleTo(() => field.inputValue(), (value) => value === '',
+          `Edit > Undo falls back to native undo in ${name}`, `Edit > Undo did nothing in ${name}`)
+        await editMenu('Redo')
+        await settleTo(() => field.inputValue(), (value) => value === 'menu',
+          `Edit > Redo falls back to native redo in ${name}`, `Edit > Redo did nothing in ${name}`)
+      }
+    }
+    await content.locator('.composerField input').first().fill('ada@example.com')
+    await content.locator('.composerField input').nth(1).fill('Formatted compose')
+    const composeHtml = await formatRichBody(page, content, 'Compose')
+    assertRichHtml(composeHtml, 'Compose', 'new compose body')
+    const composeSave = await waitForRichSave(page, 'Compose')
+    assertRichHtml(composeSave.bodyHtml, 'Compose', 'new compose autosave')
+    await snapshot(page, 'rich-text-compose')
+    await content.getByRole('button', { name: 'Send', exact: true }).click()
+    await content.getByText('Message sent.').waitFor({ timeout: 10000 })
+    const composeSent = (await page.evaluate(() => window.__sent)).at(-1)
+    assert(composeSent.subject === 'Formatted compose' && composeSent.body.includes('Bullet two'),
+      'the formatted compose sent with its text fallback', `compose send misshapen ${JSON.stringify(composeSent).slice(0, 200)}`)
+    assertRichHtml(composeSent.bodyHtml, 'Compose', 'new compose send')
+    await assertSerializedLines(page, composeSent.bodyHtml, 'Compose', 'new compose send')
+    log(`outbox html: ${JSON.stringify(composeSent.bodyHtml)}`)
+    await content.getByRole('button', { name: 'Close', exact: true }).click()
+
+    await page.getByRole('button', { name: 'Drafts' }).click()
+    const drafts = page.getByRole('complementary', { name: 'Drafts' })
+    await drafts.waitFor({ timeout: 10000 })
+    await drafts.getByText('Draft: formatted launch notes', { exact: true }).first().click()
+    await content.getByRole('heading', { name: 'Draft', exact: true }).waitFor({ timeout: 10000 })
+    const editor = content.locator('.body-editor')
+    await editor.locator('ul li', { hasText: 'Frontend' }).click()
+    await waitForPressed(button('Bulleted list'), 'true', 'a stored bulleted list reads back pressed', 'stored list lost')
+    await editor.locator('ol li', { hasText: 'Ship' }).click()
+    await waitForPressed(button('Numbered list'), 'true', 'a stored numbered list reads back pressed', 'stored numbered list lost')
+    await editor.locator('b', { hasText: 'Launch is go.' }).click()
+    await waitForPressed(button('Bold'), 'true', 'stored bold reads back pressed', 'stored bold lost')
+    await editor.locator('blockquote', { hasText: 'No late merges.' }).click()
+    await waitForPressed(button('Quote'), 'true', 'a stored block quote reads back pressed', 'stored quote lost')
+    await editor.locator('a', { hasText: 'Runbook' }).click()
+    await waitForPressed(button('Link'), 'true', 'a stored link reads back pressed', 'stored link lost')
+    await waitForPressed(button('Underline'), 'false', 'a stored link does not press Underline', 'Underline pressed inside a stored link')
+    await editor.locator('ul li', { hasText: 'Frontend' }).click()
+    await page.keyboard.press(KEYS.lineStart)
+    await page.keyboard.press('Shift+ArrowDown')
+    await page.keyboard.press(KEYS.selectLineEnd)
+    await button('Numbered list').click()
+    await button('Bulleted list').click()
+    const roundTrip = await editor.evaluate((el) => ({
+      items: [...el.querySelectorAll('ul li')].map((li) => li.textContent),
+      lines: el.innerText.split('\n').map((line) => line.trim()).filter(Boolean)
+    }))
+    assert(
+      JSON.stringify(roundTrip.items) === JSON.stringify(['Frontend', 'Backend']) &&
+        roundTrip.lines.includes('Owners below.') &&
+        roundTrip.lines.indexOf('Owners below.') < roundTrip.lines.indexOf('Frontend'),
+      'a numbered/bulleted round trip leaves the neighbouring line alone',
+      `the list round trip rewrote its neighbours: ${JSON.stringify(roundTrip)}`
+    )
+    await editor.locator('a', { hasText: 'Runbook' }).click()
+    await editor.press('Control+k')
+    const linkEditor = content.getByRole('group', { name: 'Edit link' })
+    await linkEditor.waitFor({ timeout: 5000 })
+    assert(
+      (await linkEditor.getByLabel('Web address').inputValue()) === 'https://example.com/runbook' &&
+        (await linkEditor.getByLabel('Text to display').inputValue()) === 'Runbook',
+      'Ctrl+K on a link opens it for editing', 'the link editor did not read the existing link'
+    )
+    await linkEditor.getByRole('button', { name: 'Remove link' }).click()
+    await linkEditor.waitFor({ state: 'detached', timeout: 5000 })
+    assert(
+      (await editor.locator('a').count()) === 0 && (await bodyTextOf(editor)).includes('Runbook'),
+      'Remove link unlinks and keeps the words', 'Remove link lost the text or kept the link'
+    )
+    const draftHtml = await formatRichBody(page, content, 'Draft')
+    assertRichHtml(draftHtml, 'Draft', 'draft editor body')
+    const draftSave = await waitForRichSave(page, 'Draft', 'draft-rich')
+    assertRichHtml(draftSave.bodyHtml, 'Draft', 'draft autosave')
+    await assertSerializedLines(page, draftSave.bodyHtml, 'Draft', 'draft autosave')
+    assert(
+      draftSave.bodyHtml.includes('<b>Launch is go.</b>') && draftSave.bodyHtml.includes('<li>Frontend</li>') &&
+        !draftSave.bodyHtml.includes('example.com/runbook'),
+      'the autosave keeps the stored formats and drops the removed link', 'the draft autosave flattened stored html'
+    )
+    assert(
+      draftSave.bodyHtml.includes('<ol><li>Freeze</li><li>Ship</li></ol>'),
+      'newlines between stored list items do not turn into blank lines',
+      `the stored list gained breaks: ${draftSave.bodyHtml.match(/<ol>[\s\S]*?<\/ol>/)?.[0]}`
+    )
+    await snapshot(page, 'rich-text-draft')
+    await page.getByRole('button', { name: 'Inbox', exact: true }).click()
+    await inbox.waitFor({ timeout: 10000 })
+    await page.getByRole('button', { name: 'Drafts' }).click()
+    await drafts.getByText('Draft: formatted launch notes', { exact: true }).first().click()
+    await content.getByRole('heading', { name: 'Draft', exact: true }).waitFor({ timeout: 10000 })
+    assertRichHtml(await editor.evaluate((el) => el.innerHTML), 'Draft', 'the reopened draft')
+    await content.getByRole('button', { name: 'Send', exact: true }).click()
+    await content.getByText('Message sent.').waitFor({ timeout: 10000 })
+    const draftSent = (await page.evaluate(() => window.__sent)).at(-1)
+    assert(draftSent.draftId === 'draft-rich', 'the draft sent as itself', `draft send misrouted ${JSON.stringify(draftSent).slice(0, 200)}`)
+    assertRichHtml(draftSent.bodyHtml, 'Draft', 'draft send')
+    await assertSerializedLines(page, draftSent.bodyHtml, 'Draft', 'draft send')
+    await content.getByRole('button', { name: 'Close', exact: true }).click().catch(() => {})
+
+    await page.getByRole('button', { name: 'Inbox', exact: true }).click()
+    await inbox.waitFor({ timeout: 10000 })
+    await inbox.getByText('Launch checklist').first().click()
+    await content.getByRole('button', { name: 'reply', exact: true }).click()
+    await content.getByRole('heading', { name: 'Compose email' }).waitFor({ timeout: 10000 })
+    const replyQuotePrefill = await content.locator('.body-editor .gmail_quote_container').innerHTML()
+    const replyHtml = await formatRichBody(page, content, 'Reply')
+    assertRichHtml(replyHtml, 'Reply', 'reply body')
+    await editor.locator('blockquote.gmail_quote', { hasText: 'Final review of the launch checklist' }).click()
+    await waitForPressed(button('Quote'), 'false', 'the reply quote is not a user block quote', 'the reply quote read as a user quote')
+    const nativeQuote = editor.locator('.gmail_quote_container')
+    const nativeBefore = await nativeQuote.innerHTML()
+    await button('Quote').click()
+    await editor.press('Control+Shift+9')
+    await waitForPressed(button('Quote'), 'false', 'Quote is a no-op inside the reply quote', 'Quote toggled on inside the reply quote')
+    await button('Bulleted list').click()
+    await page.keyboard.press('Control+Shift+7')
+    await waitForPressed(button('Bulleted list'), 'false', 'lists are no-ops inside the reply quote', 'a list started inside the reply quote')
+    assert(
+      (await nativeQuote.innerHTML()) === nativeBefore,
+      'Quote and list commands leave the native reply quote markup untouched',
+      'a block command rewrote the native reply quote'
+    )
+    await page.evaluate(() => localStorage.setItem('mailsy.signature', 'Reply Signer'))
+    const replySignature = content.getByRole('button', { name: 'Signature', exact: true })
+    await replySignature.click()
+    await waitForPressed(replySignature, 'true', 'the signature joins the reply', 'the reply signature did not insert')
+    await editor.locator('blockquote.gmail_quote').click()
+    await page.keyboard.press(KEYS.selectAll)
+    await button('Bulleted list').click()
+    await button('Quote').click()
+    assert(
+      (await nativeQuote.innerHTML()) === nativeBefore &&
+        (await editor.locator('li .gmail_quote_container, li blockquote.gmail_quote').count()) === 0,
+      'Select All plus list or Quote in a signed reply leaves the native quote alone',
+      `a whole-message block command rewrote the signed reply quote: ${(await editor.innerHTML()).slice(-400)}`
+    )
+    await replySignature.click()
+    await waitForPressed(replySignature, 'false', 'the reply signature toggles off', 'the reply signature stuck')
+    await page.evaluate(() => localStorage.removeItem('mailsy.signature'))
+    await snapshot(page, 'rich-text-reply')
+    await content.getByRole('button', { name: 'Send', exact: true }).click()
+    await content.getByRole('status').getByText('Message sent.').waitFor({ timeout: 10000 })
+    const replySent = (await page.evaluate(() => window.__sent)).at(-1)
+    assertRichHtml(replySent.bodyHtml, 'Reply', 'reply send')
+    const replyQuoteSent = await assertSerializedLines(page, replySent.bodyHtml, 'Reply', 'reply send')
+    assert(
+      replyQuoteSent === replyQuotePrefill,
+      'the serialized send keeps the prefilled quote html byte-identical',
+      `serialization rewrote the native quote: ${String(replyQuoteSent).slice(0, 200)}`
+    )
+    assert(
+      replySent.inReplyTo && replySent.bodyHtml.includes('gmail_quote_container') &&
+        replySent.bodyHtml.includes('<blockquote class="gmail_quote"') &&
+        replySent.bodyHtml.includes('Final review of the launch checklist before Friday.'),
+      'the reply keeps its threading and the native quote below the formats', 'the reply lost its quote or threading'
+    )
+    await content.getByRole('button', { name: 'forward', exact: true }).click()
+    await content.getByRole('heading', { name: 'Compose email' }).waitFor({ timeout: 10000 })
+    const forwardQuotePrefill = await content.locator('.body-editor .gmail_quote_container').innerHTML()
+    await content.locator('.composerField input').first().fill('brook@example.com')
+    const forwardHtml = await formatRichBody(page, content, 'Forward')
+    assertRichHtml(forwardHtml, 'Forward', 'forward body')
+    await content.getByRole('button', { name: 'Send', exact: true }).click()
+    await content.getByRole('status').getByText('Message sent.').waitFor({ timeout: 10000 })
+    const forwardSent = (await page.evaluate(() => window.__sent)).at(-1)
+    assertRichHtml(forwardSent.bodyHtml, 'Forward', 'forward send')
+    const forwardQuoteSent = await assertSerializedLines(page, forwardSent.bodyHtml, 'Forward', 'forward send')
+    assert(
+      forwardQuoteSent === forwardQuotePrefill,
+      'the serialized forward keeps the prefilled quote html byte-identical',
+      `serialization rewrote the forward quote: ${String(forwardQuoteSent).slice(0, 200)}`
+    )
+    assert(
+      forwardSent.subject === 'Fwd: Launch checklist' && forwardSent.bodyHtml.includes('Forwarded message'),
+      'the forward keeps its forwarded block below the formats', 'the forward lost its forwarded content'
+    )
+    assert((await page.evaluate(() => window.__sent.length)) === 4, 'four formatted sends, one per surface path', 'unexpected outbox size')
+    await snapshot(page, 'rich-text')
+
+    await page.getByRole('button', { name: 'Compose', exact: true }).click()
+    await content.getByRole('heading', { name: 'New email' }).waitFor({ timeout: 10000 })
+    await editor.click()
+    await editor.pressSequentially('line one')
+    await editor.press('Enter')
+    await editor.pressSequentially('quoted line')
+    await editor.press('Enter')
+    await editor.pressSequentially('line three')
+    await editor.press('ArrowUp')
+    await button('Quote').click()
+    await waitForPressed(button('Quote'), 'true', 'Quote wraps the middle line', 'Quote did not wrap the middle line')
+    await button('Quote').click()
+    await waitForPressed(button('Quote'), 'false', 'Quote toggles off on the middle line', 'Quote stayed on')
+    const unquotedLines = (await editor.innerText()).split('\n').filter((line) => line.trim() !== '')
+    assert(
+      JSON.stringify(unquotedLines) === JSON.stringify(['line one', 'quoted line', 'line three']),
+      'removing a quote keeps the line breaks around it',
+      `removing a quote joined lines: ${JSON.stringify(unquotedLines)}`
+    )
+    await editor.press(KEYS.docEnd)
+    await editor.press(KEYS.selectLineStart)
+    await editor.press('Control+k')
+    const linkForm = content.getByRole('group', { name: 'Edit link' })
+    await linkForm.getByLabel('Web address').fill('example.com')
+    await linkForm.getByRole('button', { name: 'Cancel link', exact: true }).press('Enter')
+    await linkForm.waitFor({ state: 'hidden', timeout: 5000 })
+    assert((await editor.locator('a').count()) === 0, 'Enter on Cancel link cancels instead of applying', 'Enter on Cancel link applied the link')
+    await page.keyboard.press(KEYS.lineEnd)
+    await page.keyboard.type('!')
+    await page.keyboard.press('Control+k')
+    await linkForm.waitFor({ timeout: 5000 })
+    await page.keyboard.press('Escape')
+    await linkForm.waitFor({ state: 'hidden', timeout: 5000 })
+    await page.keyboard.type('?')
+    assert(
+      (await editor.innerText()).includes('line three!?'),
+      'Cancel and Escape hand the caret back to the body',
+      `typing after closing the link form went nowhere: ${JSON.stringify(await editor.innerText())}`
+    )
+    await page.keyboard.press(KEYS.lineStart)
+    await page.keyboard.type('P')
+    await page.keyboard.press(KEYS.lineEnd)
+    await page.keyboard.type('Q')
+    await page.keyboard.press('Control+z')
+    const caretUndo = await editor.innerText()
+    assert(
+      caretUndo.includes('Pline three!?') && !caretUndo.includes('!?Q'),
+      'moving the caret starts a new undo step',
+      `undo after moving the caret took too much: ${JSON.stringify(caretUndo)}`
+    )
+    await page.keyboard.press('Control+z')
+    await page.keyboard.press('Control+Shift+z')
+    await page.keyboard.press('Control+Shift+z')
+    assert(
+      (await editor.innerText()).includes('Pline three!?Q'),
+      'redo replays both caret-separated edits',
+      `redo after caret moves diverged: ${JSON.stringify(await editor.innerText())}`
+    )
+    await page.keyboard.press(KEYS.lineStart)
+    await page.keyboard.press('Delete')
+    await page.keyboard.press(KEYS.lineEnd)
+    await page.keyboard.press('Backspace')
+    await editor.press(KEYS.docEnd)
+    await editor.press('Enter')
+    await editor.press('Control+Shift+9')
+    await editor.press('Control+Shift+8')
+    await editor.pressSequentially('quoted item')
+    for (let i = 0; i < 'item'.length; i++) await editor.press('ArrowLeft')
+    await waitForPressed(button('Bulleted list'), 'true', 'a list starts inside the quote', 'no list inside the quote')
+    await waitForPressed(button('Quote'), 'true', 'the quoted list reads as quoted', 'the quoted list lost its quote')
+    await button('Quote').click()
+    await waitForPressed(button('Quote'), 'false', 'Quote toggles off inside a quoted list', 'Quote stayed on in the quoted list ' + (await editor.innerHTML()).slice(-600))
+    assert(
+      (await editor.locator('li', { hasText: 'quoted item' }).count()) === 1 &&
+        (await editor.locator('blockquote').count()) === 0,
+      'unquoting a quoted list keeps the list',
+      `unquoting a quoted list broke it: ${(await editor.innerHTML()).slice(-200)}`
+    )
+    await editor.pressSequentially('kept ')
+    assert(
+      (await editor.locator('li', { hasText: 'quoted kept item' }).count()) === 1,
+      'typing after unquoting continues the list item at the caret',
+      `typing after unquoting went elsewhere: ${(await editor.innerHTML()).slice(-200)}`
+    )
+    const afterTyping = await editor.innerHTML()
+    for (let i = 0; i < 4 && (await editor.locator('blockquote').count()) === 0; i++)
+      await page.keyboard.press('Control+z')
+    const undone = await editor.evaluate((el) => ({
+      quotedItem: el.querySelector('blockquote li')?.textContent ?? null,
+      lines: el.innerText.split('\n').map((line) => line.trim()).filter(Boolean)
+    }))
+    assert(
+      undone.quotedItem === 'quoted item' &&
+        ['line one', 'quoted line', 'line three!?'].every((line) => undone.lines.includes(line)),
+      'undo brings the quoted list back without touching the lines around it',
+      `undo after unquoting a list misbehaved: ${JSON.stringify(undone)}`
+    )
+    for (let i = 0; i < 4 && (await editor.innerHTML()) !== afterTyping; i++)
+      await page.keyboard.press('Control+Shift+z')
+    assert(
+      (await editor.innerHTML()) === afterTyping,
+      'redo replays the unquote and the typing exactly',
+      `redo diverged: ${(await editor.innerHTML()).slice(-300)}`
+    )
+    const unquoteErrors = []
+    page.on('pageerror', (error) => unquoteErrors.push(error.message))
+    await editor.evaluate((el, style) => {
+      const list = [...el.querySelectorAll('ul')].find((ul) => ul.textContent.includes('quoted kept item'))
+      const quote = document.createElement('blockquote')
+      quote.setAttribute('style', style)
+      list.replaceWith(quote)
+      quote.append(list, document.createElement('br'))
+      const range = document.createRange()
+      range.setStart(list.querySelector('li').firstChild, 0)
+      range.setEnd(quote, quote.childNodes.length)
+      getSelection().removeAllRanges()
+      getSelection().addRange(range)
+    }, 'margin:0px 0px 0px 0.8ex;border-left:1px solid rgb(204,204,204);padding-left:1ex')
+    await button('Quote').click()
+    await waitForPressed(button('Quote'), 'false', 'a selection ending on the quote itself unquotes', 'Quote stayed on for a selection ending on the quote')
+    assert(
+      unquoteErrors.length === 0 &&
+        (await editor.locator('blockquote').count()) === 0 &&
+        (await editor.locator('li', { hasText: 'quoted kept item' }).count()) === 1,
+      'unquoting a selection that ends on the quote element keeps the list without errors',
+      `unquoting ended badly: errors=${JSON.stringify(unquoteErrors)} html=${(await editor.innerHTML()).slice(-200)}`
+    )
+    if (!EXECUTABLE) await page.setViewportSize({ width: 1066, height: 748 })
+    await editor.locator('li', { hasText: 'quoted kept item' }).click()
+    await page.keyboard.press('Control+k')
+    await linkForm.waitFor({ timeout: 5000 })
+    const editorBox = await editor.boundingBox()
+    const signatureBox = await content.locator('.signatureBar').boundingBox()
+    assert(
+      editorBox && signatureBox && editorBox.y + editorBox.height <= signatureBox.y + 1,
+      'the open link form never pushes the body under the signature row',
+      `body ${JSON.stringify(editorBox)} overlaps signature row ${JSON.stringify(signatureBox)}`
+    )
+    await page.keyboard.press('Escape')
+    await linkForm.waitFor({ state: 'hidden', timeout: 5000 })
+    await page.evaluate(() => localStorage.setItem('mailsy.signature', 'Rich Signer'))
+    const signatureToggle = content.getByRole('button', { name: 'Signature', exact: true })
+    await signatureToggle.click()
+    await waitForPressed(signatureToggle, 'true', 'the signature joins the formatted body', 'the signature did not insert')
+    await editor.locator('li', { hasText: 'quoted kept item' }).click()
+    await page.keyboard.press(KEYS.selectAll)
+    await button('Quote').click()
+    assert(
+      (await editor.locator(':scope > .mailsy-signature').count()) === 1 &&
+        (await editor.locator('blockquote .mailsy-signature').count()) === 0,
+      'quoting the whole message leaves the signature block outside the quote',
+      `whole-message quote swallowed the signature: ${(await editor.innerHTML()).slice(-300)}`
+    )
+    await signatureToggle.click()
+    await waitForPressed(signatureToggle, 'false', 'the signature still toggles off after a whole-message quote', 'the signature stuck after quoting')
+    assert(
+      !(await editor.innerText()).includes('Rich Signer'),
+      'toggling the signature off removes it instead of duplicating it',
+      'the signature text stayed behind after toggling off'
+    )
+    await signatureToggle.click()
+    await waitForPressed(signatureToggle, 'true', 'the signature returns', 'the signature did not reinsert')
+    await editor.click({ position: { x: 5, y: 5 } })
+    await page.keyboard.type('zz')
+    await page.keyboard.press('Control+z')
+    assert(!(await editor.innerText()).includes('zz'), 'Undo removes the typed text', 'Undo left the typed text')
+    await editor.locator(':scope > .mailsy-signature').getByText('Rich Signer').click()
+    await button('Quote').click()
+    await page.keyboard.press('Control+Shift+z')
+    assert(
+      (await editor.innerText()).includes('zz'),
+      'a Quote that changes nothing keeps the Redo step',
+      'Quote inside the signature cleared Redo'
+    )
+    assert(
+      (await editor.locator(':scope > .mailsy-signature').count()) === 1 &&
+        (await editor.locator('blockquote', { hasText: 'Rich Signer' }).count()) === 0,
+      'Quote with the caret in the signature leaves the signature block alone',
+      `quoting inside the signature rewrote it: ${(await editor.innerHTML()).slice(-300)}`
+    )
+    await signatureToggle.click()
+    await waitForPressed(signatureToggle, 'false', 'the signature toggles off after Quote inside it', 'the signature stuck after Quote inside it')
+    assert(
+      !(await editor.innerText()).includes('Rich Signer'),
+      'the signature toggle still removes the only copy',
+      'the signature text stayed behind after Quote inside it'
+    )
+    await page.evaluate(() => localStorage.removeItem('mailsy.signature'))
+    await content.getByRole('button', { name: 'Close', exact: true }).click().catch(() => {})
+
+    await page.getByRole('button', { name: 'Compose', exact: true }).click()
+    await content.getByRole('heading', { name: 'New email' }).waitFor({ timeout: 10000 })
+    await editor.click()
+    await page.keyboard.press(KEYS.selectAll)
+    await page.keyboard.press('Delete')
+    await editor.pressSequentially('abc')
+    await page.keyboard.press(KEYS.selectAll)
+    await page.keyboard.type('x')
+    const replaceSteps = []
+    for (const key of ['Control+z', 'Control+z', 'Control+Shift+z', 'Control+Shift+z']) {
+      await page.keyboard.press(key)
+      replaceSteps.push((await editor.innerText()).trim())
+    }
+    assert(
+      JSON.stringify(replaceSteps) === JSON.stringify(['abc', '', 'abc', 'x']),
+      'typing over a selection is its own undo step',
+      `undo/redo around a replacement: ${JSON.stringify(replaceSteps)}`
+    )
+    const selectFromLineStart = async (skip, count) => {
+      await page.keyboard.press(KEYS.lineStart)
+      for (let i = 0; i < skip; i++) await page.keyboard.press('ArrowRight')
+      for (let i = 0; i < count; i++) await page.keyboard.press('Shift+ArrowRight')
+    }
+    const addLink = async (href) => {
+      await page.keyboard.press('Control+k')
+      await linkForm.waitFor({ timeout: 5000 })
+      await linkForm.getByLabel('Web address').fill(href)
+      await linkForm.getByRole('button', { name: 'Apply link', exact: true }).click()
+      await linkForm.waitFor({ state: 'hidden', timeout: 5000 })
+    }
+    const links = () =>
+      editor.evaluate((el) => [...el.querySelectorAll('a')].map((a) => [a.getAttribute('href'), a.textContent]))
+    await page.keyboard.press(KEYS.selectAll)
+    await page.keyboard.type('hello world')
+    await selectFromLineStart(6, 5)
+    await addLink('https://a.example')
+    await selectFromLineStart(0, 9)
+    await addLink('https://b.example')
+    assert(
+      JSON.stringify(await links()) ===
+        JSON.stringify([['https://b.example', 'hello wor'], ['https://a.example', 'ld']]),
+      'linking text that overlaps a link links the selection and leaves the old link alone',
+      `a mixed selection retargeted the link: ${JSON.stringify(await links())}`
+    )
+    await page.keyboard.press(KEYS.lineEnd)
+    await page.keyboard.type(' bb')
+    await page.keyboard.press('Shift+ArrowLeft')
+    await page.keyboard.press('Shift+ArrowLeft')
+    await addLink('https://c.example')
+    await editor.locator('a', { hasText: 'hello wor' }).click()
+    await page.keyboard.press('Control+k')
+    await linkForm.waitFor({ timeout: 5000 })
+    await editor.locator('a', { hasText: 'bb' }).click()
+    await page.keyboard.press('Control+k')
+    assert(
+      (await linkForm.getByLabel('Text to display').inputValue()) === 'bb' &&
+        (await linkForm.getByLabel('Web address').inputValue()) === 'https://c.example',
+      'reopening the link form on another link shows that link',
+      'the reopened link form kept the previous link'
+    )
+    await linkForm.getByRole('button', { name: 'Apply link', exact: true }).click()
+    assert(
+      JSON.stringify(await links()) ===
+        JSON.stringify([['https://b.example', 'hello wor'], ['https://a.example', 'ld'], ['https://c.example', 'bb']]),
+      'applying the reopened form leaves every link as it was',
+      `the reopened form rewrote a link: ${JSON.stringify(await links())}`
+    )
+    await page.keyboard.press(KEYS.selectAll)
+    await page.keyboard.press('Delete')
+    await page.keyboard.type('a')
+    const boldStart = Date.now()
+    await page.keyboard.type('b')
+    await button('Bold').click()
+    await page.keyboard.type('c')
+    const boldGap = Date.now() - boldStart
+    await page.keyboard.type('d')
+    assert(
+      boldGap < 1000,
+      'the Bold toggle lands inside the 1s typing window',
+      `the Bold toggle took ${boldGap}ms, so the undo check below would pass on timing alone`
+    )
+    await page.keyboard.press('Control+z')
+    assert(
+      (await editor.innerText()).trim() === 'ab',
+      'a Bold toggle at the caret starts a new undo step',
+      `Undo crossed the Bold toggle: ${JSON.stringify(await editor.innerText())}`
+    )
+    await page.keyboard.press(KEYS.selectAll)
+    await page.keyboard.press('Delete')
+    await editor.evaluate((el) => {
+      el.innerHTML = '<ul><li style="display:inline">Alpha</li>&nbsp;<li style="display:inline">Beta</li></ul>'
+    })
+    await editor.locator('li', { hasText: 'Beta' }).click()
+    await page.keyboard.press(KEYS.lineEnd)
+    await page.keyboard.type('!')
+    await page.waitForFunction(() => window.__draftSaves.at(-1)?.bodyHtml.includes('Beta!'), null, { timeout: 10000 })
+    const inlineListSave = await page.evaluate(() => window.__draftSaves.at(-1).bodyHtml)
+    assert(
+      inlineListSave.includes('Alpha</li>&nbsp;<li'),
+      'a nonbreaking space between list items survives the autosave',
+      `the autosave dropped a visible list separator: ${inlineListSave.slice(0, 200)}`
+    )
+
+    await page.keyboard.press(KEYS.selectAll)
+    await page.keyboard.press('Delete')
+    await editor.evaluate((el) => {
+      const bytes = new Uint8Array(4 * 1024 * 1024)
+      for (let i = 0; i < bytes.length; i++) bytes[i] = (i * 2654435761) >>> 24
+      const data = new DataTransfer()
+      data.items.add(new File([bytes], 'large.png', { type: 'image/png' }))
+      el.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }))
+    })
+    await editor.locator('img').waitFor({ timeout: 10000 })
+    const largeSteps = 16
+    for (let i = 0; i < largeSteps; i++) {
+      await editor.press('a')
+      await editor.press('ArrowLeft')
+      await editor.press('ArrowRight')
+    }
+    const largeText = await editor.evaluate((el) => el.textContent)
+    let largeUndos = 0
+    for (let i = 0; i < largeSteps + 5; i++) {
+      const before = await editor.evaluate((el) => el.textContent)
+      await page.keyboard.press('Control+z')
+      if ((await editor.evaluate((el) => el.textContent)) === before) break
+      largeUndos++
+    }
+    assert(
+      largeUndos > 0 && largeUndos < largeSteps && (await editor.locator('img').count()) === 1,
+      'undo history with a large inline image is capped by size, not only by step count',
+      `undo history kept ${largeUndos} snapshots of a 4 MB image`
+    )
+    let largeRedos = 0
+    for (let i = 0; i < largeSteps + 5; i++) {
+      const before = await editor.evaluate((el) => el.textContent)
+      await page.keyboard.press('Control+Shift+z')
+      if ((await editor.evaluate((el) => el.textContent)) === before) break
+      largeRedos++
+    }
+    assert(
+      largeRedos === largeUndos &&
+        (await editor.evaluate((el) => el.textContent)) === largeText &&
+        (await editor.locator('img').count()) === 1,
+      'Redo after undoing a large inline image holds no more steps than Undo did',
+      `Redo replayed ${largeRedos} steps after ${largeUndos} undos`
+    )
+
+    if (EXECUTABLE) {
+      const before = await editor.evaluate((el) => el.textContent)
+      await editor.press(KEYS.docEnd)
+      await page.keyboard.type('menu')
+      await editMenu('Undo')
+      await settleTo(() => editor.evaluate((el) => el.textContent), (text) => text === before,
+        'Edit > Undo undoes typing in the body', 'Edit > Undo left the body typing in place')
+      await editMenu('Redo')
+      await settleTo(() => editor.evaluate((el) => el.textContent), (text) => text === `${before}menu`,
+        'Edit > Redo redoes typing in the body', 'Edit > Redo did not bring the body typing back')
+    }
+    await content.getByRole('button', { name: 'Close', exact: true }).click().catch(() => {})
+    if (EXECUTABLE) {
+      const search = page.getByRole('searchbox', { name: 'Search emails' })
+      await search.click()
+      await page.keyboard.type('alpha')
+      await editMenu('Undo')
+      await settleTo(() => search.inputValue(), (value) => value !== 'alpha',
+        'Edit > Undo falls back to native undo in the search field', 'Edit > Undo did nothing in the search field')
+      await editMenu('Redo')
+      await settleTo(() => search.inputValue(), (value) => value === 'alpha',
+        'Edit > Redo falls back to native redo in the search field', 'Edit > Redo did nothing in the search field')
+      await search.fill('')
+    } else {
+      log('skip: the Edit menu only exists in the packaged app')
+    }
+    return 'rich-text'
   })
   const journey = journeys.get(FEATURE)
   if (!journey) throw new Error(`unknown feature: ${FEATURE}`)
