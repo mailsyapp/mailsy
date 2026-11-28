@@ -50,31 +50,11 @@ export interface MessageBodies {
 }
 
 export const INLINE_ATTACHMENT_PREFIX = 'mailsy-part:'
-export const CID_REFERENCE = /cid:([^"'\s<>()]+)/gi
 
-export function getReferencedContentIds(html: string): Set<string> {
-  return new Set(
-    Array.from(html.matchAll(CID_REFERENCE), ([, contentId]) => normalizeContentId(contentId))
-  )
-}
-
-export function collectBodies(part: gmail_v1.Schema$MessagePart, out: MessageBodies): void {
-  const cidAttachments = new Map<MessageAttachmentRef, string>()
-  collectParts(part, out, cidAttachments, '0')
-  if (!out.html || cidAttachments.size === 0) return
-
-  const referencedIds = getReferencedContentIds(out.html)
-  out.attachments = out.attachments.filter((attachment) => {
-    const cid = cidAttachments.get(attachment)
-    return !cid || !referencedIds.has(normalizeContentId(cid))
-  })
-}
-
-function collectParts(
+export function collectBodies(
   part: gmail_v1.Schema$MessagePart,
   out: MessageBodies,
-  cidAttachments: Map<MessageAttachmentRef, string>,
-  path: string
+  path = '0'
 ): void {
   const mime = part.mimeType ?? ''
   if (mime === 'text/plain' && !out.text) out.text = decodeBody(part.body?.data)
@@ -95,17 +75,13 @@ function collectParts(
     (part.body?.attachmentId || typeof part.body?.data === 'string') &&
     (!inlineCid || hasAttachmentDisposition(part))
   ) {
-    const attachment = {
+    out.attachments.push({
       filename: part.filename,
       size: part.body?.size ?? 0,
       attachmentId: part.body?.attachmentId || `${INLINE_ATTACHMENT_PREFIX}${path}`
-    }
-    out.attachments.push(attachment)
-    if (inlineCid) cidAttachments.set(attachment, inlineCid)
+    })
   }
-  for (const [index, child] of (part.parts ?? []).entries()) {
-    collectParts(child, out, cidAttachments, `${path}.${index}`)
-  }
+  for (const [index, p] of (part.parts ?? []).entries()) collectBodies(p, out, `${path}.${index}`)
 }
 
 function hasAttachmentDisposition(part: gmail_v1.Schema$MessagePart): boolean {

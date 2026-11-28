@@ -78,7 +78,26 @@ test('an explicit image attachment with an unused Content-ID is listed without f
   assert.equal(detail.bodyText, 'See attached.')
 })
 
-test('referenced CIDs render inline without duplicating the image as an attachment', async () => {
+test('a CID mentioned only in an HTML comment still belongs to a downloadable file', async () => {
+  const { gmail, fetched } = gmailFixture()
+  const html = '<p>See attached.</p><!-- cid:photo@example.com -->'
+  const detail = await toEmailDetail(gmail, {
+    id: 'message',
+    payload: {
+      mimeType: 'multipart/mixed',
+      parts: [
+        { mimeType: 'text/html', body: { data: Buffer.from(html).toString('base64url') } },
+        attachment
+      ]
+    }
+  })
+
+  assert.deepEqual(detail.attachments, [{ filename: 'photo.png', size: 8, attachmentId: 'photo' }])
+  assert.deepEqual(fetched, [])
+  assert.equal(detail.bodyHtml, html)
+})
+
+test('referenced CIDs render inline and explicitly attached files stay downloadable', async () => {
   const { gmail, fetched } = gmailFixture()
   const html = '<img src="CID:PHOTO%40example.com"><img src="cid:logo@example.com">'
   const detail = await toEmailDetail(gmail, {
@@ -103,6 +122,8 @@ test('referenced CIDs render inline without duplicating the image as an attachme
 
   const inlineImage = `<img src="data:image/png;base64,${imageData}">`
   assert.equal(detail.bodyHtml, inlineImage.repeat(2))
-  assert.deepEqual(detail.attachments, [])
+  assert.deepEqual(detail.attachments, [
+    { filename: 'photo.png', size: 8, attachmentId: 'mailsy-part:0.0' }
+  ])
   assert.deepEqual(fetched, ['logo'])
 })
