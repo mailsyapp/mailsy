@@ -4,10 +4,12 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 function isQuotaError(e: unknown): boolean {
-  const error = e as { code?: unknown; response?: { status?: unknown } } | null
-  if (error?.code === 429 || error?.response?.status === 429) return true
   const message = e instanceof Error ? e.message : String(e)
   return /quota|rate.?limit|429|userRateLimitExceeded/i.test(message)
+}
+function hasQuotaStatus(e: unknown): boolean {
+  const error = e as { code?: unknown; response?: { status?: unknown } } | null
+  return error?.code === 429 || error?.response?.status === 429
 }
 export function isNotFoundError(e: unknown): boolean {
   const code = (
@@ -33,7 +35,8 @@ export function assertMailSession(session: symbol): void {
 }
 export async function withQuotaRetry<T>(
   fn: () => Promise<T>,
-  session = getMailSession()
+  session = getMailSession(),
+  { retryOnHttp429 = false } = {}
 ): Promise<T> {
   let attempt = 0
   for (;;) {
@@ -43,7 +46,12 @@ export async function withQuotaRetry<T>(
     } catch (e) {
       assertMailSession(session)
       rethrowDeadGrant(e)
-      if (!isQuotaError(e) || attempt >= QUOTA_MAX_RETRIES) throw e
+      if (
+        attempt >= QUOTA_MAX_RETRIES ||
+        !(isQuotaError(e) || (retryOnHttp429 && hasQuotaStatus(e)))
+      ) {
+        throw e
+      }
       await sleep(1000 * 2 ** attempt)
       attempt++
     }

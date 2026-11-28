@@ -40,7 +40,8 @@ export async function toEmailDetail(
                 messageId: id,
                 id: attachmentId
               }),
-            session
+            session,
+            { retryOnHttp429: true }
           )
           encodedData = attachment.data.data
         } catch (error) {
