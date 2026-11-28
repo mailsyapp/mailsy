@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { errorMessage } from '../lib/format'
+import type { SendQueue } from '../hooks/useSendQueue'
 import type { EmailDetail as EmailDetailData, ThreadSummary } from '../../../shared/types'
 import {
   composeRequest,
@@ -12,12 +12,13 @@ import { useDraftAutosave } from './useDraftAutosave'
 import { ComposerBody, type ComposerBodyHandle } from './ComposerBody'
 import { useComposerAttachments } from './useComposerAttachments'
 import { plainTextToHtml } from '../lib/emailHtml'
+import { useUndoSend } from './useUndoSend'
 type DraftEditorProps = {
   row: ThreadSummary
   detail: EmailDetailData | null
   detailLoading: boolean
   sessionSignal: AbortSignal
-  onSent: () => void
+  queue: SendQueue
   onDraftDiscard: () => void
   discardError: string | null
 }
@@ -25,14 +26,14 @@ function DraftForm({
   detail,
   draftId,
   sessionSignal,
-  onSent,
+  queue,
   onDraftDiscard,
   discardError
 }: {
   detail: EmailDetailData
   draftId?: string
   sessionSignal: AbortSignal
-  onSent: () => void
+  queue: SendQueue
   onDraftDiscard: () => void
   discardError: string | null
 }): React.JSX.Element {
@@ -46,9 +47,6 @@ function DraftForm({
   const initialText = detail.bodyText || detail.snippet || ''
   const [body, setBody] = useState<ComposeBody>(() => ({ html: initialHtml, text: initialText }))
   const bodyRef = useRef<ComposerBodyHandle | null>(null)
-  const [sending, setSending] = useState(false)
-  const [sendError, setSendError] = useState<string | null>(null)
-  const [notice, setNotice] = useState<string | null>(null)
   const [sent, setSent] = useState(false)
   const [edited, setEdited] = useState(false)
   const attach = useComposerAttachments(
@@ -60,11 +58,13 @@ function DraftForm({
     subject,
     body,
     attachments: attach.attachments,
-    thread: {
-      threadId: detail.threadId || undefined,
-      inReplyTo: detail.inReplyTo || undefined,
-      references: detail.references || undefined
-    }
+    thread: draftId
+      ? {
+          threadId: detail.threadId || undefined,
+          inReplyTo: detail.inReplyTo || undefined,
+          references: detail.references || undefined
+        }
+      : undefined
   })
   const autosave = useDraftAutosave(
     { ...request, ...attach.retained },
@@ -74,46 +74,24 @@ function DraftForm({
     edited || attach.edited,
     attach.adoptSaved
   )
+  const send = useUndoSend({
+    autosave,
+    bodyRef,
+    queue,
+    session: sessionSignal,
+    onSent: () => setSent(true)
+  })
   async function handleSend(event: React.FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault()
-    if (sending || sent || !attach.ready || !hasRecipient(recipients)) return
-    setSending(true)
-    setSendError(null)
-    setNotice(null)
-    try {
-      await autosave.flushPending()
-      if (sessionSignal.aborted) return
-      autosave.suspend()
-      try {
-        const target = autosave.currentDraft()
-        if (target) {
-          await window.api.sendDraft({ ...request, ...target })
-        } else {
-          await window.api.sendEmail(
-            composeRequest({ recipients, subject, body, attachments: attach.attachments })
-          )
-          setNotice(
-            'Sent as a new message; the original draft entry was left in place (unknown draft ID).'
-          )
-          return
-        }
-      } finally {
-        autosave.resume()
-      }
-      if (sessionSignal.aborted) return
-      autosave.stop()
-      setSent(true)
-      onSent()
-    } catch (error) {
-      setSendError(errorMessage(error))
-    } finally {
-      setSending(false)
-    }
+    if (sent || !attach.ready || attach.picking || !hasRecipient(recipients)) return
+    await send.send(request)
   }
   return (
     <form
       className={`composer composer-fill${attach.dropping ? ' composer-dragging' : ''}`}
       onSubmit={handleSend}
+      hidden={send.hidden}
+      inert={send.preparing}
       {...attach.drop}
     >
       <h2 id="draft-editor-title">Draft</h2>
@@ -149,8 +127,7 @@ function DraftForm({
         }}
       />
 
-      {sendError && <p role="alert">{sendError}</p>}
-      {notice && <p role="status">{notice}</p>}
+      {send.error && <p role="alert">{send.error}</p>}
       {autosave.error && (
         <p role="alert">
           {autosave.refsStale ? 'Attachment refresh required: ' : 'Draft not saved: '}
@@ -162,18 +139,23 @@ function DraftForm({
       {discardError && <p role="alert">Delete failed: {discardError}</p>}
 
       <div className="composerActions">
-        <button type="button" onClick={onDraftDiscard} disabled={sending || sent}>
+        <button type="button" onClick={onDraftDiscard} disabled={sent || !draftId}>
           delete draft
         </button>
 
         <button
           type="submit"
-          disabled={sending || sent || !attach.ready || !hasRecipient(recipients)}
+          disabled={sent || !attach.ready || attach.picking || !hasRecipient(recipients)}
         >
-          {sending ? 'Sending...' : sent ? 'Sent' : 'Send'}
+          {send.preparing ? 'Saving draft...' : sent ? 'Sent' : 'Send'}
         </button>
       </div>
       {sent && <p role="status">Message sent.</p>}
+      {sent && !draftId && (
+        <p role="status">
+          Sent as a new message; the original draft entry was left in place (unknown draft ID).
+        </p>
+      )}
     </form>
   )
 }
@@ -182,7 +164,7 @@ export function DraftEditor({
   detail,
   detailLoading,
   sessionSignal,
-  onSent,
+  queue,
   onDraftDiscard,
   discardError
 }: DraftEditorProps): React.JSX.Element {
@@ -200,7 +182,7 @@ export function DraftEditor({
       detail={detail}
       draftId={row.draftId}
       sessionSignal={sessionSignal}
-      onSent={onSent}
+      queue={queue}
       onDraftDiscard={onDraftDiscard}
       discardError={discardError}
     />

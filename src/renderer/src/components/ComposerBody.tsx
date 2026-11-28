@@ -7,6 +7,7 @@ import { loadSignature } from '../lib/signature'
 import { plainTextToHtml } from '../lib/emailHtml'
 import type { ComposerAttachments } from './useComposerAttachments'
 export interface ComposerBodyHandle {
+  read: BodyEditorHandle['read']
   insertImages: (files: File[]) => Promise<void>
 }
 type ComposerBodyProps = {
@@ -25,6 +26,7 @@ export const ComposerBody = forwardRef<ComposerBodyHandle, ComposerBodyProps>(fu
   useImperativeHandle(
     ref,
     () => ({
+      read: () => editorRef.current?.read(),
       insertImages: (files) => editorRef.current?.insertImages(files) ?? Promise.resolve()
     }),
     []

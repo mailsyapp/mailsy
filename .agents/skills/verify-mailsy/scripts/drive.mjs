@@ -306,12 +306,13 @@ async function signInWithPendingMail(page) {
 
 let browser
 let exitCode = 0
+const useClock = ['snooze-emulation', 'background-work', 'delete-draft', 'draft-attachments-safe', 'snooze-wake', 'undo-send'].includes(FEATURE)
 try {
   let page
   if (EXECUTABLE) {
     const packaged = await launchPackaged({
       executablePath: resolve(EXECUTABLE), artifactDir: ART, mockPath: MOCK,
-      signedOut: SIGNED_OUT, clock: FEATURE === 'snooze-emulation' || FEATURE === 'background-work' || FEATURE === 'delete-draft' || FEATURE === 'draft-attachments-safe' || FEATURE === 'snooze-wake'
+      signedOut: SIGNED_OUT, clock: useClock
     })
     browser = packaged.browser
     page = packaged.page
@@ -331,11 +332,114 @@ try {
     page = await context.newPage()
     // Fast-forwarding journeys need fake timers installed before the app's
     // intervals exist; other features run on real time, unchanged.
-    if (FEATURE === 'snooze-emulation' || FEATURE === 'background-work' || FEATURE === 'delete-draft' || FEATURE === 'draft-attachments-safe' || FEATURE === 'snooze-wake') await page.clock.install()
+    if (useClock) await page.clock.install()
     await page.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: 'domcontentloaded' })
   }
 
   const journeys = new Map()
+  journeys.set('undo-send', async () => {
+    const content = page.getByRole('region', { name: 'Email content' })
+    const subject = content.getByLabel('Subject', { exact: true })
+    const body = content.getByRole('textbox', { name: 'Message', exact: true })
+    const send = content.getByRole('button', { name: 'Send', exact: true })
+    const pending = (name) => page.locator('.send-notice').filter({ hasText: name })
+    const undo = (name) => pending(name).getByRole('button', { name: 'Undo', exact: true })
+    const compose = page.getByRole('button', { name: 'Compose', exact: true })
+    const openThread = async () => {
+      await page.getByRole('button', { name: 'Inbox', exact: true }).click()
+      await page.getByText('Launch checklist', { exact: true }).first().click()
+      await content.getByRole('heading', { name: 'Launch checklist' }).waitFor()
+    }
+    const enterNew = async (title, message) => {
+      await compose.click()
+      await content.getByRole('heading', { name: 'New email' }).waitFor()
+      await content.locator('.composerField input').first().fill('ada@example.com')
+      await subject.fill(title)
+      await body.fill(message)
+      await send.click()
+      await undo(title).waitFor()
+    }
+    const sent = () => page.evaluate(() => window.__sent)
+    await page.getByRole('complementary', { name: 'Inbox' }).waitFor()
+    await page.clock.pauseAt(await page.evaluate(() => Date.now() + 60_000))
+    await enterNew('Quick update', 'Can we move our check-in to Thursday?')
+    await pending('Quick update').getByRole('status').getByText('Sending…').waitFor()
+    assert(
+      !(await subject.isVisible()) && (await sent()).length === 0 &&
+        await page.evaluate(() => window.__draftSaves.some(
+          (draft) => draft.subject === 'Quick update' && draft.body.includes('Thursday')
+        )),
+      'Send hides the editor, persists the latest text, and does not deliver yet',
+      'queued compose was visible, unsaved, or sent early'
+    )
+    await snapshot(page, 'undo-send-toast')
+    await undo('Quick update').click()
+    await subject.waitFor()
+    await page.clock.fastForward(6000)
+    assert(
+      (await subject.inputValue()) === 'Quick update' &&
+        (await content.locator('.composerField input').first().inputValue()) === 'ada@example.com' &&
+        (await body.innerText()).includes('Can we move our check-in to Thursday?') &&
+        (await sent()).length === 0,
+      'Undo reopens new compose with recipients, subject, and body intact',
+      'Undo lost composer contents or delivered after expiry'
+    )
+    await snapshot(page, 'undo-send-restored')
+
+    await send.click()
+    await undo('Quick update').waitFor()
+    await openThread()
+    await enterNew('Deliver this one', 'This draft should send after the delay.')
+    await undo('Quick update').click()
+    await content.getByRole('heading', { name: 'Draft', exact: true }).waitFor()
+    assert(
+      (await subject.inputValue()) === 'Quick update' && (await body.innerText()).includes('Thursday'),
+      'Undo after navigation opens the persisted draft',
+      'Undo after navigation did not reopen the saved text'
+    )
+    await page.clock.fastForward(6000)
+    await page.waitForFunction(() => window.__sent.length === 1)
+    assert(
+      (await sent())[0].subject === 'Deliver this one' && Boolean((await sent())[0].draftId),
+      'expiry sends only the other pending message through the atomic draft path',
+      'undo or expiry affected the wrong draft'
+    )
+
+    await page.getByRole('button', { name: 'Drafts', exact: true }).click()
+    await page.getByRole('complementary', { name: 'Drafts' })
+      .getByText('Draft: Q4 planning notes', { exact: true }).click()
+    await content.getByRole('heading', { name: 'Draft', exact: true }).waitFor()
+    await subject.fill('Edited Q4 plans')
+    await send.click()
+    await undo('Edited Q4 plans').click()
+    assert(
+      (await subject.inputValue()) === 'Edited Q4 plans' &&
+        await page.evaluate(() => window.__draftSaves.some(
+          (draft) => draft.draftId === 'draft-1' && draft.subject === 'Edited Q4 plans'
+        )),
+      'Undo in a stored draft retains the newest edits on the existing draft ID',
+      'stored-draft edits were not recoverable'
+    )
+    for (const action of ['reply', 'forward']) {
+      await openThread()
+      await content.getByRole('button', { name: action, exact: true }).click()
+      await content.getByRole('heading', { name: 'Compose email' }).waitFor()
+      if (action === 'forward') await content.locator('.composerField input').first().fill('ada@example.com')
+      await typeAtStart(body, `Please keep this ${action}.`)
+      const title = await subject.inputValue()
+      await send.click()
+      await undo(title).click()
+      assert(
+        (await body.innerText()).includes(`Please keep this ${action}.`) &&
+          (await body.innerText()).includes('Final review of the launch checklist'),
+        `Undo restores the ${action} and its quoted original`,
+        `Undo dropped the ${action} content or original quote`
+      )
+    }
+    await page.clock.fastForward(6000)
+    assert((await sent()).length === 1, 'no cancelled message reached the outbox', 'Undo did not cancel all selected sends')
+    return 'undo-send'
+  })
   journeys.set('sign-in', async () => {
     const btn = page.getByRole('button', { name: 'Sign in with Google' })
     await btn.waitFor({ timeout: 10000 })
@@ -938,12 +1042,12 @@ try {
       `outbox recorded the fresh send ${JSON.stringify(record)}`,
       'outbox missing or wrong fresh-send record'
     )
-    // A fresh message carries no threading fields: no thread id, no reply
-    // headers, no draft id. The typed request shape is the fresh marker.
+    // The staged draft is sent atomically without any reply/thread headers.
     assert(
-      record.threadId === undefined && record.inReplyTo === undefined && record.draftId === undefined,
-      'fresh send carries no thread/reply/draft fields',
-      'fresh send was misshapen as a reply or draft'
+      record.threadId === undefined && record.inReplyTo === undefined &&
+        typeof record.draftId === 'string' && typeof record.expectedMessageId === 'string',
+      'fresh send consumes the staged draft without thread or reply fields',
+      'fresh send bypassed its staged draft or gained reply fields'
     )
     await snapshot(page, 'compose-new')
     return 'compose-new'
@@ -1130,6 +1234,11 @@ try {
     const content = page.getByRole('region', { name: 'Email content' })
     const send = content.getByRole('button', { name: 'Send', exact: true })
     const pick = content.getByRole('button', { name: 'Attach files', exact: true })
+    const sendAfterDelay = async () => {
+      await send.click()
+      await page.getByRole('button', { name: 'Undo', exact: true }).waitFor()
+      await page.clock.fastForward(6000)
+    }
     await page.getByText('Launch checklist', { exact: true }).first().waitFor()
     await page.clock.pauseAt(await page.evaluate(() => Date.now() + 60_000))
 
@@ -1252,7 +1361,7 @@ try {
         await content
           .getByRole('button', { name: 'Remove fixture-file.pdf', exact: true })
           .waitFor()
-        await send.click()
+        await sendAfterDelay()
         await content.getByText('Message sent.', { exact: true }).waitFor()
         assert(
           await page.evaluate(() => {
@@ -1330,7 +1439,7 @@ try {
         await page.waitForFunction(
           () => !document.querySelector('button[aria-label="Retry second.bin"]')
         )
-        await send.click()
+        await sendAfterDelay()
         await content.getByText('Message sent.', { exact: true }).waitFor()
         assert(
           await page.evaluate(
@@ -1464,7 +1573,7 @@ try {
           'reopening does not resurrect explicitly removed originals',
           'the removed original returned on reopen'
         )
-        await send.click()
+        await sendAfterDelay()
         await content.getByText('Message sent.', { exact: true }).waitFor()
         assert(
           await page.evaluate(
@@ -1496,7 +1605,7 @@ try {
         await page.waitForFunction(() =>
           window.__draftSaves.some((save) => save.attachments?.length === 1)
         )
-        await send.click()
+        await sendAfterDelay()
         await content.getByText('Message sent.', { exact: true }).waitFor()
         assert(
           (await page.evaluate(
@@ -1578,7 +1687,7 @@ try {
           `${scenario}: concurrent drops bypassed the cumulative attachment limit`
         )
         await snapshot(page, `draft-attachments-${scenario}`)
-        await send.click()
+        await sendAfterDelay()
         await content.getByText('Message sent.', { exact: true }).waitFor()
         assert(
           await page.evaluate(
@@ -4227,7 +4336,7 @@ try {
       window.__draftSaves.find((entry) => entry.subject === 'Same-thread draft 2').draftId
     )
     await content.getByRole('button', { name: 'Send', exact: true }).click()
-    await content.getByText('Message sent.', { exact: true }).waitFor({ timeout: 5000 })
+    await content.getByText('Message sent.', { exact: true }).waitFor({ timeout: 10000 })
     assert(
       (await sentDraft.count()) === 1,
       'the sent draft is still in the list during the confirmation',

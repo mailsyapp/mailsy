@@ -1,10 +1,12 @@
 import { forwardRef, useImperativeHandle, useRef } from 'react'
+import type { ComposeBody } from '../../../shared/types'
 import { useAfterCurrentTask } from '../hooks/useAfterCurrentTask'
 import { useLatest } from '../hooks/useLatest'
 import { useOnMount } from '../hooks/useOnMount'
 import { imageToPayload, looksLikeImageFile } from '../lib/attachmentFile'
 import { SIGNATURE_BLOCK_CLASS, SIGNATURE_BLOCK_SELECTOR } from '../lib/signature'
 export interface BodyEditorHandle {
+  read: () => ComposeBody | undefined
   insertImages: (files: File[]) => Promise<void>
   insertSignatureBlock: (
     html: string,
@@ -314,6 +316,7 @@ export const BodyEditor = forwardRef<BodyEditorHandle, BodyEditorProps>(function
   useImperativeHandle(
     ref,
     () => ({
+      read: () => (editorRef.current ? readContent(editorRef.current) : undefined),
       insertImages: async (files: File[]) => {
         const editor = editorRef.current
         if (!editor) return

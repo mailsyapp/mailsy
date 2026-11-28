@@ -3,6 +3,7 @@ import { errorMessage } from './lib/format'
 import { RefreshCw } from 'lucide-react'
 import type {
   ThreadSummary,
+  DraftVersion,
   EmailDetail as EmailDetailData,
   ThreadPage,
   MailFolder,
@@ -26,6 +27,7 @@ import { useReaction } from './hooks/useReaction'
 import { useSettledValue } from './hooks/useSettledValue'
 import { useSubscription } from './hooks/useSubscription'
 import { useTimers } from './hooks/useTimers'
+import { useSendQueue } from './hooks/useSendQueue'
 const LIST_PAGE_SIZE = 30
 const SEARCH_PAGE_SIZE = 10
 const SEARCH_DEBOUNCE_MS = 800
@@ -45,6 +47,7 @@ function App(): React.JSX.Element {
   const [opened, setOpened] = useState<{
     row: ThreadSummary
     query: string
+    restoredDraft?: boolean
   } | null>(null)
   const [nextPageToken, setNextPageToken] = useState<string | null | undefined>(undefined)
   const [loadingMore, setLoadingMore] = useState(false)
@@ -85,6 +88,9 @@ function App(): React.JSX.Element {
     new Map<MailFolder, ThreadSummary[]>()
   )
   const draftPruneTimers = useTimers()
+  const outbox = useSendQueue(reopenDraft, (draftId) =>
+    handleDraftSent(listRowKey({ id: '', draftId }))
+  )
   const pageRequestRef = useRef<number | null>(null)
   const searchingRef = useRef(false)
   const pendingSyncRef = useRef<QuietFold | null>(null)
@@ -193,18 +199,40 @@ function App(): React.JSX.Element {
       : displayedThreads
   const selectedThread =
     selectionRows.find((e) => listRowKey(e) === selectedKey) ??
-    (isSearchActive && opened?.query === committedQuery && (!selectedIsDraft || opened.row.draftId)
+    (opened?.restoredDraft ||
+    (isSearchActive && opened?.query === committedQuery && (!selectedIsDraft || opened.row.draftId))
       ? opened.row
       : null)
-  function handleSelect(row: ThreadSummary): void {
+  function reopenDraft({ draftId, messageId }: DraftVersion, subject: string): void {
+    handleSelect(
+      {
+        id: messageId,
+        draftId,
+        subject,
+        snippet: '',
+        participants: [],
+        date: '',
+        messageIds: [messageId],
+        unreadCount: 0,
+        starred: false
+      },
+      true
+    )
+  }
+  function handleSelect(row: ThreadSummary, restoredDraft = false): void {
+    if (row.draftId && outbox.queue.isLocked(row.draftId)) {
+      setError('This draft is queued to send. Use Undo to edit it.')
+      return
+    }
     closeEmail()
     const rowKey = listRowKey(row)
     selectionRef.current = rowKey
-    setOpened({ row, query: committedQuery })
+    setOpened({ row, query: committedQuery, restoredDraft })
     selectedSnoozedByMailsyRef.current = row.snoozedByMailsy === true
     setError(null)
     const draftsFolder = activeFolder === 'drafts'
-    const draftHere = draftsFolder || (activeFolder === 'all' && row.hasDraft === true)
+    const draftHere =
+      restoredDraft || draftsFolder || (activeFolder === 'all' && row.hasDraft === true)
     setSelectedIsDraft(draftHere)
     if (!draftHere) return
     const draft = row.draftId ? { key: rowKey, id: row.draftId, threadId: row.id } : null
@@ -254,6 +282,7 @@ function App(): React.JSX.Element {
   }
   function exitToSignedOut(): void {
     sessionAbortRef.current.abort()
+    outbox.clear()
     sessionAbortRef.current = new AbortController()
     replaceListRequest()
     pendingSyncRef.current = null
@@ -292,6 +321,10 @@ function App(): React.JSX.Element {
     draftPruneTimers.start(rowKey, DRAFT_PRUNE_DELAY_MS, () => removeListRow(rowKey))
   }
   function handleDraftDiscard(row: ThreadSummary): void {
+    if (row.draftId && outbox.queue.isLocked(row.draftId)) {
+      setError('This draft is queued to send. Use Undo before deleting it.')
+      return
+    }
     const confirmed = window.confirm(
       `Delete draft “${row.subject || '(no subject)'}”? This permanently discards it; not even Trash keeps a copy.`
     )
@@ -979,7 +1012,11 @@ function App(): React.JSX.Element {
 
         <section className="email-content" aria-label="Email content">
           {composing ? (
-            <ComposeEditor onClose={closeEmail} sessionSignal={sessionAbortRef.current.signal} />
+            <ComposeEditor
+              onClose={closeEmail}
+              sessionSignal={sessionAbortRef.current.signal}
+              queue={outbox.queue}
+            />
           ) : selectedThread ? (
             selectedIsDraft ? (
               <DraftEditor
@@ -988,7 +1025,7 @@ function App(): React.JSX.Element {
                 detail={draftDetail}
                 detailLoading={draftDetailLoading}
                 sessionSignal={sessionAbortRef.current.signal}
-                onSent={() => handleDraftSent(listRowKey(selectedThread))}
+                queue={outbox.queue}
                 onDraftDiscard={() => handleDraftDiscard(selectedThread)}
                 discardError={
                   draftDiscard && draftDiscard.rowKey === selectedKey ? draftDiscard.error : null
@@ -1000,6 +1037,8 @@ function App(): React.JSX.Element {
                 thread={selectedThread}
                 folder={activeFolder}
                 labels={labels}
+                sessionSignal={sessionAbortRef.current.signal}
+                queue={outbox.queue}
                 onThreadRemoved={handleThreadRemoved}
                 onThreadReadChanged={handleThreadReadChanged}
                 onThreadStarChanged={handleThreadStarChanged}
@@ -1011,6 +1050,32 @@ function App(): React.JSX.Element {
           )}
         </section>
       </main>
+      {outbox.notices.length > 0 && (
+        <div className="send-notices" aria-label="Outgoing messages">
+          {outbox.notices.map(({ draftId, subject, status, error, action, dismiss }) => (
+            <div className="send-notice" key={draftId}>
+              <div>
+                {status === 'failed' ? (
+                  <div role="alert">Could not send: {error}</div>
+                ) : (
+                  <div role="status">Sending…</div>
+                )}
+                <div className="send-notice-subject">{subject || '(no subject)'}</div>
+              </div>
+              {action && (
+                <button type="button" onClick={action}>
+                  {status === 'failed' ? 'Open draft' : 'Undo'}
+                </button>
+              )}
+              {dismiss && (
+                <button type="button" onClick={dismiss}>
+                  Dismiss
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

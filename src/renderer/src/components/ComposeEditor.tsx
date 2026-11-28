@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { errorMessage } from '../lib/format'
+import type { SendQueue } from '../hooks/useSendQueue'
 import { RecipientFields } from './RecipientFields'
 import {
   composeRequest,
@@ -10,21 +10,32 @@ import {
 import { useDraftAutosave } from './useDraftAutosave'
 import { ComposerBody, type ComposerBodyHandle } from './ComposerBody'
 import { useComposerAttachments } from './useComposerAttachments'
+import { useUndoSend } from './useUndoSend'
 type ComposeEditorProps = {
   onClose: () => void
   sessionSignal: AbortSignal
+  queue: SendQueue
 }
-export function ComposeEditor({ onClose, sessionSignal }: ComposeEditorProps): React.JSX.Element {
+export function ComposeEditor({
+  onClose,
+  sessionSignal,
+  queue
+}: ComposeEditorProps): React.JSX.Element {
   const [recipients, setRecipients] = useState<RecipientState>({ to: '', cc: '', bcc: '' })
   const [subject, setSubject] = useState('')
   const [body, setBody] = useState<ComposeBody>({ html: '', text: '' })
   const bodyRef = useRef<ComposerBodyHandle | null>(null)
-  const [sending, setSending] = useState(false)
-  const [sendError, setSendError] = useState<string | null>(null)
   const [sent, setSent] = useState(false)
   const attach = useComposerAttachments(undefined, bodyRef)
   const request = composeRequest({ recipients, subject, body, attachments: attach.attachments })
   const autosave = useDraftAutosave(request, undefined, true, sessionSignal)
+  const send = useUndoSend({
+    autosave,
+    bodyRef,
+    queue,
+    session: sessionSignal,
+    onSent: () => setSent(true)
+  })
   async function handleCancel(): Promise<void> {
     await autosave.flushPending()
     if (sessionSignal.aborted) return
@@ -35,35 +46,15 @@ export function ComposeEditor({ onClose, sessionSignal }: ComposeEditorProps): R
   }
   async function handleSend(event: React.FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault()
-    if (sending || sent || !hasRecipient(recipients)) return
-    setSending(true)
-    setSendError(null)
-    try {
-      await autosave.flushPending()
-      if (sessionSignal.aborted) return
-      const target = autosave.currentDraft()
-      autosave.suspend()
-      try {
-        if (target) {
-          await window.api.sendDraft({ ...request, ...target })
-        } else {
-          await window.api.sendEmail(request)
-        }
-      } finally {
-        autosave.resume()
-      }
-      autosave.stop()
-      setSent(true)
-    } catch (error) {
-      setSendError(errorMessage(error))
-    } finally {
-      setSending(false)
-    }
+    if (sent || attach.picking || !hasRecipient(recipients)) return
+    await send.send(request)
   }
   return (
     <form
       className={`composer composer-fill${attach.dropping ? ' composer-dragging' : ''}`}
       onSubmit={handleSend}
+      hidden={send.hidden}
+      inert={send.preparing}
       {...attach.drop}
     >
       <h2>New email</h2>
@@ -82,7 +73,7 @@ export function ComposeEditor({ onClose, sessionSignal }: ComposeEditorProps): R
 
       <ComposerBody ref={bodyRef} attach={attach} onBodyChange={setBody} autoSignature />
 
-      {sendError && <p role="alert">{sendError}</p>}
+      {send.error && <p role="alert">{send.error}</p>}
       {autosave.error && <p role="alert">Draft not saved: {autosave.error}</p>}
       {autosave.status === 'saving' && <p role="status">Saving draft...</p>}
       {autosave.status === 'saved' && <p role="status">Draft saved.</p>}
@@ -91,8 +82,8 @@ export function ComposeEditor({ onClose, sessionSignal }: ComposeEditorProps): R
         <button type="button" onClick={handleCancel}>
           {sent ? 'Close' : 'Cancel'}
         </button>
-        <button type="submit" disabled={sending || sent || !hasRecipient(recipients)}>
-          {sending ? 'Sending...' : sent ? 'Sent' : 'Send'}
+        <button type="submit" disabled={sent || attach.picking || !hasRecipient(recipients)}>
+          {send.preparing ? 'Saving draft...' : sent ? 'Sent' : 'Send'}
         </button>
       </div>
       {sent && <p role="status">Message sent.</p>}

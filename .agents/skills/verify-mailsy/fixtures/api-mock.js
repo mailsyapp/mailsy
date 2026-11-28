@@ -681,7 +681,9 @@
     },
     getThread: async (threadId) => {
       ensureSignedIn()
-      const messages = seed.filter((m) => m.threadId === threadId).map((m) => ({ attachments: [], ...m }))
+      const messages = seed
+        .filter((m) => m.threadId === threadId && !deletedDrafts.includes(m.draftId))
+        .map((m) => ({ attachments: [], ...m }))
       if (messages.length === 0) throw new Error(`mock: no thread ${threadId}`)
       // The thread's full label id set, deduped, mirroring the boundary
       // contract EmailThread now carries for the labels menu.

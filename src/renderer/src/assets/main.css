@@ -650,6 +650,49 @@ button {
   background: #fff;
 }
 
+.composer[hidden] {
+  display: none;
+}
+
+.send-notices {
+  align-self: flex-end;
+  flex: none;
+  display: grid;
+  gap: 8px;
+  width: min(360px, 100%);
+  max-height: 25dvh;
+  margin-top: 12px;
+  overflow: auto;
+}
+
+.send-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: #202124;
+  color: #fff;
+  box-shadow: 0 3px 12px #0003;
+  overflow-wrap: anywhere;
+}
+
+.send-notice-subject {
+  margin-top: 3px;
+  font-size: 0.85rem;
+  color: #d4d7dc;
+}
+
+.send-notice button {
+  border: 1px solid #8ab4f8;
+  border-radius: 5px;
+  background: transparent;
+  color: #b8d4ff;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
 /* Signature row: the toggle and the edit entry, in the toolbar zone with
    the attachment bar; both speak the link-blue the reveal buttons use. */
 .signatureBar {

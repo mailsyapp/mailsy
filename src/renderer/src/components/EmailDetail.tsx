@@ -14,6 +14,7 @@ import { SNOOZE_PRESETS } from '../lib/snooze'
 import { ThreadReplyComposer, type ThreadReplyComposerHandle } from './ThreadReplyComposer'
 import { MessageAttachments } from './MessageAttachments'
 import { sanitizeEmailHtml } from '../lib/emailHtml'
+import type { SendQueue } from '../hooks/useSendQueue'
 
 const REPORT_SPAM_FOLDERS: MailFolder[] = ['inbox', 'all', 'starred', 'label']
 
@@ -33,6 +34,8 @@ type EmailDetailProps = {
   thread: ThreadSummary
   folder: MailFolder
   labels: MailLabel[]
+  queue: SendQueue
+  sessionSignal: AbortSignal
   onThreadRemoved: (threadId: string) => void
   onThreadReadChanged: (threadId: string, unread: boolean) => void
   onThreadStarChanged: (threadId: string, starred: boolean) => void
@@ -148,6 +151,8 @@ export function EmailDetail({
   thread,
   folder,
   labels,
+  queue,
+  sessionSignal,
   onThreadRemoved,
   onThreadReadChanged,
   onThreadStarChanged,
@@ -519,6 +524,8 @@ export function EmailDetail({
         thread={thread}
         messages={messages}
         userEmail={threadData?.userEmail ?? ''}
+        queue={queue}
+        sessionSignal={sessionSignal}
         onSent={(threadId) => {
           if (threadId) void loadThread(threadId, true)
         }}

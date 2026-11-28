@@ -111,7 +111,7 @@ node .agents/skills/verify-mailsy/scripts/drive.mjs --feature signature \
   --run-id packaged-signature --executable "$PWD/dist/linux-unpacked/mailsy"
 ```
 
-All 35 mapped features are supported, including `sign-in --signed-out`.
+All mapped features are supported, including `sign-in --signed-out` and `undo-send`.
 `drive.mjs` registers each feature's journey by ID and checks the executed
 journey's ID against the request; unknown IDs and mismatches fail the run.
 Run each with its own run ID. Their journey assertions and

@@ -15,6 +15,10 @@ const AUTOSAVE_DEBOUNCE_MS = 1200
 const STALE_REFS_ERROR = 'Reload this draft before saving further unresolved attachments.'
 export interface DraftAutosave {
   flushPending: () => Promise<void>
+  saveForSend: (
+    request: AutosaveFields,
+    isLocked: (draftId: string) => boolean
+  ) => Promise<DraftVersion>
   suspend: () => void
   resume: () => void
   stop: () => void
@@ -45,20 +49,21 @@ export function useDraftAutosave(
   const pendingSaveRef = useRef<Promise<void> | null>(null)
   const timers = useTimers()
   const fieldsJson = JSON.stringify(fields)
-  function save(copyOnConflict = false): Promise<void> {
+  function save(copyOnConflict = false, sendFields?: AutosaveFields): Promise<void> {
     const prior = pendingSaveRef.current ?? Promise.resolve()
     const run = prior
       .then(() => {
         if (sessionSignal.aborted || retiredRef.current || suspendedRef.current) return
-        const writtenFields = fieldsRef.current
+        const writtenFields = sendFields ?? fieldsRef.current
         const written = JSON.stringify(writtenFields)
-        if (written === lastSavedRef.current) return
+        if (written === lastSavedRef.current && (!sendFields || draftRef.current)) return
         if (staleRefsRef.current && writtenFields.retainAttachments?.refs.length)
           throw new Error(STALE_REFS_ERROR)
         const target = draftRef.current
+        setStatus('saving')
         return window.api
           .saveDraft({
-            ...fieldsRef.current,
+            ...writtenFields,
             ...(target ? { draftId: target.draftId, expectedMessageId: target.messageId } : {}),
             ...(copyOnConflict ? { copyOnConflict } : {})
           })
@@ -102,12 +107,12 @@ export function useDraftAutosave(
       .catch((e: unknown) => {
         setStatus('idle')
         setError(errorMessage(e))
+        if (sendFields) throw e
       })
       .finally(() => {
         if (pendingSaveRef.current === run) pendingSaveRef.current = null
       })
     pendingSaveRef.current = run
-    setStatus('saving')
     return run
   }
   useReaction([fieldsJson, enabled, hasEdits], () => {
@@ -133,6 +138,15 @@ export function useDraftAutosave(
     flushPending: async (): Promise<void> => {
       timers.cancel('autosave')
       await pendingSaveRef.current
+    },
+    saveForSend: async (request, isLocked): Promise<DraftVersion> => {
+      timers.cancel('autosave')
+      const draft = draftRef.current
+      if (draft && isLocked(draft.draftId)) throw new Error('This draft is already queued to send.')
+      await save(false, request)
+      const version = draftRef.current
+      if (!version?.messageId) throw new Error('The draft could not be saved for sending.')
+      return { draftId: version.draftId, messageId: version.messageId }
     },
     stop: (): void => {
       retiredRef.current = true

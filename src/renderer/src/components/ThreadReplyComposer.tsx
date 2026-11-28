@@ -9,6 +9,7 @@ import { quoteHtmlFor } from '../lib/emailHtml'
 import { replyAllRecipients } from '../lib/recipients'
 import { ThreadReplyForm } from './ThreadReplyForm'
 import type { AttachmentPrefill } from './useComposerAttachments'
+import type { SendQueue } from '../hooks/useSendQueue'
 
 export interface ThreadReplyComposerHandle {
   reply(): void
@@ -20,11 +21,13 @@ type ThreadReplyComposerProps = {
   thread: ThreadSummary
   messages: EmailDetailData[]
   userEmail: string
+  queue: SendQueue
+  sessionSignal: AbortSignal
   onSent: (threadId: string | undefined) => void
 }
 
 export const ThreadReplyComposer = forwardRef<ThreadReplyComposerHandle, ThreadReplyComposerProps>(
-  function ThreadReplyComposer({ thread, messages, userEmail, onSent }, ref) {
+  function ThreadReplyComposer({ thread, messages, userEmail, queue, sessionSignal, onSent }, ref) {
     const latestMessage: EmailDetailData | null = messages[messages.length - 1] ?? null
 
     const [draft, setDraft] = useState<SendEmailRequest | null>(null)
@@ -122,6 +125,8 @@ export const ThreadReplyComposer = forwardRef<ThreadReplyComposerHandle, ThreadR
             key={composerSeq}
             draft={draft}
             prefill={attachmentPrefill}
+            queue={queue}
+            sessionSignal={sessionSignal}
             initialHtml={quotedContent?.html ?? ''}
             onChange={(patch) => setDraft((prev) => (prev ? { ...prev, ...patch } : prev))}
             onCancel={() => {
