@@ -899,6 +899,7 @@ function App(): React.JSX.Element {
               Refresh
             </button>
             <button onClick={handleSignOut}>Sign out</button>
+            <LeftSendNotices onOpenDraft={openLeftDraft} />
           </>
         )}
         {searching && threads.length === 0 && !isSearchActive && (
@@ -1040,7 +1041,6 @@ function App(): React.JSX.Element {
           )}
         </section>
       </main>
-      {signedIn === true && <LeftSendNotices onOpenDraft={openLeftDraft} />}
     </div>
   )
 }

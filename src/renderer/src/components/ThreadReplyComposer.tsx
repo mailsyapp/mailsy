@@ -1,3 +1,4 @@
+import { useLatest } from '../hooks/useLatest'
 import { useReaction } from '../hooks/useReaction'
 import { forwardRef, useCallback, useImperativeHandle, useRef, useState } from 'react'
 import type {
@@ -35,6 +36,7 @@ export const ThreadReplyComposer = forwardRef<ThreadReplyComposerHandle, ThreadR
     const [composerSeq, setComposerSeq] = useState(0)
     const [attachmentPrefill, setAttachmentPrefill] = useState<AttachmentPrefill>()
     const [sent, setSent] = useState(false)
+    const currentComposerSeq = useLatest(composerSeq)
 
     useReaction([userEmail], () => {
       const pending = pendingReplyRef.current
@@ -132,9 +134,11 @@ export const ThreadReplyComposer = forwardRef<ThreadReplyComposerHandle, ThreadR
               setQuotedContent(null)
             }}
             onSent={() => {
-              setDraft(null)
-              setQuotedContent(null)
-              setSent(true)
+              if (currentComposerSeq.current === composerSeq) {
+                setDraft(null)
+                setQuotedContent(null)
+                setSent(true)
+              }
               onSent(latestMessage?.threadId ?? thread.id)
             }}
           />

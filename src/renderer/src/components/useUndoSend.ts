@@ -71,7 +71,12 @@ export function useUndoSend(sessionSignal: AbortSignal): {
         if (failure !== undefined) setError(errorMessage(failure))
       } else if (leftId !== null) {
         if (failure === undefined) leftSends.remove(leftId)
-        else leftSends.update(leftId, { phase: 'failed', error: errorMessage(failure) })
+        else
+          leftSends.update(leftId, {
+            phase: 'failed',
+            error: errorMessage(failure),
+            draftId: draftId ?? autosave.currentDraft()?.draftId
+          })
       }
     }
     function abandon(): void {

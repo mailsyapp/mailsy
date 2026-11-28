@@ -1059,6 +1059,24 @@ try {
     )
     await inbox.getByText('Launch checklist', { exact: true }).click()
     await page.getByRole('heading', { name: 'Launch checklist' }).waitFor({ timeout: 5000 })
+    await content.getByRole('button', { name: 'reply', exact: true }).click()
+    await editor.fill('Send this reply while forwarding')
+    await hold()
+    await content.getByRole('button', { name: 'forward', exact: true }).click()
+    await to.fill('forward-undo@example.com')
+    await editor.fill('Keep this forward edit')
+    await page.clock.fastForward(5500)
+    await outgoing.waitFor({ state: 'detached', timeout: 5000 })
+    const forwardingSent = await outbox()
+    assert(
+      forwardingSent.length === 2 && forwardingSent[1].body.includes('Send this reply while forwarding') &&
+        (await to.inputValue()) === 'forward-undo@example.com' &&
+        (await bodyTextOf(editor)).includes('Keep this forward edit') &&
+        (await content.getByText('Message sent.', { exact: true }).count()) === 0,
+      'a reply that sends after Forward was opened leaves the forward composer untouched',
+      'the earlier reply send replaced or cleared the forward composer'
+    )
+
     await content.getByRole('button', { name: 'forward', exact: true }).click()
     await to.fill('forward-undo@example.com')
     await editor.fill('Keep this forward edit')
@@ -1069,8 +1087,8 @@ try {
     await page.clock.fastForward(5500)
     const sent = await outbox()
     assert(
-      sent.length === 2 && sent[1].draftId && sent[1].to === 'forward-undo@example.com' &&
-        sent[1].subject === 'Fwd: Launch checklist' && sent[1].body.includes('Keep this forward edit'),
+      sent.length === 3 && sent[2].draftId && sent[2].to === 'forward-undo@example.com' &&
+        sent[2].subject === 'Fwd: Launch checklist' && sent[2].body.includes('Keep this forward edit'),
       'expiry delivers exactly once with the original contents using atomic draft send',
       'expiry lost the message or sent more than once'
     )
