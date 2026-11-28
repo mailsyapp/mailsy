@@ -48,6 +48,7 @@ Keep implementation details out of the map. Name only user paths, stable handles
 - [Search state](./search-state.md) covers cached star/unread flags, plain operator membership, and rejected writes.
 - [Read thread](./read-thread.md) covers conversation view, message count, and expand/collapse.
 - [Compose send](./compose-send.md) covers reply, forward, cancel, and send with outbox proof.
+- [Undo send](./undo-send.md) covers the five-second hold, Undo across composers, draft recovery on leave, and delivery after expiry.
 - [Reply all](./reply-all.md) covers the whole-participant reply from the detail pane: author plus To/Cc recipients with the own address excluded, and the unchanged single reply.
 - [Compose new](./compose-new.md) covers the toolbar Compose entry point: blank composer, blank-To send blocking, cancel-discard, and fresh send with no threading fields.
 - [All Mail](./all-mail.md) covers the All Mail rail entry listing every thread (archived included) and browsing/selecting from it.

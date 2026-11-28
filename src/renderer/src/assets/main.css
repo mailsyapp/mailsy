@@ -641,6 +641,27 @@ button {
   height: auto;
 }
 
+.composerFields {
+  display: contents;
+}
+
+.undoSendNotice {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid #c5d7fa;
+  border-radius: 6px;
+  background: #edf4ff;
+  color: #173b74;
+}
+
+.undoSendNotice button {
+  font: inherit;
+  font-weight: 600;
+}
+
 .composerActions {
   display: flex;
   gap: 8px;

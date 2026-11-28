@@ -1000,6 +1000,7 @@ function App(): React.JSX.Element {
                 thread={selectedThread}
                 folder={activeFolder}
                 labels={labels}
+                sessionSignal={sessionAbortRef.current.signal}
                 onThreadRemoved={handleThreadRemoved}
                 onThreadReadChanged={handleThreadReadChanged}
                 onThreadStarChanged={handleThreadStarChanged}

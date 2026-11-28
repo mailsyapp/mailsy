@@ -1,5 +1,4 @@
 import { useRef, useState } from 'react'
-import { errorMessage } from '../lib/format'
 import { RecipientFields } from './RecipientFields'
 import {
   composeRequest,
@@ -10,6 +9,8 @@ import {
 import { useDraftAutosave } from './useDraftAutosave'
 import { ComposerBody, type ComposerBodyHandle } from './ComposerBody'
 import { useComposerAttachments } from './useComposerAttachments'
+import { useUndoSend } from './useUndoSend'
+import { UndoSendNotice } from './UndoSendNotice'
 type ComposeEditorProps = {
   onClose: () => void
   sessionSignal: AbortSignal
@@ -19,12 +20,11 @@ export function ComposeEditor({ onClose, sessionSignal }: ComposeEditorProps): R
   const [subject, setSubject] = useState('')
   const [body, setBody] = useState<ComposeBody>({ html: '', text: '' })
   const bodyRef = useRef<ComposerBodyHandle | null>(null)
-  const [sending, setSending] = useState(false)
-  const [sendError, setSendError] = useState<string | null>(null)
   const [sent, setSent] = useState(false)
   const attach = useComposerAttachments(undefined, bodyRef)
   const request = composeRequest({ recipients, subject, body, attachments: attach.attachments })
   const autosave = useDraftAutosave(request, undefined, true, sessionSignal)
+  const send = useUndoSend(sessionSignal)
   async function handleCancel(): Promise<void> {
     await autosave.flushPending()
     if (sessionSignal.aborted) return
@@ -33,66 +33,48 @@ export function ComposeEditor({ onClose, sessionSignal }: ComposeEditorProps): R
     onClose()
     if (draftId) void window.api.discardDraft(draftId)
   }
-  async function handleSend(event: React.FormEvent<HTMLFormElement>): Promise<void> {
+  function handleSend(event: React.FormEvent<HTMLFormElement>): void {
     event.preventDefault()
-    if (sending || sent || !hasRecipient(recipients)) return
-    setSending(true)
-    setSendError(null)
-    try {
-      await autosave.flushPending()
-      if (sessionSignal.aborted) return
-      const target = autosave.currentDraft()
-      autosave.suspend()
-      try {
-        if (target) {
-          await window.api.sendDraft({ ...request, ...target })
-        } else {
-          await window.api.sendEmail(request)
-        }
-      } finally {
-        autosave.resume()
-      }
-      autosave.stop()
-      setSent(true)
-    } catch (error) {
-      setSendError(errorMessage(error))
-    } finally {
-      setSending(false)
-    }
+    if (sent || !hasRecipient(recipients)) return
+    void send.start(request, autosave, () => setSent(true))
   }
   return (
     <form
       className={`composer composer-fill${attach.dropping ? ' composer-dragging' : ''}`}
       onSubmit={handleSend}
       {...attach.drop}
+      onDrop={send.busy ? (event) => event.preventDefault() : attach.drop.onDrop}
     >
       <h2>New email</h2>
 
-      <RecipientFields
-        to={recipients.to}
-        cc={recipients.cc}
-        bcc={recipients.bcc}
-        onChange={(patch) => setRecipients({ ...recipients, ...patch })}
-      />
+      <div className="composerFields" inert={send.busy}>
+        <RecipientFields
+          to={recipients.to}
+          cc={recipients.cc}
+          bcc={recipients.bcc}
+          onChange={(patch) => setRecipients({ ...recipients, ...patch })}
+        />
 
-      <label className="composerField">
-        <span>Subject</span>
-        <input value={subject} onChange={(event) => setSubject(event.target.value)} />
-      </label>
+        <label className="composerField">
+          <span>Subject</span>
+          <input value={subject} onChange={(event) => setSubject(event.target.value)} />
+        </label>
 
-      <ComposerBody ref={bodyRef} attach={attach} onBodyChange={setBody} autoSignature />
+        <ComposerBody ref={bodyRef} attach={attach} onBodyChange={setBody} autoSignature />
+      </div>
 
-      {sendError && <p role="alert">{sendError}</p>}
+      {send.error && <p role="alert">{send.error}</p>}
       {autosave.error && <p role="alert">Draft not saved: {autosave.error}</p>}
       {autosave.status === 'saving' && <p role="status">Saving draft...</p>}
       {autosave.status === 'saved' && <p role="status">Draft saved.</p>}
 
+      {send.phase === 'waiting' && <UndoSendNotice onUndo={send.undo} />}
       <div className="composerActions">
-        <button type="button" onClick={handleCancel}>
+        <button type="button" onClick={handleCancel} disabled={send.busy}>
           {sent ? 'Close' : 'Cancel'}
         </button>
-        <button type="submit" disabled={sending || sent || !hasRecipient(recipients)}>
-          {sending ? 'Sending...' : sent ? 'Sent' : 'Send'}
+        <button type="submit" disabled={send.busy || sent || !hasRecipient(recipients)}>
+          {sent ? 'Sent' : send.buttonLabel}
         </button>
       </div>
       {sent && <p role="status">Message sent.</p>}

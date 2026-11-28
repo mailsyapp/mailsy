@@ -28,6 +28,9 @@ const RUN_ID = arg('run-id')
 const PORT = arg('port')
 const SIGNED_OUT = process.argv.includes('--signed-out')
 const EXECUTABLE = arg('executable')
+const CLOCK_FEATURES = new Set([
+  'snooze-emulation', 'background-work', 'delete-draft', 'draft-attachments-safe', 'snooze-wake', 'undo-send'
+])
 if (!FEATURE || !RUN_ID || (!PORT && !EXECUTABLE)) {
   console.error('usage: drive.mjs --feature <id> --run-id <id> (--port <n> | --executable <packaged-binary>) [--signed-out]')
   process.exit(2)
@@ -311,7 +314,7 @@ try {
   if (EXECUTABLE) {
     const packaged = await launchPackaged({
       executablePath: resolve(EXECUTABLE), artifactDir: ART, mockPath: MOCK,
-      signedOut: SIGNED_OUT, clock: FEATURE === 'snooze-emulation' || FEATURE === 'background-work' || FEATURE === 'delete-draft' || FEATURE === 'draft-attachments-safe' || FEATURE === 'snooze-wake'
+      signedOut: SIGNED_OUT, clock: CLOCK_FEATURES.has(FEATURE)
     })
     browser = packaged.browser
     page = packaged.page
@@ -331,7 +334,7 @@ try {
     page = await context.newPage()
     // Fast-forwarding journeys need fake timers installed before the app's
     // intervals exist; other features run on real time, unchanged.
-    if (FEATURE === 'snooze-emulation' || FEATURE === 'background-work' || FEATURE === 'delete-draft' || FEATURE === 'draft-attachments-safe' || FEATURE === 'snooze-wake') await page.clock.install()
+    if (CLOCK_FEATURES.has(FEATURE)) await page.clock.install()
     await page.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: 'domcontentloaded' })
   }
 
@@ -889,6 +892,83 @@ try {
     await snapshot(page, 'compose-send')
     return 'compose-send'
   })
+  journeys.set('undo-send', async () => {
+    const content = page.getByRole('region', { name: 'Email content' })
+    const inbox = page.getByRole('complementary', { name: 'Inbox' })
+    const drafts = page.getByRole('complementary', { name: 'Drafts' })
+    const subject = content.getByRole('textbox', { name: 'Subject', exact: true })
+    const to = content.getByRole('textbox', { name: 'To', exact: true })
+    const editor = content.locator('.body-editor')
+    const send = content.getByRole('button', { name: 'Send', exact: true })
+    const undo = content.getByRole('button', { name: 'Undo', exact: true })
+    const outbox = () => page.evaluate(() => window.__sent)
+    async function hold() {
+      await send.click()
+      await undo.waitFor({ timeout: 5000 })
+      assert((await outbox()).length === 0, 'pending send has not reached the boundary', 'sent too early')
+    }
+    async function undoHold(name, expectedSubject) {
+      await hold()
+      await snapshot(page, `undo-send-${name}-pending`)
+      await undo.click()
+      await send.waitFor({ timeout: 5000 })
+      await page.clock.fastForward(5500)
+      assert(
+        (await outbox()).length === 0 && (await subject.inputValue()) === expectedSubject &&
+          (await bodyTextOf(editor)).includes(`Keep this ${name} edit`),
+        `Undo restores the ${name} editor and prevents send after the deadline`,
+        `Undo sent or lost the ${name} edit`
+      )
+    }
+
+    await inbox.getByText('Launch checklist', { exact: true }).waitFor({ timeout: 5000 })
+    await page.getByRole('button', { name: 'Compose', exact: true }).click()
+    await to.fill('undo@example.com')
+    await subject.fill('Undo a new message')
+    await editor.fill('Keep this new edit')
+    await undoHold('new', 'Undo a new message')
+    assert((await to.inputValue()) === 'undo@example.com', 'Undo restores the recipient', 'recipient lost')
+    await snapshot(page, 'undo-send-restored')
+
+    await hold()
+    await page.getByRole('button', { name: 'Drafts', exact: true }).click()
+    const reopened = drafts.getByText('Undo a new message', { exact: true })
+    await reopened.click()
+    await page.clock.fastForward(5500)
+    await subject.waitFor({ timeout: 5000 })
+    assert(
+      (await outbox()).length === 0 && (await bodyTextOf(editor)).includes('Keep this new edit'),
+      'leaving during the hold cancels the send and keeps a reopenable draft',
+      'leaving sent the message or lost its draft'
+    )
+    await editor.fill('Keep this draft edit')
+    await undoHold('draft', 'Undo a new message')
+
+    await page.getByRole('button', { name: 'Inbox', exact: true }).click()
+    await inbox.getByText('Launch checklist', { exact: true }).click()
+    await content.getByRole('button', { name: 'reply', exact: true }).click()
+    await editor.fill('Keep this reply edit')
+    await undoHold('reply', 'Re: Launch checklist')
+    await content.getByRole('button', { name: 'Cancel', exact: true }).click()
+
+    await content.getByRole('button', { name: 'forward', exact: true }).click()
+    await to.fill('forward-undo@example.com')
+    await editor.fill('Keep this forward edit')
+    await undoHold('forward', 'Fwd: Launch checklist')
+    await hold()
+    await page.clock.fastForward(5500)
+    await content.getByText('Message sent.', { exact: true }).waitFor({ timeout: 5000 })
+    await page.clock.fastForward(5500)
+    const sent = await outbox()
+    assert(
+      sent.length === 1 && sent[0].draftId && sent[0].to === 'forward-undo@example.com' &&
+        sent[0].subject === 'Fwd: Launch checklist' && sent[0].body.includes('Keep this forward edit'),
+      'expiry delivers exactly once with the original contents using atomic draft send',
+      'expiry lost the message or sent more than once'
+    )
+    await snapshot(page, 'undo-send')
+    return 'undo-send'
+  })
   journeys.set('compose-new', async () => {
     const inbox = page.getByRole('complementary', { name: 'Inbox' })
     await inbox.waitFor({ timeout: 10000 })
@@ -938,12 +1018,12 @@ try {
       `outbox recorded the fresh send ${JSON.stringify(record)}`,
       'outbox missing or wrong fresh-send record'
     )
-    // A fresh message carries no threading fields: no thread id, no reply
-    // headers, no draft id. The typed request shape is the fresh marker.
+    const freshDraft = await page.evaluate(() => window.__draftSaves.at(-1))
     assert(
-      record.threadId === undefined && record.inReplyTo === undefined && record.draftId === undefined,
-      'fresh send carries no thread/reply/draft fields',
-      'fresh send was misshapen as a reply or draft'
+      record.threadId === undefined && record.inReplyTo === undefined &&
+        record.draftId === freshDraft?.draftId && record.expectedMessageId === freshDraft?.messageId,
+      'fresh send consumes its saved draft without carrying reply or thread fields',
+      'fresh send did not consume its saved draft or carried reply fields'
     )
     await snapshot(page, 'compose-new')
     return 'compose-new'
@@ -1253,6 +1333,8 @@ try {
           .getByRole('button', { name: 'Remove fixture-file.pdf', exact: true })
           .waitFor()
         await send.click()
+        await content.getByRole('button', { name: 'Undo', exact: true }).waitFor()
+        await page.clock.fastForward(5500)
         await content.getByText('Message sent.', { exact: true }).waitFor()
         assert(
           await page.evaluate(() => {
@@ -1331,6 +1413,8 @@ try {
           () => !document.querySelector('button[aria-label="Retry second.bin"]')
         )
         await send.click()
+        await content.getByRole('button', { name: 'Undo', exact: true }).waitFor()
+        await page.clock.fastForward(5500)
         await content.getByText('Message sent.', { exact: true }).waitFor()
         assert(
           await page.evaluate(
@@ -1465,6 +1549,8 @@ try {
           'the removed original returned on reopen'
         )
         await send.click()
+        await content.getByRole('button', { name: 'Undo', exact: true }).waitFor()
+        await page.clock.fastForward(5500)
         await content.getByText('Message sent.', { exact: true }).waitFor()
         assert(
           await page.evaluate(
@@ -1497,6 +1583,8 @@ try {
           window.__draftSaves.some((save) => save.attachments?.length === 1)
         )
         await send.click()
+        await content.getByRole('button', { name: 'Undo', exact: true }).waitFor()
+        await page.clock.fastForward(5500)
         await content.getByText('Message sent.', { exact: true }).waitFor()
         assert(
           (await page.evaluate(
@@ -1579,6 +1667,8 @@ try {
         )
         await snapshot(page, `draft-attachments-${scenario}`)
         await send.click()
+        await content.getByRole('button', { name: 'Undo', exact: true }).waitFor()
+        await page.clock.fastForward(5500)
         await content.getByText('Message sent.', { exact: true }).waitFor()
         assert(
           await page.evaluate(
@@ -4227,7 +4317,7 @@ try {
       window.__draftSaves.find((entry) => entry.subject === 'Same-thread draft 2').draftId
     )
     await content.getByRole('button', { name: 'Send', exact: true }).click()
-    await content.getByText('Message sent.', { exact: true }).waitFor({ timeout: 5000 })
+    await content.getByText('Message sent.', { exact: true }).waitFor({ timeout: 10000 })
     assert(
       (await sentDraft.count()) === 1,
       'the sent draft is still in the list during the confirmation',

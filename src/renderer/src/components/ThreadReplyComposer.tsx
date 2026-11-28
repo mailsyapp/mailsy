@@ -20,11 +20,12 @@ type ThreadReplyComposerProps = {
   thread: ThreadSummary
   messages: EmailDetailData[]
   userEmail: string
+  sessionSignal: AbortSignal
   onSent: (threadId: string | undefined) => void
 }
 
 export const ThreadReplyComposer = forwardRef<ThreadReplyComposerHandle, ThreadReplyComposerProps>(
-  function ThreadReplyComposer({ thread, messages, userEmail, onSent }, ref) {
+  function ThreadReplyComposer({ thread, messages, userEmail, sessionSignal, onSent }, ref) {
     const latestMessage: EmailDetailData | null = messages[messages.length - 1] ?? null
 
     const [draft, setDraft] = useState<SendEmailRequest | null>(null)
@@ -121,6 +122,7 @@ export const ThreadReplyComposer = forwardRef<ThreadReplyComposerHandle, ThreadR
           <ThreadReplyForm
             key={composerSeq}
             draft={draft}
+            sessionSignal={sessionSignal}
             prefill={attachmentPrefill}
             initialHtml={quotedContent?.html ?? ''}
             onChange={(patch) => setDraft((prev) => (prev ? { ...prev, ...patch } : prev))}
