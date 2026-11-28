@@ -3,22 +3,30 @@ import type { EmailDetail, EmailThread } from '../../shared/types'
 import { toEmailDetail } from './message'
 import { base64UrlToBuffer, INLINE_ATTACHMENT_PREFIX } from './mime'
 import { noteHistoryId } from './sync'
-import { DETAIL_CONCURRENCY, mapWithConcurrency, withQuotaRetry } from './resilience'
+import {
+  assertMailSession,
+  DETAIL_CONCURRENCY,
+  mapWithConcurrency,
+  withQuotaRetry
+} from './resilience'
 import { getSnoozeUntil } from './snooze'
 export async function fetchMessage(id: string, draftId?: string): Promise<EmailDetail> {
   const gmail = getGmailClient()
+  const session = getMailSession()
   if (draftId !== undefined) {
     if (typeof draftId !== 'string' || !draftId.trim()) throw new Error('Draft ID is required')
-    const draft = await withQuotaRetry(() =>
-      gmail.users.drafts.get({ userId: 'me', id: draftId, format: 'full' })
+    const draft = await withQuotaRetry(
+      () => gmail.users.drafts.get({ userId: 'me', id: draftId, format: 'full' }),
+      session
     )
     if (!draft.data.message?.id) throw new Error('Gmail returned no draft message')
-    return toEmailDetail(gmail, draft.data.message)
+    return toEmailDetail(gmail, draft.data.message, session)
   }
-  const msg = await withQuotaRetry(() =>
-    gmail.users.messages.get({ userId: 'me', id, format: 'full' })
+  const msg = await withQuotaRetry(
+    () => gmail.users.messages.get({ userId: 'me', id, format: 'full' }),
+    session
   )
-  return toEmailDetail(gmail, msg.data)
+  return toEmailDetail(gmail, msg.data, session)
 }
 export async function fetchAttachment(messageId: string, attachmentId: string): Promise<string> {
   if (!messageId.trim() || !attachmentId.trim()) throw new Error('Attachment ID is required')
@@ -47,20 +55,18 @@ export async function fetchThread(threadId: string): Promise<EmailThread> {
   if (!threadId.trim()) throw new Error('Thread ID is required')
   const gmail = getGmailClient()
   const session = getMailSession()
-  const thread = await withQuotaRetry(() =>
-    gmail.users.threads.get({
-      userId: 'me',
-      id: threadId,
-      format: 'full'
-    })
+  const thread = await withQuotaRetry(
+    () => gmail.users.threads.get({ userId: 'me', id: threadId, format: 'full' }),
+    session
   )
   noteHistoryId(thread.data.historyId, session)
   const [messages, userEmail] = await Promise.all([
     mapWithConcurrency(thread.data.messages ?? [], DETAIL_CONCURRENCY, (msg) =>
-      toEmailDetail(gmail, msg)
+      toEmailDetail(gmail, msg, session, { allowMissingInlineImages: true })
     ),
     getAccountEmail().catch(() => '')
   ])
+  assertMailSession(session)
   const labelIds = new Set<string>()
   for (const msg of thread.data.messages ?? []) {
     for (const labelId of msg.labelIds ?? []) labelIds.add(labelId)
