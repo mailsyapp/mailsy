@@ -45,6 +45,15 @@ export interface DragHandlers {
   onDragLeave: (event: React.DragEvent) => void
   onDrop: (event: React.DragEvent) => void
 }
+function blockFileDrag(event: React.DragEvent): void {
+  if (dragsFiles(event)) event.preventDefault()
+}
+export const BLOCKED_DROP: DragHandlers = {
+  onDragEnter: blockFileDrag,
+  onDragOver: blockFileDrag,
+  onDragLeave: () => {},
+  onDrop: blockFileDrag
+}
 export type AttachmentPrefill = {
   messageId: string
   refs: MessageAttachmentRef[]

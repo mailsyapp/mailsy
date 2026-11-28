@@ -9,7 +9,7 @@ import {
 import { RecipientFields } from './RecipientFields'
 import { useDraftAutosave } from './useDraftAutosave'
 import { ComposerBody, type ComposerBodyHandle } from './ComposerBody'
-import { useComposerAttachments } from './useComposerAttachments'
+import { BLOCKED_DROP, useComposerAttachments } from './useComposerAttachments'
 import { plainTextToHtml } from '../lib/emailHtml'
 import { useUndoSend } from './useUndoSend'
 import { UndoSendNotice } from './UndoSendNotice'
@@ -88,8 +88,7 @@ function DraftForm({
     <form
       className={`composer composer-fill${attach.dropping ? ' composer-dragging' : ''}`}
       onSubmit={handleSend}
-      {...attach.drop}
-      onDrop={send.busy ? (event) => event.preventDefault() : attach.drop.onDrop}
+      {...(send.busy ? BLOCKED_DROP : attach.drop)}
     >
       <h2 id="draft-editor-title">Draft</h2>
 

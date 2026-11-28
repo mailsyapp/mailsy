@@ -8,7 +8,7 @@ import {
 } from '../../../shared/types'
 import { useDraftAutosave } from './useDraftAutosave'
 import { ComposerBody, type ComposerBodyHandle } from './ComposerBody'
-import { useComposerAttachments } from './useComposerAttachments'
+import { BLOCKED_DROP, useComposerAttachments } from './useComposerAttachments'
 import { useUndoSend } from './useUndoSend'
 import { UndoSendNotice } from './UndoSendNotice'
 type ComposeEditorProps = {
@@ -42,8 +42,7 @@ export function ComposeEditor({ onClose, sessionSignal }: ComposeEditorProps): R
     <form
       className={`composer composer-fill${attach.dropping ? ' composer-dragging' : ''}`}
       onSubmit={handleSend}
-      {...attach.drop}
-      onDrop={send.busy ? (event) => event.preventDefault() : attach.drop.onDrop}
+      {...(send.busy ? BLOCKED_DROP : attach.drop)}
     >
       <h2>New email</h2>
 

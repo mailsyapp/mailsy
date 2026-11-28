@@ -910,7 +910,14 @@ try {
     async function undoHold(name, expectedSubject) {
       await hold()
       await snapshot(page, `undo-send-${name}-pending`)
-      await undo.click()
+      await page.locator('form.composer').evaluate((form) => {
+        const dataTransfer = new DataTransfer()
+        dataTransfer.items.add(new File(['late'], 'late-drop.txt', { type: 'text/plain' }))
+        for (const type of ['dragenter', 'dragover', 'drop']) {
+          form.dispatchEvent(new DragEvent(type, { dataTransfer, bubbles: true, cancelable: true }))
+        }
+      })
+      await undo.click({ timeout: 5000 })
       await send.waitFor({ timeout: 5000 })
       await page.clock.fastForward(5500)
       assert(
@@ -918,6 +925,11 @@ try {
           (await bodyTextOf(editor)).includes(`Keep this ${name} edit`),
         `Undo restores the ${name} editor and prevents send after the deadline`,
         `Undo sent or lost the ${name} edit`
+      )
+      assert(
+        (await content.getByText('late-drop.txt').count()) === 0,
+        `a file dropped during the ${name} hold is ignored and Undo stays clickable`,
+        `a file dropped during the ${name} hold was attached`
       )
     }
 
@@ -949,6 +961,44 @@ try {
     await content.getByRole('button', { name: 'reply', exact: true }).click()
     await editor.fill('Keep this reply edit')
     await undoHold('reply', 'Re: Launch checklist')
+    await content.getByRole('button', { name: 'Cancel', exact: true }).click()
+
+    await content.getByRole('button', { name: 'reply all', exact: true }).click()
+    const cc = content.getByLabel('Cc', { exact: true })
+    const replyAllTo = await to.inputValue()
+    const ccValue = async () => ((await cc.count()) ? cc.inputValue() : '')
+    const replyAllCc = await ccValue()
+    await editor.fill('Keep this reply-all edit')
+    await undoHold('reply-all', 'Re: Launch checklist')
+    assert(
+      (await to.inputValue()) === replyAllTo && (await ccValue()) === replyAllCc,
+      'Undo keeps the reply-all To and Cc lists',
+      'Undo changed the reply-all recipients'
+    )
+    await content.getByRole('button', { name: 'Cancel', exact: true }).click()
+
+    await content.getByRole('button', { name: 'reply', exact: true }).click()
+    const replyTo = await to.inputValue()
+    await editor.fill('Keep this left reply')
+    await hold()
+    await inbox.getByText('Standup notes', { exact: true }).click()
+    await page.getByRole('heading', { name: 'Standup notes' }).waitFor({ timeout: 5000 })
+    await page.clock.fastForward(5500)
+    await inbox.getByText('Launch checklist', { exact: true }).click()
+    await page.getByRole('heading', { name: 'Launch checklist' }).waitFor({ timeout: 5000 })
+    assert(
+      await page.evaluate(() =>
+        window.__draftSaves.some((save) => save.threadId && save.body.includes('Keep this left reply'))
+      ),
+      'the reply left during the hold is saved as a draft in its thread',
+      'the left reply was not saved as a thread draft'
+    )
+    await content.getByRole('button', { name: 'reply', exact: true }).click()
+    assert(
+      (await outbox()).length === 0 && (await to.inputValue()) === replyTo,
+      'a reply left during the hold stays unsent and is not used as the next reply target',
+      'the left reply was sent or became the reply target'
+    )
     await content.getByRole('button', { name: 'Cancel', exact: true }).click()
 
     await content.getByRole('button', { name: 'forward', exact: true }).click()

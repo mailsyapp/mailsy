@@ -28,6 +28,7 @@ export interface EmailDetail extends EmailSummary {
   bodyHtml?: string
   bodyText?: string
   attachments: MessageAttachmentRef[]
+  isDraft?: boolean
 }
 export interface EmailThread {
   id: string

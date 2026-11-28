@@ -56,7 +56,6 @@ export function useUndoSend(sessionSignal: AbortSignal): {
       const target = await autosave.saveForSend(request)
       if (!isCurrent()) return
       async function send(): Promise<void> {
-        autosave.suspend()
         try {
           await window.api.sendDraft({ ...request, ...target })
           autosave.stop()
@@ -64,7 +63,8 @@ export function useUndoSend(sessionSignal: AbortSignal): {
           autosave.resume()
         }
       }
-      attempt.undo = holdSend(
+      autosave.suspend()
+      const cancel = holdSend(
         (delay, commit) => {
           timers.start('undo-send', delay, commit)
           return () => timers.cancel('undo-send')
@@ -80,6 +80,11 @@ export function useUndoSend(sessionSignal: AbortSignal): {
             .finally(finish)
         }
       )
+      attempt.undo = () => {
+        if (!cancel()) return false
+        autosave.resume()
+        return true
+      }
       setPhase('waiting')
     } catch (reason) {
       fail(reason)

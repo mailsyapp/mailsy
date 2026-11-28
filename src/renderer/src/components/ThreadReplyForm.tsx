@@ -2,7 +2,11 @@ import { useRef, useState } from 'react'
 import { hasRecipient, type SendEmailRequest } from '../../../shared/types'
 import { RecipientFields } from './RecipientFields'
 import { ComposerBody, type ComposerBodyHandle } from './ComposerBody'
-import { useComposerAttachments, type AttachmentPrefill } from './useComposerAttachments'
+import {
+  BLOCKED_DROP,
+  useComposerAttachments,
+  type AttachmentPrefill
+} from './useComposerAttachments'
 import { useDraftAutosave } from './useDraftAutosave'
 import { useUndoSend } from './useUndoSend'
 import { UndoSendNotice } from './UndoSendNotice'
@@ -60,8 +64,7 @@ export function ThreadReplyForm({
     <form
       className={`composer${attach.dropping ? ' composer-dragging' : ''}`}
       onSubmit={handleSend}
-      {...attach.drop}
-      onDrop={send.busy ? (event) => event.preventDefault() : attach.drop.onDrop}
+      {...(send.busy ? BLOCKED_DROP : attach.drop)}
     >
       <h2 id="composer-title">Compose email</h2>
       <div className="composerFields" inert={send.busy}>

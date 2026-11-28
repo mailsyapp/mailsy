@@ -26,7 +26,8 @@ type ThreadReplyComposerProps = {
 
 export const ThreadReplyComposer = forwardRef<ThreadReplyComposerHandle, ThreadReplyComposerProps>(
   function ThreadReplyComposer({ thread, messages, userEmail, sessionSignal, onSent }, ref) {
-    const latestMessage: EmailDetailData | null = messages[messages.length - 1] ?? null
+    const latestMessage: EmailDetailData | null =
+      messages.filter((message) => !message.isDraft).pop() ?? null
 
     const [draft, setDraft] = useState<SendEmailRequest | null>(null)
     const pendingReplyRef = useRef<{ target: EmailDetailData; prefilledTo: string } | null>(null)
