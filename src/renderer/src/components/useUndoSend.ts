@@ -1,13 +1,14 @@
 import { useRef, useState } from 'react'
+import { scheduleOutlivingUnmount } from '../hooks/useLeftSends'
 import { useOnUnmount } from '../hooks/useOnUnmount'
-import { useTimers } from '../hooks/useTimers'
 import { errorMessage } from '../lib/format'
-import { holdSend } from '../lib/pendingSend'
+import { holdSend, leftSends } from '../lib/pendingSend'
 import type { SendEmailRequest } from '../../../shared/types'
 import type { DraftAutosave } from './useDraftAutosave'
 
 type SendPhase = 'idle' | 'preparing' | 'waiting' | 'sending'
-type SendAttempt = { undo?: () => boolean }
+type ActivePhase = Exclude<SendPhase, 'idle'>
+type SendAttempt = { undo: () => boolean; leave: () => void }
 const BUTTON_LABELS: Record<SendPhase, string> = {
   idle: 'Send',
   preparing: 'Preparing...',
@@ -26,9 +27,8 @@ export function useUndoSend(sessionSignal: AbortSignal): {
   const [phase, setPhase] = useState<SendPhase>('idle')
   const [error, setError] = useState<string | null>(null)
   const active = useRef<SendAttempt | null>(null)
-  const timers = useTimers()
   useOnUnmount(() => {
-    active.current?.undo?.()
+    active.current?.leave()
     active.current = null
   })
 
@@ -38,57 +38,74 @@ export function useUndoSend(sessionSignal: AbortSignal): {
     onSent: () => void
   ): Promise<void> {
     if (active.current || sessionSignal.aborted) return
-    const attempt: SendAttempt = {}
-    active.current = attempt
-    const isCurrent = (): boolean => active.current === attempt && !sessionSignal.aborted
-    function fail(reason: unknown): void {
-      if (isCurrent()) setError(errorMessage(reason))
-    }
-    function finish(): void {
-      if (isCurrent()) {
-        active.current = null
-        setPhase('idle')
+    let current: ActivePhase = 'preparing'
+    let leftId: number | null = null
+    let draftId: string | undefined
+    let cancel: (() => boolean) | null = null
+    let settled = false
+    const attempt: SendAttempt = {
+      undo: () => {
+        if (!cancel?.()) return false
+        settle()
+        if (leftId === null) autosave.resume()
+        return true
+      },
+      leave: () => {
+        if (!settled) leftId = leftSends.add({ phase: current, draftId, undo: attempt.undo })
       }
     }
+    active.current = attempt
+    const mounted = (): boolean => active.current === attempt
+    function show(next: ActivePhase): void {
+      current = next
+      if (mounted()) setPhase(next)
+      else if (leftId !== null) leftSends.update(leftId, { phase: next, draftId })
+    }
+    function settle(failure?: unknown): void {
+      if (settled) return
+      settled = true
+      sessionSignal.removeEventListener('abort', abandon)
+      if (mounted()) {
+        active.current = null
+        setPhase('idle')
+        if (failure !== undefined) setError(errorMessage(failure))
+      } else if (leftId !== null) {
+        if (failure === undefined) leftSends.remove(leftId)
+        else leftSends.update(leftId, { phase: 'failed', error: errorMessage(failure) })
+      }
+    }
+    function abandon(): void {
+      if (current === 'sending') return
+      cancel?.()
+      settled = true
+      if (leftId !== null) leftSends.remove(leftId)
+      if (mounted()) active.current = null
+    }
+    sessionSignal.addEventListener('abort', abandon, { once: true })
     setError(null)
     setPhase('preparing')
     try {
       const target = await autosave.saveForSend(request)
-      if (!isCurrent()) return
-      async function send(): Promise<void> {
-        try {
-          await window.api.sendDraft({ ...request, ...target })
-          autosave.stop()
-        } finally {
-          autosave.resume()
-        }
-      }
+      if (settled) return
+      draftId = target.draftId
       autosave.suspend()
-      const cancel = holdSend(
-        (delay, commit) => {
-          timers.start('undo-send', delay, commit)
-          return () => timers.cancel('undo-send')
-        },
-        () => {
-          if (!isCurrent()) return
-          setPhase('sending')
-          void send()
-            .then(() => {
-              if (isCurrent()) onSent()
-            })
-            .catch(fail)
-            .finally(finish)
-        }
-      )
-      attempt.undo = () => {
-        if (!cancel()) return false
-        autosave.resume()
-        return true
-      }
-      setPhase('waiting')
+      cancel = holdSend(scheduleOutlivingUnmount, () => {
+        show('sending')
+        window.api
+          .sendDraft({ ...request, ...target })
+          .then(() => {
+            autosave.stop()
+            settle()
+            if (!sessionSignal.aborted) onSent()
+          })
+          .catch((reason: unknown) => {
+            if (mounted()) autosave.resume()
+            settle(sessionSignal.aborted ? undefined : reason)
+          })
+      })
+      show('waiting')
     } catch (reason) {
-      fail(reason)
-      finish()
+      settle(sessionSignal.aborted ? undefined : reason)
     }
   }
 
@@ -99,9 +116,7 @@ export function useUndoSend(sessionSignal: AbortSignal): {
     error,
     start,
     undo: () => {
-      if (!active.current?.undo?.()) return
-      active.current = null
-      setPhase('idle')
+      active.current?.undo()
     }
   }
 }

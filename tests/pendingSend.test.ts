@@ -45,3 +45,21 @@ test('undo cancels the delay and prevents a stale timer from sending', () => {
   pending.fireTimer()
   assert.deepEqual(pending.counts(), { sends: 0, cancels: 1 })
 })
+
+test('leftSends publishes added, updated and removed sends to subscribers', async () => {
+  const { leftSends } = await import('../src/renderer/src/lib/pendingSend.ts')
+  let notified = 0
+  const unsubscribe = leftSends.subscribe(() => notified++)
+  const id = leftSends.add({ phase: 'waiting', draftId: 'd1', undo: () => true })
+  assert.deepEqual(
+    leftSends.snapshot().map(({ id: sendId, phase, draftId }) => ({ sendId, phase, draftId })),
+    [{ sendId: id, phase: 'waiting', draftId: 'd1' }]
+  )
+  leftSends.update(id, { phase: 'failed', error: 'boom' })
+  assert.equal(leftSends.snapshot()[0].error, 'boom')
+  leftSends.remove(id)
+  assert.deepEqual(leftSends.snapshot(), [])
+  unsubscribe()
+  leftSends.add({ phase: 'sending', undo: () => false })
+  assert.equal(notified, 3)
+})

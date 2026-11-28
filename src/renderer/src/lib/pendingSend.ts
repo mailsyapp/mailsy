@@ -17,3 +17,42 @@ export function holdSend(
     return true
   }
 }
+
+export type LeftSendPhase = 'preparing' | 'waiting' | 'sending' | 'failed'
+export type LeftSend = {
+  id: number
+  phase: LeftSendPhase
+  draftId?: string
+  error?: string
+  undo: () => boolean
+}
+
+let leftSendList: readonly LeftSend[] = []
+let nextLeftSendId = 0
+const leftSendListeners = new Set<() => void>()
+
+function publishLeftSends(next: readonly LeftSend[]): void {
+  leftSendList = next
+  leftSendListeners.forEach((listener) => listener())
+}
+
+export const leftSends = {
+  subscribe(listener: () => void): () => void {
+    leftSendListeners.add(listener)
+    return () => {
+      leftSendListeners.delete(listener)
+    }
+  },
+  snapshot: (): readonly LeftSend[] => leftSendList,
+  add(send: Omit<LeftSend, 'id'>): number {
+    const id = ++nextLeftSendId
+    publishLeftSends([...leftSendList, { ...send, id }])
+    return id
+  },
+  update(id: number, patch: Partial<Pick<LeftSend, 'phase' | 'draftId' | 'error'>>): void {
+    publishLeftSends(leftSendList.map((send) => (send.id === id ? { ...send, ...patch } : send)))
+  },
+  remove(id: number): void {
+    publishLeftSends(leftSendList.filter((send) => send.id !== id))
+  }
+}

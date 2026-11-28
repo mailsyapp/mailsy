@@ -657,6 +657,18 @@ button {
   color: #173b74;
 }
 
+.leftSendNotices {
+  position: fixed;
+  left: 16px;
+  bottom: 16px;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 280px;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 15%);
+}
+
 .undoSendNotice button {
   font: inherit;
   font-weight: 600;

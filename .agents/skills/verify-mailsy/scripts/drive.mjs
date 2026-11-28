@@ -903,11 +903,13 @@ try {
     const undo = content.getByRole('button', { name: 'Undo', exact: true })
     const outbox = () => page.evaluate(() => window.__sent)
     async function hold() {
+      const before = (await outbox()).length
       await send.click()
       await undo.waitFor({ timeout: 5000 })
-      assert((await outbox()).length === 0, 'pending send has not reached the boundary', 'sent too early')
+      assert((await outbox()).length === before, 'pending send has not reached the boundary', 'sent too early')
     }
     async function undoHold(name, expectedSubject) {
+      const before = (await outbox()).length
       await hold()
       await snapshot(page, `undo-send-${name}-pending`)
       await page.locator('form.composer').evaluate((form) => {
@@ -921,7 +923,7 @@ try {
       await send.waitFor({ timeout: 5000 })
       await page.clock.fastForward(5500)
       assert(
-        (await outbox()).length === 0 && (await subject.inputValue()) === expectedSubject &&
+        (await outbox()).length === before && (await subject.inputValue()) === expectedSubject &&
           (await bodyTextOf(editor)).includes(`Keep this ${name} edit`),
         `Undo restores the ${name} editor and prevents send after the deadline`,
         `Undo sent or lost the ${name} edit`
@@ -977,16 +979,18 @@ try {
       'the loaded attachment was sent or left Send disabled'
     )
 
+    const outgoing = page.getByRole('region', { name: 'Outgoing messages' })
+    const outgoingUndo = outgoing.getByRole('button', { name: 'Undo', exact: true })
     await hold()
     await page.getByRole('button', { name: 'Drafts', exact: true }).click()
-    const reopened = drafts.getByText('Undo a new message', { exact: true })
-    await reopened.click()
-    await page.clock.fastForward(5500)
+    await outgoingUndo.click({ timeout: 5000 })
     await subject.waitFor({ timeout: 5000 })
+    await page.clock.fastForward(5500)
     assert(
-      (await outbox()).length === 0 && (await bodyTextOf(editor)).includes('Keep this new edit'),
-      'leaving during the hold cancels the send and keeps a reopenable draft',
-      'leaving sent the message or lost its draft'
+      (await outbox()).length === 0 && (await subject.inputValue()) === 'Undo a new message' &&
+        (await bodyTextOf(editor)).includes('Keep this new edit') && (await outgoing.count()) === 0,
+      'Undo from the app-wide notice after leaving keeps the draft and reopens it',
+      'app-wide Undo sent the message, lost its draft or did not reopen it'
     )
     await editor.fill('Keep this draft edit')
     await undoHold('draft', 'Undo a new message')
@@ -1018,24 +1022,43 @@ try {
     await hold()
     await inbox.getByText('Standup notes', { exact: true }).click()
     await page.getByRole('heading', { name: 'Standup notes' }).waitFor({ timeout: 5000 })
+    await outgoingUndo.click({ timeout: 5000 })
+    await subject.waitFor({ timeout: 5000 })
     await page.clock.fastForward(5500)
+    assert(
+      (await outbox()).length === 0 && (await subject.inputValue()) === 'Re: Launch checklist' &&
+        (await bodyTextOf(editor)).includes('Keep this left reply'),
+      'Undo after leaving a reply keeps it unsent and reopens it as a draft',
+      'app-wide Undo sent the reply or did not reopen its draft'
+    )
+    await page.getByRole('button', { name: 'Inbox', exact: true }).click()
     await inbox.getByText('Launch checklist', { exact: true }).click()
     await page.getByRole('heading', { name: 'Launch checklist' }).waitFor({ timeout: 5000 })
-    assert(
-      await page.evaluate(() =>
-        window.__draftSaves.some((save) => save.threadId && save.body.includes('Keep this left reply'))
-      ),
-      'the reply left during the hold is saved as a draft in its thread',
-      'the left reply was not saved as a thread draft'
-    )
     await content.getByRole('button', { name: 'reply', exact: true }).click()
     assert(
-      (await outbox()).length === 0 && (await to.inputValue()) === replyTo,
-      'a reply left during the hold stays unsent and is not used as the next reply target',
-      'the left reply was sent or became the reply target'
+      (await to.inputValue()) === replyTo,
+      'a reply draft kept by Undo is not used as the next reply target',
+      'the kept reply draft became the reply target'
     )
-    await content.getByRole('button', { name: 'Cancel', exact: true }).click()
-
+    await editor.fill('Send this left reply')
+    await hold()
+    await inbox.getByText('Standup notes', { exact: true }).click()
+    await page.getByRole('heading', { name: 'Standup notes' }).waitFor({ timeout: 5000 })
+    await outgoingUndo.waitFor({ timeout: 5000 })
+    assert((await outbox()).length === 0, 'navigating away keeps the reply pending', 'navigating sent the reply early')
+    await page.clock.fastForward(5500)
+    await outgoing.waitFor({ state: 'detached', timeout: 5000 })
+    await page.clock.fastForward(5500)
+    const leftSent = await outbox()
+    assert(
+      leftSent.length === 1 && leftSent[0].subject === 'Re: Launch checklist' &&
+        leftSent[0].body.includes('Send this left reply') &&
+        (await page.getByRole('heading', { name: 'Standup notes' }).count()) === 1,
+      'a reply left during the hold still sends exactly once after 5 seconds without moving the view',
+      'the left reply was cancelled, sent twice or changed the view'
+    )
+    await inbox.getByText('Launch checklist', { exact: true }).click()
+    await page.getByRole('heading', { name: 'Launch checklist' }).waitFor({ timeout: 5000 })
     await content.getByRole('button', { name: 'forward', exact: true }).click()
     await to.fill('forward-undo@example.com')
     await editor.fill('Keep this forward edit')
@@ -1046,8 +1069,8 @@ try {
     await page.clock.fastForward(5500)
     const sent = await outbox()
     assert(
-      sent.length === 1 && sent[0].draftId && sent[0].to === 'forward-undo@example.com' &&
-        sent[0].subject === 'Fwd: Launch checklist' && sent[0].body.includes('Keep this forward edit'),
+      sent.length === 2 && sent[1].draftId && sent[1].to === 'forward-undo@example.com' &&
+        sent[1].subject === 'Fwd: Launch checklist' && sent[1].body.includes('Keep this forward edit'),
       'expiry delivers exactly once with the original contents using atomic draft send',
       'expiry lost the message or sent more than once'
     )

@@ -18,6 +18,7 @@ import { ComposeEditor } from './components/ComposeEditor'
 import { FolderRail } from './components/FolderRail'
 import { MailListRow } from './components/MailListRow'
 import { OAuthCredentialsSetup } from './components/OAuthCredentialsSetup'
+import { LeftSendNotices } from './components/UndoSendNotice'
 import { useIntersection } from './hooks/useIntersection'
 import { useInterval } from './hooks/useInterval'
 import { useLatest } from './hooks/useLatest'
@@ -66,6 +67,7 @@ function App(): React.JSX.Element {
   } | null>(null)
   const selectionRef = useRef<string | null>(null)
   const sessionAbortRef = useRef(new AbortController())
+  const reopenDraftRef = useRef<string | null>(null)
   const selectedDraftRef = useRef<{
     key: string
     id: string
@@ -687,6 +689,32 @@ function App(): React.JSX.Element {
         }
       })
   }
+  useReaction([threads, activeFolder], () => {
+    const draftId = reopenDraftRef.current
+    if (draftId === null || activeFolder !== 'drafts') return
+    const row = threads.find((thread) => thread.draftId === draftId)
+    if (!row) return
+    reopenDraftRef.current = null
+    handleSelect(row)
+  })
+  function openLeftDraft(draftId: string): void {
+    reopenDraftRef.current = draftId
+    if (activeFolder !== 'drafts' || activeLabel !== null) {
+      handleFolderSelect('drafts')
+      return
+    }
+    if (committedQuery !== '') {
+      handleClearSearch()
+      return
+    }
+    const row = threads.find((thread) => thread.draftId === draftId)
+    if (!row) {
+      handleRefresh()
+      return
+    }
+    reopenDraftRef.current = null
+    handleSelect(row)
+  }
   const syncResultHandlerRef = useLatest(handleSyncResult)
   const firstPageLoaderRef = useLatest(loadFirstPage)
   const signedInRef = useLatest(signedIn)
@@ -1012,6 +1040,7 @@ function App(): React.JSX.Element {
           )}
         </section>
       </main>
+      {signedIn === true && <LeftSendNotices onOpenDraft={openLeftDraft} />}
     </div>
   )
 }

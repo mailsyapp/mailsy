@@ -23,6 +23,7 @@ const APPROVED_HOOKS = [
   'useIntersection',
   'useInterval',
   'useLatest',
+  'useLeftSends',
   'useOnMount',
   'useOnUnmount',
   'useReaction',
